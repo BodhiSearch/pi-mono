@@ -24,6 +24,22 @@ export type {
 } from './rpc/rpc-types';
 
 export { ExtensionRegistry } from './core/extensions/registry';
+
+// Vault filesystem tools
+export { createVaultTools } from './core/tools';
+export type { CreateVaultToolsOptions } from './core/tools';
+export { createZenfsVaultOperations } from './fs/zenfs-operations';
+export type {
+  EditOperations,
+  GlobOperations,
+  GrepOperations,
+  LsOperations,
+  ReadOperations,
+  VaultOperations,
+  WriteOperations,
+} from './fs/zenfs-operations';
+export { mountVault, unmountVault, isVaultMounted, VAULT_MOUNT } from './fs/zenfs-provider';
+export { resolveVaultPath, VaultPathError } from './fs/path-utils';
 export type {
   Extension,
   ExtensionAPI,

@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import StatusIndicator from './StatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { VaultStatus } from '@/components/vault/VaultStatus';
 
 export default function Header() {
   const {
@@ -45,6 +46,7 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-3">
+        <VaultStatus />
         <div className="flex items-center gap-2 border-r border-gray-200 pr-3">
           <StatusIndicator
             label="Client"

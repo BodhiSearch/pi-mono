@@ -1,9 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useAgent } from '@/hooks/useAgent';
 import { useMcpList } from '@/hooks/useMcpList';
 import { useMcpSelection } from '@/hooks/useMcpSelection';
 import { useMcpAgentTools } from '@/hooks/useMcpAgentTools';
+import { useVaultMount } from '@/hooks/useVaultMount';
+import { useVaultTools } from '@/hooks/useVaultTools';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 
@@ -12,7 +14,10 @@ export default function ChatDemo() {
   const { enabledMcpTools, toggleTool, toggleMcp, getEnabledToolCount, getCheckboxState } =
     useMcpSelection(mcps, toolsByMcpId);
 
-  const tools = useMcpAgentTools({ enabledMcpTools, mcps, toolsByMcpId });
+  const mcpTools = useMcpAgentTools({ enabledMcpTools, mcps, toolsByMcpId });
+  const { status: vaultStatus } = useVaultMount();
+  const vaultTools = useVaultTools(vaultStatus);
+  const tools = useMemo(() => [...vaultTools, ...mcpTools], [vaultTools, mcpTools]);
 
   const {
     messages,

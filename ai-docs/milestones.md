@@ -12,8 +12,8 @@ Consolidated roadmap for porting `packages/coding-agent`'s feature set into `pac
 | --- | --------------------------------------------------------------------------- | ------- | ---------- | ------------------------------------------------------------ |
 | M0  | Workspace integration + Vite-warning fix                                    | ✅ done  | `06d02b81` | — (existing `chat.spec.ts` stayed green)                     |
 | M1  | RPC-shaped agent scaffold + `useAgent` rewire                               | ✅ done  | `06d02b81` | 4 vitest round-trip tests in `src/web-agent/rpc/rpc.test.ts` |
-| M2  | Vault mount: `/vault` via ZenFS + Chrome FSA picker + dev-seed testing seam | planned | —          | +1 Playwright spec                                           |
-| M3  | Filesystem tools (read, write, edit, ls, glob, grep) wired to the agent     | planned | —          | +1 Playwright spec, tool-level vitest                        |
+| M2  | Vault mount: `/vault` via ZenFS + Chrome FSA picker + dev-seed testing seam | ✅ done  | `3f2f34b4`   | +1 Playwright spec (`vault-fs.spec.ts` M2)                   |
+| M3  | Filesystem tools (read, write, edit, ls, glob, grep) wired to the agent     | ✅ done  | `3f2f34b4`   | +1 Playwright spec (`vault-fs.spec.ts` M3), 45 tool vitests  |
 | M4  | Worker transport: `AgentSession` runs in a Web Worker                       | planned | —          | existing tests stay green                                    |
 | M5  | Session persistence: `/sessions` IndexedDB mount, save / load / list        | planned | —          | +1 Playwright spec                                           |
 | M6  | Session tree: fork from entry, switch sessions, branch navigation           | planned | —          | extend M5 spec or +1 new spec                                |
@@ -200,6 +200,48 @@ Surprises worth remembering (also captured inline in code/commit):
 - `RpcServer` is retained automatically via the transport's event-listener closure — no module-level variable needed.
 - `Omit<Union, K>` is non-distributive and drops per-variant fields; use a `DistributiveOmit` helper.
 - `tsc --noEmit` at a package with project-references tsconfig silently checks zero files — use `tsc -b`.
+
+### M2 — Vault mount (done, this commit)
+
+What landed:
+
+- `@zenfs/core ~2.5.6`, `@zenfs/dom ~1.2.9`, `idb-keyval ^6.2.2` added as dependencies; `fake-indexeddb` added dev-side for vitest.
+- `src/web-agent/fs/zenfs-provider.ts` — `mountVault(handle)`, `unmountVault()`, `isVaultMounted()`, `setMountedForSeed()`; pattern copied from `bodhiapps/zenfs-browser`.
+- `src/web-agent/fs/path-utils.ts` — `resolveVaultPath()` + `VaultPathError`, with 12 unit tests covering relative/absolute/escape cases.
+- `src/hooks/useDirectoryHandle.ts` — three-state (`empty`/`prompt`/`ready`) with idb-keyval persistence and `requestPermission` re-grant.
+- `src/hooks/useDevSeedBoot.ts` — dev-only, reads `window.__zenfsSeed`, lazy-imports InMemory vault adapter. Tree-shakes in production.
+- `src/fs/in-memory-vault.ts` — InMemory ZenFS adapter used exclusively by the dev-seed path. Module-level mount guard makes it idempotent (two React subtrees both call `useVaultMount` and we must not reconfigure the VFS mid-session).
+- `src/hooks/useVaultMount.ts` — orchestrates seed-vs-handle; exposes `VaultMountStatus` + display name.
+- `src/components/vault/VaultStatus.tsx` — `data-testid="vault-status"` badge + pick / re-grant / close buttons; wired into `<Header>`.
+- `src/types/fsa.d.ts` — type augmentations for FSA permission methods (TypeScript's DOM lib still lacks them).
+- `e2e/helpers/install-vault.ts` + `e2e/data/sample/*` + `e2e/tests/pages/VaultPage.ts` + `e2e/vault-fs.spec.ts` (M2 describe block) — Playwright seam proven end-to-end.
+
+Surprises worth remembering:
+
+- Two React subtrees both calling `useVaultMount` triggered a double-mount race that wiped agent writes mid-turn. Fixed with a module-level `mountPromise` guard in `in-memory-vault.ts`.
+- `FileSystemDirectoryHandle.requestPermission` is not in TypeScript's DOM lib — ships a local `fsa.d.ts` augmentation.
+- Jsdom has no `indexedDB`; `fake-indexeddb/auto` added to `src/test/setup.ts` so component tests that mount the full App (and therefore the vault hooks) do not throw on boot.
+
+### M3 — Filesystem tools (done, this commit)
+
+What landed:
+
+- `src/web-agent/fs/zenfs-operations.ts` — per-tool operations adapters and a `createZenfsVaultOperations()` factory.
+- `src/web-agent/core/tools/file-mutation-queue.ts` — per-path serialisation (pattern copied from coding-agent; `realpathSync` step dropped because ZenFS backends don't expose symlinks).
+- `src/web-agent/core/tools/truncation.ts` — dual (lines + bytes) truncation helper.
+- `src/web-agent/core/tools/{read,write,edit,ls,glob,grep}.ts` — schemas + `create*Tool({ operations, cwd })` factories. Schemas ported verbatim where possible; `grep` and `glob` re-implemented in pure JS (no ripgrep / fd subprocess available in browser) via minimatch + tree walk.
+- `src/web-agent/core/tools/index.ts` — `createVaultTools(ops)` one-call factory returning `AgentTool[]`.
+- `src/hooks/useVaultTools.ts` — returns the six tools when the vault is mounted, empty array otherwise.
+- `src/components/chat/ChatDemo.tsx` — merges vault tools with MCP tools before passing to `useAgent`.
+- `src/components/chat/ToolCallMessage.tsx` — added `data-testid="tool-call"` + `data-tool` + `data-teststate` for black-box assertions.
+- `e2e/vault-fs.spec.ts` M3 describe block — full agent round-trip: seeded vault → prompt → agent calls `read` and `write` tools → derived file verified via the InMemory fs.
+- Added `minimatch ^10.0.1` dependency for glob/grep pattern matching.
+
+Surprises worth remembering:
+
+- `TextDecoder` strips the BOM by default in UTF-8 mode, which broke `edit`'s BOM-preservation invariant. Pass `{ ignoreBOM: true }` to keep it in the decoded string.
+- `AgentTool<Concrete>` is not a subtype of `AgentTool<TSchema>` in TS because `params: Static<TParams>` is a contravariant position that collapses under the broader `TSchema`. `createVaultTools` uses `as unknown as AgentTool[]` at the factory boundary; runtime safety is preserved because the agent loop validates arguments against `parameters` before dispatch.
+- ESLint's `react-hooks/set-state-in-effect` rule flags synchronous `setState` inside effect bodies even for trivial cases. `useVaultMount` wraps all state transitions in awaited promise chains; don't short-circuit with a sync setState even when the rest of the effect is sync.
 
 ---
 

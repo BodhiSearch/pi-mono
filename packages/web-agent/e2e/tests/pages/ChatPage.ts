@@ -113,4 +113,8 @@ export class ChatPage {
   async getAssistantText(turn: number): Promise<string> {
     return (await this.page.locator(this.selectors.message(turn, 'assistant')).textContent()) ?? '';
   }
+
+  toolCall(name: string) {
+    return this.page.locator(`[data-testid="tool-call"][data-tool="${name}"]`);
+  }
 }

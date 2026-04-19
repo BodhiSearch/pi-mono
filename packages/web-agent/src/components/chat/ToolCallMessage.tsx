@@ -27,7 +27,12 @@ function ToolCallDisplay({ toolCall, result }: ToolCallDisplayProps) {
   const resultText = result ? toolResultText(result) : '';
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
+    <div
+      data-testid="tool-call"
+      data-tool={toolCall.name}
+      data-teststate={result ? 'completed' : 'executing'}
+      className="border border-gray-200 rounded-lg overflow-hidden"
+    >
       <button
         data-testid="tool-call-expand"
         className="flex items-center gap-2 w-full p-2 text-left text-sm hover:bg-gray-50"
