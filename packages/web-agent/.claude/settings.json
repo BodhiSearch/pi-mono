@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "bodhi-js-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "BodhiSearch/bodhi-js"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "bodhi-js-sdk@bodhi-js-plugins": true
+  }
+}

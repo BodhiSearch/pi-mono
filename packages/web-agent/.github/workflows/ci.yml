@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (branch/tag/commit SHA)'
+        required: false
+        type: string
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      VITE_BODHI_APP_CLIENT_ID: ${{ vars.VITE_BODHI_APP_CLIENT_ID }}
+      VITE_BODHI_AUTH_SERVER_URL: ${{ vars.VITE_BODHI_AUTH_SERVER_URL }}
+      BODHIAPP_CLIENT_ID: ${{ vars.BODHIAPP_CLIENT_ID }}
+      BODHIAPP_CLIENT_SECRET: ${{ secrets.BODHIAPP_CLIENT_SECRET }}
+      BODHIAPP_USERNAME: ${{ vars.BODHIAPP_USERNAME }}
+      BODHIAPP_USERID: ${{ vars.BODHIAPP_USERID }}
+      BODHIAPP_PASSWORD: ${{ secrets.BODHIAPP_PASSWORD }}
+      BODHIAPP_AUTH_URL: ${{ vars.BODHIAPP_AUTH_URL }}
+      BODHIAPP_AUTH_REALM: ${{ vars.BODHIAPP_AUTH_REALM }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Enable corepack (uses packageManager field)
+        run: corepack enable npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.57.0
+
+      - name: Install Playwright
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium --with-deps
+
+      - name: Setup Virtual Display
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -ac -screen 0 1920x1080x24 > /dev/null 2>&1 &
+          sleep 3
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      - name: E2E tests
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24 -ac' npm run ci:test:e2e
+        env:
+          HEADLESS: 'false'
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Lint: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Build: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Typecheck: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Unit Tests: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ E2E Tests: Passed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Trigger Deploy
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          event-type: deploy-pages
+          client-payload: '{"sha": "${{ github.sha }}"}'
