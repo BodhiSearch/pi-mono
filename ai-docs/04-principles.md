@@ -68,7 +68,7 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 **How to apply.**
 
 - Per-deliverable plans live at `ai-docs/plans/*.md`. Disposable. Name them by deliverable, not by phase number (phases get re-planned; filenames shouldn't collide).
-- Steering docs live at `ai-docs/0N-*.md` — vision, goals, architecture, phase plan, principles. Durable. Update in place; do not version with date suffixes.
+- Steering docs live at `ai-docs/*.md` — vision, goals, architecture, milestones, principles. Durable. Update in place; do not version with date suffixes.
 - Decisions log at `ai-docs/05-decisions.md`. **Append-only.** A decision that turns out to be wrong gets a *new* decision entry that supersedes it by reference — the old entry stays as historical record.
 
 ## 8. Ask before widening scope
@@ -83,11 +83,11 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 
 ## 9. Don't silently bypass the phase gate
 
-**Why.** The gate in `03-phase-plan.md` is what guarantees each commit is shippable. If a gate step fails and gets worked around with `// @ts-ignore` or a skipped test, the phased contract breaks — and the next phase starts from a broken foundation.
+**Why.** The gate in `milestones.md` is what guarantees each commit is shippable. If a gate step fails and gets worked around with `// @ts-ignore` or a skipped test, the milestone contract breaks — and the next milestone starts from a broken foundation.
 
 **How to apply.**
 
-- Every gate item listed at the bottom of `03-phase-plan.md` must pass before a phase is declared done.
+- Every gate item listed in `milestones.md#milestone-gate` must pass before a milestone is declared done.
 - If a real reason makes a gate item impossible, write it into `05-decisions.md` with the tradeoff explained. Then the gate is updated, not bypassed.
 - New `any`, new `// @ts-ignore`, new skipped tests require the same decision record.
 

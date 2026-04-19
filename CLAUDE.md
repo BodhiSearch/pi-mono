@@ -13,7 +13,7 @@ The other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`
 - **Vision**: @ai-docs/00-vision.md — what we're building and why
 - **Goals**: @ai-docs/01-goals.md — capability checklist (with test seams)
 - **Architecture**: @ai-docs/02-architecture.md — RPC + ZenFS + FSA shape, extension sandboxing
-- **Phase plan**: @ai-docs/03-phase-plan.md — roadmap and current status
+- **Milestones**: @ai-docs/milestones.md — porting roadmap, status, and gate
 - **Principles**: @ai-docs/04-principles.md — how we work
 - **Decisions log**: @ai-docs/05-decisions.md — append-only architectural decisions
 
@@ -45,7 +45,7 @@ npm run dev                 # vite dev server on :5173
 npm run build               # tsc -b && vite build
 npm test                    # vitest (unit)
 npm run test:e2e            # Playwright, requires Bodhi server via global-setup
-npm run check               # lint + typecheck (tsc -b — not tsc --noEmit, see phase plan Phase 1 notes)
+npm run check               # lint + typecheck (tsc -b — not tsc --noEmit, see M1 outcome notes in milestones.md)
 ```
 
 At **`packages/ai/`** (occasional):
@@ -67,7 +67,7 @@ These are not dependencies; we study them to replicate proven patterns.
 
 | Artefact | Location | Lifecycle |
 |---|---|---|
-| Durable steering (vision, goals, architecture, phase plan, principles) | `ai-docs/0N-*.md` | Durable; edit in place |
+| Durable steering (vision, goals, architecture, milestones, principles, decisions) | `ai-docs/*.md` | Durable; edit in place (decisions are append-only) |
 | Architectural decisions log | `ai-docs/05-decisions.md` | Append-only |
 | Per-deliverable implementation plans | `ai-docs/plans/*.md` | Disposable per session; gitignored is off (`!ai-docs/plans/` in `.gitignore`) so can be committed if useful |
 | Auto-memory | `~/.claude/projects/-Users-amir36-…/memory/` | Cross-session, scoped to this repo |
