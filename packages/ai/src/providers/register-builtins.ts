@@ -92,7 +92,7 @@ interface BedrockProviderModule {
 	) => AsyncIterable<AssistantMessageEvent>;
 }
 
-const importNodeOnlyProvider = (specifier: string): Promise<unknown> => import(specifier);
+const importNodeOnlyProvider = (specifier: string): Promise<unknown> => import(/* @vite-ignore */ specifier);
 
 let anthropicProviderModulePromise:
 	| Promise<LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>>

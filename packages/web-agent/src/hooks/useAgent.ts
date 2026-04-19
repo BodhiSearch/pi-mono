@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import { streamSimple } from '@mariozechner/pi-ai';
-import { Agent } from '@mariozechner/pi-agent-core';
-import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
+import type { AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
 import { getErrorMessage } from '@/lib/utils';
 import { buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
 import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
+import { AgentSession, createInProcessTransportPair, RpcClient, RpcServer } from '@/web-agent';
 
 const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
 
-let _agent: Agent | null = null;
-let _agentUnsub: (() => void) | null = null;
+let _session: AgentSession | null = null;
+let _rpcClient: RpcClient | null = null;
 let _tokenGetter: () => string | null = () => null;
 
 function getStreamFn(): StreamFn {
@@ -28,18 +28,23 @@ function getStreamFn(): StreamFn {
   };
 }
 
-function getOrCreateAgent(): Agent {
-  if (!_agent) {
-    _agent = new Agent({
+function ensureSession(): { session: AgentSession; rpcClient: RpcClient } {
+  if (!_session || !_rpcClient) {
+    _session = new AgentSession({
       streamFn: getStreamFn(),
       getApiKey: () => SENTINEL_API_KEY,
     });
+    const { client, server } = createInProcessTransportPair();
+    // Server retains itself via the transport's event-listener closure —
+    // we don't need to hold a reference to prevent GC.
+    new RpcServer(server, _session);
+    _rpcClient = new RpcClient(client);
   }
-  return _agent;
+  return { session: _session, rpcClient: _rpcClient };
 }
 
 export function useAgent(tools: AgentTool[]) {
-  const { client, auth, isAuthenticated, isReady } = useBodhi();
+  const { client: bodhiClient, auth, isAuthenticated, isReady } = useBodhi();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [streamingMessage, setStreamingMessage] = useState<AgentMessage | undefined>(undefined);
@@ -64,39 +69,35 @@ export function useAgent(tools: AgentTool[]) {
   }, [tools]);
 
   useEffect(() => {
-    const agent = getOrCreateAgent();
-    _agentUnsub?.();
-    _agentUnsub = agent.subscribe((event: AgentEvent) => {
-      switch (event.type) {
+    const { rpcClient } = ensureSession();
+    const unsubscribe = rpcClient.subscribe(envelope => {
+      switch (envelope.event.type) {
         case 'agent_start':
           setIsStreaming(true);
           setError(null);
           break;
         case 'message_update':
-          setMessages([...agent.state.messages]);
-          setStreamingMessage(event.message);
+          setMessages(envelope.messages);
+          setStreamingMessage(envelope.streamingMessage);
           break;
         case 'message_end':
-          setMessages([...agent.state.messages]);
+          setMessages(envelope.messages);
           setStreamingMessage(undefined);
           break;
         case 'turn_end':
-          setMessages([...agent.state.messages]);
+          setMessages(envelope.messages);
           break;
         case 'agent_end':
-          setMessages([...agent.state.messages]);
+          setMessages(envelope.messages);
           setStreamingMessage(undefined);
           setIsStreaming(false);
-          if (agent.state.errorMessage) {
-            setError(agent.state.errorMessage);
+          if (envelope.errorMessage) {
+            setError(envelope.errorMessage);
           }
           break;
       }
     });
-    return () => {
-      _agentUnsub?.();
-      _agentUnsub = null;
-    };
+    return unsubscribe;
   }, []);
 
   const loadModels = useCallback(async () => {
@@ -109,7 +110,7 @@ export function useAgent(tools: AgentTool[]) {
     setIsLoadingModels(true);
     setError(null);
     try {
-      const list = await fetchBodhiModels(client);
+      const list = await fetchBodhiModels(bodhiClient);
       setModels(list);
       if (list.length > 0 && !selectedModel) {
         setSelectedModelState(list[0].id);
@@ -122,7 +123,7 @@ export function useAgent(tools: AgentTool[]) {
       setIsLoadingModels(false);
       isLoadingModelsRef.current = false;
     }
-  }, [client, isAuthenticated, selectedModel]);
+  }, [bodhiClient, isAuthenticated, selectedModel]);
 
   useEffect(() => {
     if (isReady && isAuthenticated && models.length === 0 && !isLoadingModelsRef.current) {
@@ -132,7 +133,7 @@ export function useAgent(tools: AgentTool[]) {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      _agent?.abort();
+      void _rpcClient?.abort();
     }
   }, [isAuthenticated]);
 
@@ -149,30 +150,35 @@ export function useAgent(tools: AgentTool[]) {
       }
       setError(null);
 
-      const serverUrl = getServerUrlOrThrow(client.getState());
-      const agent = getOrCreateAgent();
-      agent.state.model = buildModel(selectedModel, serverUrl, selectedApiFormat);
-      agent.state.tools = toolsRef.current;
-      agent.state.systemPrompt = '';
+      const serverUrl = getServerUrlOrThrow(bodhiClient.getState());
+      const { session, rpcClient } = ensureSession();
+      const model = buildModel(selectedModel, serverUrl, selectedApiFormat);
+
+      // Host-side configuration: tools carry non-cloneable execute closures,
+      // so they bypass RPC and are set directly on the session. Phase 4 will
+      // replace this with a MessagePort-backed ProxyTool pattern.
+      session.setTools(toolsRef.current);
+      session.setSystemPrompt('');
+
+      await rpcClient.setModel(model);
 
       try {
-        await agent.prompt(prompt);
+        await rpcClient.prompt(prompt);
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
         console.error('Failed to send message:', err);
         setError(getErrorMessage(err, 'Failed to send message'));
       }
     },
-    [client, selectedModel, selectedApiFormat]
+    [bodhiClient, selectedModel, selectedApiFormat]
   );
 
   const stop = useCallback(() => {
-    _agent?.abort();
+    void _rpcClient?.abort();
   }, []);
 
   const clearMessages = useCallback(() => {
-    _agent?.abort();
-    if (_agent) _agent.state.messages = [];
+    void _rpcClient?.reset();
     setMessages([]);
     setStreamingMessage(undefined);
     setError(null);
