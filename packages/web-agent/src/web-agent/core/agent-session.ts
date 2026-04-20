@@ -14,15 +14,13 @@ export interface AgentSessionOptions {
  * Responsibilities:
  * - owns the session Agent instance
  * - exposes the exact surface the RPC server needs (plain-data in/out)
- * - holds non-serializable state (tools, streamFn) that can't cross RPC
- *   via direct setters — in Phase 1 the "host" code (React hook) calls
- *   these directly because client and server share a JS context
- *
- * Phase 4 will move this into a Web Worker; tools will become proxies
- * that call back to the main thread over the same transport.
+ * - holds non-serializable state (tools, streamFn, auth token) that can't
+ *   cross RPC via direct setters — the M4 Worker host calls these directly
+ *   inside the Worker context where the closures live
  */
 export class AgentSession {
   private readonly agent: Agent;
+  private authToken: string | null = null;
 
   constructor(options: AgentSessionOptions = {}) {
     this.agent = new Agent({
@@ -81,7 +79,7 @@ export class AgentSession {
   }
 
   // ==========================================================================
-  // Host-only surface — non-serializable state, called directly in Phase 1
+  // Host-only surface — non-serializable state, called inside the Worker
   // ==========================================================================
 
   setTools(tools: AgentTool[]): void {
@@ -90,6 +88,18 @@ export class AgentSession {
 
   setStreamFn(fn: StreamFn): void {
     this.agent.streamFn = fn;
+  }
+
+  /**
+   * Stash the current auth token for use by the streamFn. Push-on-rotation
+   * (vs upcall-on-stream) keeps the streaming hot path single-process.
+   */
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+  }
+
+  getAuthToken(): string | null {
+    return this.authToken;
   }
 
   subscribe(handler: (event: AgentEvent) => void | Promise<void>): () => void {

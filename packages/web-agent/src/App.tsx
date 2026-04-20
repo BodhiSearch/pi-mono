@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { BodhiProvider, useBodhi } from '@bodhiapp/bodhi-js-react';
 import { Toaster } from '@/components/ui/sonner';
+import { WebAgentProvider } from '@/providers/WebAgentProvider';
 import { AUTH_CLIENT_ID, AUTH_SERVER_URL } from './env';
 import Layout from './components/Layout';
 
@@ -37,7 +38,9 @@ function App() {
       }}
       basePath={BASE_PATH}
     >
-      <AppContent />
+      <WebAgentProvider>
+        <AppContent />
+      </WebAgentProvider>
     </BodhiProvider>
   );
 }

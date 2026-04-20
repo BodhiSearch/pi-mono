@@ -1,49 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
-import { streamSimple } from '@mariozechner/pi-ai';
-import type { AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
+import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { getErrorMessage } from '@/lib/utils';
 import { buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
 import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
-import { AgentSession, createInProcessTransportPair, RpcClient, RpcServer } from '@/web-agent';
-
-const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
+import { useWebAgent } from '@/providers/web-agent-context';
+import type { McpToolDescriptor } from '@/web-agent';
+import type { ToolCallHandler } from '@/web-agent';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
 
-let _session: AgentSession | null = null;
-let _rpcClient: RpcClient | null = null;
-let _tokenGetter: () => string | null = () => null;
-
-function getStreamFn(): StreamFn {
-  return (model, context, options) => {
-    const token = _tokenGetter();
-    const headers = token
-      ? { ...model.headers, Authorization: `Bearer ${token}`, 'x-api-key': token }
-      : model.headers;
-    const patchedModel = headers !== model.headers ? { ...model, headers } : model;
-    return streamSimple(patchedModel, context, options);
-  };
+interface UseAgentInput {
+  /** MCP tool descriptors (plain data) shipped to the Worker. */
+  mcpToolDescriptors: McpToolDescriptor[];
+  /** Handler invoked when the Worker-side proxy tool upcalls. */
+  toolCallHandler: ToolCallHandler;
 }
 
-function ensureSession(): { session: AgentSession; rpcClient: RpcClient } {
-  if (!_session || !_rpcClient) {
-    _session = new AgentSession({
-      streamFn: getStreamFn(),
-      getApiKey: () => SENTINEL_API_KEY,
-    });
-    const { client, server } = createInProcessTransportPair();
-    // Server retains itself via the transport's event-listener closure —
-    // we don't need to hold a reference to prevent GC.
-    new RpcServer(server, _session);
-    _rpcClient = new RpcClient(client);
-  }
-  return { session: _session, rpcClient: _rpcClient };
-}
-
-export function useAgent(tools: AgentTool[]) {
+export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput) {
+  const { rpcClient } = useWebAgent();
   const { client: bodhiClient, auth, isAuthenticated, isReady } = useBodhi();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -55,21 +32,31 @@ export function useAgent(tools: AgentTool[]) {
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
 
-  const authTokenRef = useRef<string | null>(auth.accessToken);
-  const toolsRef = useRef<AgentTool[]>(tools);
   const isLoadingModelsRef = useRef(false);
 
+  // Push the auth token to the Worker on every change. The Worker's
+  // streamFn closure reads this synchronously per request.
   useEffect(() => {
-    authTokenRef.current = auth.accessToken;
-    _tokenGetter = () => authTokenRef.current;
-  }, [auth.accessToken]);
+    void rpcClient.setAuthToken(auth.accessToken ?? null);
+  }, [auth.accessToken, rpcClient]);
+
+  // Register the handler that services Worker-side MCP tool upcalls.
+  // Must be set before any prompt that could invoke an MCP tool.
+  useEffect(() => {
+    rpcClient.setToolCallHandler(toolCallHandler);
+    return () => {
+      rpcClient.setToolCallHandler(null);
+    };
+  }, [rpcClient, toolCallHandler]);
+
+  // Push the MCP tool descriptors to the Worker so the agent's tool list
+  // includes them. Vault tools live entirely Worker-side and are wired
+  // by the WorkerAgentHost on mount_vault.
+  useEffect(() => {
+    void rpcClient.setMcpTools(mcpToolDescriptors);
+  }, [rpcClient, mcpToolDescriptors]);
 
   useEffect(() => {
-    toolsRef.current = tools;
-  }, [tools]);
-
-  useEffect(() => {
-    const { rpcClient } = ensureSession();
     const unsubscribe = rpcClient.subscribe(envelope => {
       switch (envelope.event.type) {
         case 'agent_start':
@@ -98,7 +85,7 @@ export function useAgent(tools: AgentTool[]) {
       }
     });
     return unsubscribe;
-  }, []);
+  }, [rpcClient]);
 
   const loadModels = useCallback(async () => {
     if (isLoadingModelsRef.current) return;
@@ -133,9 +120,9 @@ export function useAgent(tools: AgentTool[]) {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      void _rpcClient?.abort();
+      void rpcClient.abort();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, rpcClient]);
 
   const setSelectedModel = useCallback((id: string, fmt: ApiFormat) => {
     setSelectedModelState(id);
@@ -151,15 +138,9 @@ export function useAgent(tools: AgentTool[]) {
       setError(null);
 
       const serverUrl = getServerUrlOrThrow(bodhiClient.getState());
-      const { session, rpcClient } = ensureSession();
       const model = buildModel(selectedModel, serverUrl, selectedApiFormat);
 
-      // Host-side configuration: tools carry non-cloneable execute closures,
-      // so they bypass RPC and are set directly on the session. Phase 4 will
-      // replace this with a MessagePort-backed ProxyTool pattern.
-      session.setTools(toolsRef.current);
-      session.setSystemPrompt('');
-
+      await rpcClient.setSystemPrompt('');
       await rpcClient.setModel(model);
 
       try {
@@ -170,19 +151,19 @@ export function useAgent(tools: AgentTool[]) {
         setError(getErrorMessage(err, 'Failed to send message'));
       }
     },
-    [bodhiClient, selectedModel, selectedApiFormat]
+    [bodhiClient, selectedModel, selectedApiFormat, rpcClient]
   );
 
   const stop = useCallback(() => {
-    void _rpcClient?.abort();
-  }, []);
+    void rpcClient.abort();
+  }, [rpcClient]);
 
   const clearMessages = useCallback(() => {
-    void _rpcClient?.reset();
+    void rpcClient.reset();
     setMessages([]);
     setStreamingMessage(undefined);
     setError(null);
-  }, []);
+  }, [rpcClient]);
 
   const clearError = useCallback(() => {
     setError(null);

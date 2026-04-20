@@ -1,55 +1,50 @@
 /**
- * Dev-mode-only vault seed seam.
+ * Dev-mode-only vault seed reader.
  *
- * Pattern copied from bodhiapps/zenfs-browser. Playwright injects
- * `window.__zenfsSeed` via `page.addInitScript` before React mounts.
- * On boot we detect the seed, dynamic-import the InMemory vault adapter
- * (so it tree-shakes out of production) and pre-mount `/vault` before any
- * agent tool or UI hook sees the vault state.
+ * After M4 we don't mount anything on the main thread — the seed flows
+ * into the agent Worker's init message and the InMemory ZenFS backend is
+ * mounted Worker-side. This hook just surfaces the seed (or its absence)
+ * so VaultProvider can wait for the Worker mount to confirm before
+ * announcing `mounted` to consumers.
  */
 
 import { useEffect, useState } from 'react';
-
-interface ZenfsSeed {
-  files: Record<string, string>;
-  name: string;
-}
+import { readDevSeed } from '@/fs/in-memory-vault';
 
 interface DevSeedBootState {
   /**
-   * Whether we have finished probing for a seed and (if one was present)
-   * finished mounting it. Until `ready` is `true`, consumers should hold
-   * off on making mount decisions.
+   * Whether we have finished probing for a seed. In production this is
+   * synchronously `true`. In dev with a seed present, it stays `false`
+   * until the Worker confirms the mount.
    */
   ready: boolean;
-  /** The seeded vault name when mounted, else null. */
+  /** The seeded vault name when present, else null. */
   seeded: { name: string } | null;
 }
 
-export function useDevSeedBoot(): DevSeedBootState {
+export function useDevSeedBoot(workerMounted: boolean): DevSeedBootState {
   const [state, setState] = useState<DevSeedBootState>(() => {
     if (!import.meta.env.DEV) return { ready: true, seeded: null };
-    const seed = (window as unknown as { __zenfsSeed?: ZenfsSeed }).__zenfsSeed;
+    const seed = readDevSeed();
     if (!seed) return { ready: true, seeded: null };
     return { ready: false, seeded: null };
   });
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const seed = (window as unknown as { __zenfsSeed?: ZenfsSeed }).__zenfsSeed;
+    const seed = readDevSeed();
     if (!seed) return;
+    if (!workerMounted) return;
     let cancelled = false;
     (async () => {
-      const mod = await import('@/fs/in-memory-vault');
-      if (cancelled) return;
-      await mod.mountInMemoryVault(seed);
+      await Promise.resolve();
       if (cancelled) return;
       setState({ ready: true, seeded: { name: seed.name } });
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [workerMounted]);
 
   return state;
 }

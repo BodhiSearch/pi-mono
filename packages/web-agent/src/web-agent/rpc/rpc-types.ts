@@ -9,6 +9,7 @@
 
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { SerializedError } from './error';
 
 // ============================================================================
 // Commands (client → server)
@@ -21,9 +22,39 @@ export type RpcCommand =
   | { id: string; type: 'get_messages' }
   | { id: string; type: 'set_model'; model: Model<Api> | undefined }
   | { id: string; type: 'set_system_prompt'; prompt: string }
-  | { id: string; type: 'reset' };
+  | { id: string; type: 'reset' }
+  | { id: string; type: 'set_auth_token'; token: string | null }
+  | { id: string; type: 'mount_vault'; handle: FileSystemDirectoryHandle }
+  | { id: string; type: 'unmount_vault' }
+  | { id: string; type: 'set_mcp_tools'; tools: McpToolDescriptor[] }
+  | {
+      id: string;
+      type: 'tool_call_response';
+      callId: string;
+      ok: true;
+      result: unknown;
+    }
+  | {
+      id: string;
+      type: 'tool_call_response';
+      callId: string;
+      ok: false;
+      error: SerializedError;
+    };
 
 export type RpcCommandType = RpcCommand['type'];
+
+/**
+ * Plain-data description of an MCP tool. The actual `execute` closure lives
+ * on the main thread (it captures the MCP client + auth context); the
+ * Worker-side AgentSession sees only this descriptor and emits a
+ * `tool_call_request` event when the agent invokes one.
+ */
+export interface McpToolDescriptor {
+  name: string;
+  description: string;
+  parameters: unknown;
+}
 
 // ============================================================================
 // Session state snapshot
@@ -48,7 +79,18 @@ export type RpcResponse =
   | { id: string; type: 'response'; command: 'set_model'; success: true }
   | { id: string; type: 'response'; command: 'set_system_prompt'; success: true }
   | { id: string; type: 'response'; command: 'reset'; success: true }
-  | { id: string; type: 'response'; command: RpcCommandType; success: false; error: string };
+  | { id: string; type: 'response'; command: 'set_auth_token'; success: true }
+  | { id: string; type: 'response'; command: 'mount_vault'; success: true }
+  | { id: string; type: 'response'; command: 'unmount_vault'; success: true }
+  | { id: string; type: 'response'; command: 'set_mcp_tools'; success: true }
+  | { id: string; type: 'response'; command: 'tool_call_response'; success: true }
+  | {
+      id: string;
+      type: 'response';
+      command: RpcCommandType;
+      success: false;
+      error: SerializedError;
+    };
 
 // ============================================================================
 // Events (server → client, unsolicited; no id correlation)
@@ -59,7 +101,7 @@ export type RpcResponse =
  * derived state (messages, streaming message, error) so the client can
  * update its UI without issuing follow-up get_* commands on every event.
  */
-export interface RpcEventEnvelope {
+export interface RpcAgentEventEnvelope {
   type: 'event';
   event: AgentEvent;
   messages: AgentMessage[];
@@ -67,6 +109,20 @@ export interface RpcEventEnvelope {
   streamingMessage?: AgentMessage;
   errorMessage?: string;
 }
+
+/**
+ * Worker → Main upcall: the agent invoked a tool whose closure lives on the
+ * main thread (e.g. an MCP tool that holds the bodhiClient + auth context).
+ * Main runs the actual call and sends `tool_call_response` back.
+ */
+export interface RpcToolCallRequest {
+  type: 'tool_call_request';
+  callId: string;
+  toolName: string;
+  args: unknown;
+}
+
+export type RpcEventEnvelope = RpcAgentEventEnvelope | RpcToolCallRequest;
 
 // ============================================================================
 // Wire envelope

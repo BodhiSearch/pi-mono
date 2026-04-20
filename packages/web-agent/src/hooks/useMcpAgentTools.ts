@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import { createMcpClient } from '@bodhiapp/bodhi-js-react/mcp';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { Type } from '@mariozechner/pi-ai';
-import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import {
   decodeMcpToolName,
   encodeMcpToolName,
@@ -11,6 +9,7 @@ import {
   type Mcp,
   type McpTool,
 } from '@/lib/mcp-tools';
+import type { McpToolDescriptor, ToolCallHandler } from '@/web-agent';
 
 interface UseMcpAgentToolsInput {
   enabledMcpTools: Record<string, string[]>;
@@ -18,14 +17,23 @@ interface UseMcpAgentToolsInput {
   toolsByMcpId: Record<string, McpTool[]>;
 }
 
+interface UseMcpAgentToolsResult {
+  /** Plain-data descriptors shipped to the Worker. */
+  descriptors: McpToolDescriptor[];
+  /** Handler invoked when the Worker upcalls a tool. */
+  handler: ToolCallHandler;
+}
+
+const NOOP_HANDLER: ToolCallHandler = async toolName => {
+  throw new Error(`MCP tool "${toolName}" is not registered`);
+};
+
 export function useMcpAgentTools({
   enabledMcpTools,
   mcps,
   toolsByMcpId,
-}: UseMcpAgentToolsInput): AgentTool[] {
+}: UseMcpAgentToolsInput): UseMcpAgentToolsResult {
   const { client } = useBodhi();
-  // useState (not useRef) to hold this mutable cache: refs captured by
-  // closures created during render trip react-hooks/refs.
   const [clientsCache] = useState<Map<string, Client>>(() => new Map());
 
   const mcpBySlug = useMemo(() => {
@@ -43,9 +51,8 @@ export function useMcpAgentTools({
     };
   }, [clientsCache]);
 
-  return useMemo(() => {
-    const tools: AgentTool[] = [];
-
+  const descriptors = useMemo<McpToolDescriptor[]>(() => {
+    const out: McpToolDescriptor[] = [];
     for (const [mcpId, enabledToolNames] of Object.entries(enabledMcpTools)) {
       if (enabledToolNames.length === 0) continue;
       const mcp = mcps.find(m => m.id === mcpId);
@@ -54,55 +61,57 @@ export function useMcpAgentTools({
       const mcpTools = toolsByMcpId[mcpId] ?? [];
       for (const mcpTool of mcpTools) {
         if (!enabledToolNames.includes(mcpTool.name)) continue;
-
         const encodedName = encodeMcpToolName(mcp.slug, mcpTool.name);
-
-        tools.push({
+        out.push({
           name: encodedName,
-          label: mcpTool.name,
           description: mcpTool.description ?? '',
-          parameters: Type.Unsafe(mcpTool.inputSchema ?? {}),
-          execute: async (
-            _toolCallId: string,
-            params: unknown
-          ): Promise<AgentToolResult<unknown>> => {
-            const decoded = decodeMcpToolName(encodedName);
-            if (!decoded) throw new Error(`Failed to decode tool name: ${encodedName}`);
-
-            const target = mcpBySlug.get(decoded.mcpSlug);
-            if (!target) throw new Error(`Unknown MCP slug: ${decoded.mcpSlug}`);
-
-            let mcpClient = clientsCache.get(decoded.mcpSlug);
-            if (!mcpClient) {
-              mcpClient = await createMcpClient(client, target.path);
-              clientsCache.set(decoded.mcpSlug, mcpClient);
-            }
-
-            const result = await mcpClient.callTool({
-              name: decoded.toolName,
-              arguments: (params ?? {}) as Record<string, unknown>,
-            });
-
-            if (result.isError) {
-              const text =
-                typeof result.content === 'string'
-                  ? result.content
-                  : JSON.stringify(result.content);
-              throw new Error(text);
-            }
-
-            const text =
-              typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-
-            return {
-              content: [{ type: 'text', text }],
-              details: result.content,
-            };
-          },
+          parameters: mcpTool.inputSchema ?? {},
         });
       }
     }
+    return out;
+  }, [enabledMcpTools, mcps, toolsByMcpId]);
 
-    return tools;
-  }, [enabledMcpTools, mcps, toolsByMcpId, mcpBySlug, client, clientsCache]);
+  const handler = useCallback<ToolCallHandler>(
+    async (toolName, args) => {
+      const decoded = decodeMcpToolName(toolName);
+      if (!decoded) throw new Error(`Failed to decode tool name: ${toolName}`);
+
+      const target = mcpBySlug.get(decoded.mcpSlug);
+      if (!target) throw new Error(`Unknown MCP slug: ${decoded.mcpSlug}`);
+
+      let mcpClient = clientsCache.get(decoded.mcpSlug);
+      if (!mcpClient) {
+        mcpClient = await createMcpClient(client, target.path);
+        clientsCache.set(decoded.mcpSlug, mcpClient);
+      }
+
+      const result = await mcpClient.callTool({
+        name: decoded.toolName,
+        arguments: (args ?? {}) as Record<string, unknown>,
+      });
+
+      if (result.isError) {
+        const text =
+          typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+        throw new Error(text);
+      }
+
+      const text =
+        typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+
+      return {
+        content: [{ type: 'text', text }],
+        details: result.content,
+      };
+    },
+    [mcpBySlug, client, clientsCache]
+  );
+
+  // Always return a non-null handler — even when there are no descriptors,
+  // the Worker may still upcall if MCP tools are registered later.
+  return {
+    descriptors,
+    handler: descriptors.length > 0 ? handler : NOOP_HANDLER,
+  };
 }

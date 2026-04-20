@@ -1,84 +1,82 @@
 /**
- * Mount a FileSystemDirectoryHandle at /vault via ZenFS.
+ * Main-thread ZenFS proxy.
  *
- * Pattern copied from bodhiapps/zenfs-browser. The WebAccess backend wraps
- * the native FSA handle; /vault becomes the root for all fs tools.
+ * After M4 the real ZenFS backend (WebAccess wrapping the FSA handle, or
+ * InMemory for the dev seed) lives inside the agent Worker. This module
+ * mounts a `Port` backend at `/vault` so every `fs.promises.*` call from
+ * UI consumers (FileTree poll, FileViewer, MarkdownEditor) auto-marshals
+ * over a MessageChannel to the Worker's real backend.
+ *
+ * The Worker side handles the actual handle/seed lifecycle — see
+ * `src/web-agent/worker/worker-host.ts`.
  */
 
-import { configure, fs, vfs } from '@zenfs/core';
-import { WebAccess } from '@zenfs/dom';
+import { configure, fs, Port, vfs } from '@zenfs/core';
 
 export { fs };
 
+// ZenFS's port option type unions WebSocket which makes structural matching
+// against the browser MessagePort fail; cast at the call site.
+type ZenfsPortOpt = Parameters<typeof Port.create>[0]['port'];
+
 export const VAULT_MOUNT = '/vault';
 
-let mounted = false;
-let mountedHandle: FileSystemDirectoryHandle | null = null;
-let inFlight: Promise<void> | null = null;
+let mountedPort: MessagePort | null = null;
+let mountPromise: Promise<void> | null = null;
 
 /**
- * Mount the given FileSystemDirectoryHandle at /vault.
+ * Mount the ZenFS Port backend at `/vault` pointing at the Worker's VFS
+ * port. Idempotent — mounting the same port twice is a no-op; mounting
+ * a different port detaches the previous mount first.
  *
- * Serialised via a module-level promise so overlapping callers (React
- * StrictMode re-running effects, provider unmount/remount on fast refresh)
- * don't race `configure`/`vfs.mount`. If the same handle is already mounted
- * or is currently being mounted the call is a no-op / shares the in-flight
- * promise.
+ * `port` must be a MessagePort whose other end is held by the Worker and
+ * has had a real backend `attachFS`'d to it. PortFS waits for the remote
+ * to respond to `ready` before resolving.
  */
-export async function mountVault(handle: FileSystemDirectoryHandle): Promise<void> {
-  if (inFlight) {
-    await inFlight;
-    if (mounted && mountedHandle === handle) return;
+export async function mountVaultPort(port: MessagePort): Promise<void> {
+  if (mountedPort === port && mountPromise) {
+    await mountPromise;
+    return;
   }
-  if (mounted && mountedHandle === handle) return;
-
-  inFlight = (async () => {
-    if (mounted) {
-      await unmountInternal();
+  if (mountedPort && mountedPort !== port) {
+    try {
+      vfs.umount(VAULT_MOUNT);
+    } catch {
+      // best-effort
     }
+    mountedPort = null;
+    mountPromise = null;
+  }
+  mountedPort = port;
+  // Both ends of the channel use addEventListener-based listeners (via
+  // ZenFS RPC.from) which require explicit start(). Worker side does its
+  // own start() in agent-worker.ts.
+  port.start();
+  mountPromise = (async () => {
     await configure({ mounts: {} });
-    const webAccessFs = await WebAccess.create({ handle });
-    vfs.mount(VAULT_MOUNT, webAccessFs);
-    mounted = true;
-    mountedHandle = handle;
+    const portFs = await Port.create({
+      port: port as unknown as ZenfsPortOpt,
+      // 250ms default trips on first ready() round-trip when the worker is
+      // still spinning up — bump to a value that's still snappy.
+      timeout: 5_000,
+    });
+    vfs.mount(VAULT_MOUNT, portFs);
+    await portFs.ready();
   })();
-
-  try {
-    await inFlight;
-  } finally {
-    inFlight = null;
-  }
-}
-
-async function unmountInternal(): Promise<void> {
-  try {
-    vfs.umount(VAULT_MOUNT);
-  } catch {
-    // mount may not exist if the page was freshly loaded
-  }
-  mounted = false;
-  mountedHandle = null;
-}
-
-/** Unmount /vault. Safe to call when nothing is mounted. */
-export async function unmountVault(): Promise<void> {
-  if (inFlight) {
-    await inFlight;
-  }
-  if (!mounted) return;
-  await unmountInternal();
+  await mountPromise;
 }
 
 export function isVaultMounted(): boolean {
-  return mounted;
+  return mountedPort !== null;
 }
 
-/**
- * Marks the provider's internal mounted flag. Used by the dev-seed boot
- * path which configures the InMemory backend directly and needs the flag
- * to reflect reality so subsequent unmount calls work.
- */
-export function setMountedForSeed(value: boolean): void {
-  mounted = value;
-  if (!value) mountedHandle = null;
+export async function unmountVault(): Promise<void> {
+  if (!mountedPort) return;
+  try {
+    vfs.umount(VAULT_MOUNT);
+  } catch {
+    // best-effort
+  }
+  mountedPort = null;
+  mountPromise = null;
 }

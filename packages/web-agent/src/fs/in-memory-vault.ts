@@ -1,18 +1,15 @@
 /**
- * In-memory ZenFS vault for E2E tests.
+ * Dev-only InMemory vault seed reader (main-thread side).
  *
- * TEST-ONLY. Loaded via `useDevSeedBoot`'s `import.meta.env.DEV`-gated
- * dynamic import so this module tree-shakes out of production bundles.
+ * After M4 the actual InMemory ZenFS backend lives inside the agent
+ * Worker — `WorkerAgentHost.mountDevSeed(seed)` constructs and seeds it
+ * over there. This module's only job on main is to read the seed object
+ * Playwright stashed on `window.__zenfsSeed` and expose it to the boot
+ * code so the Worker init message can carry it.
  *
- * Accepts a seed of `{ name, files }` produced by `e2e/helpers/install-vault.ts`
- * (keys are absolute `/vault/...` paths, values are UTF-8 content), pre-mounts
- * a ZenFS InMemory backend at `/vault`, and writes the seeded files plus
- * their parent directories. After this runs, the rest of the app talks to
- * ZenFS without knowing the backend is InMemory.
+ * Test-only. Loaded via `import.meta.env.DEV`-gated dynamic import so it
+ * tree-shakes out of production bundles.
  */
-
-import { configure, fs, InMemory, vfs } from '@zenfs/core';
-import { setMountedForSeed, VAULT_MOUNT } from '@/web-agent/fs/zenfs-provider';
 
 export interface InMemoryVaultSeed {
   /** Absolute paths rooted at `/vault`, mapped to file contents (UTF-8 text). */
@@ -21,48 +18,12 @@ export interface InMemoryVaultSeed {
   name: string;
 }
 
-// Module-level mount guard. Multiple React subtrees (Header + ChatDemo) both
-// call useVaultMount → useDevSeedBoot, so without this guard we'd reconfigure
-// ZenFS mid-session and wipe any files the agent wrote via the write tool.
-let mountPromise: Promise<void> | null = null;
-
 /**
- * Pre-mount the InMemory ZenFS backend populated with `seed`. Idempotent —
- * subsequent calls return the same promise and perform no additional work.
+ * Read the dev-mode seed from `window.__zenfsSeed`. Returns `undefined`
+ * when not in dev mode or no seed is present.
  */
-export async function mountInMemoryVault(seed: InMemoryVaultSeed): Promise<void> {
-  if (mountPromise) return mountPromise;
-  mountPromise = performMount(seed);
-  return mountPromise;
-}
-
-async function performMount(seed: InMemoryVaultSeed): Promise<void> {
-  await configure({ mounts: {} });
-  const memFs = InMemory.create({ label: seed.name });
-  vfs.mount(VAULT_MOUNT, memFs);
-
-  const paths = Object.keys(seed.files).sort();
-  for (const absPath of paths) {
-    const lastSlash = absPath.lastIndexOf('/');
-    if (lastSlash > 0) {
-      const parent = absPath.slice(0, lastSlash);
-      try {
-        await fs.promises.mkdir(parent, { recursive: true });
-      } catch (err: unknown) {
-        if (
-          err === null ||
-          typeof err !== 'object' ||
-          !('code' in err) ||
-          (err as { code?: string }).code !== 'EEXIST'
-        ) {
-          throw err;
-        }
-      }
-    }
-    await fs.promises.writeFile(absPath, seed.files[absPath], {
-      encoding: 'utf8',
-    });
-  }
-
-  setMountedForSeed(true);
+export function readDevSeed(): InMemoryVaultSeed | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const seed = (window as unknown as { __zenfsSeed?: InMemoryVaultSeed }).__zenfsSeed;
+  return seed;
 }

@@ -1,6 +1,15 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
-import type { RpcCommand, RpcEventEnvelope, RpcResponse, RpcSessionState } from './rpc-types';
+import { deserializeError, serializeError } from './error';
+import type {
+  McpToolDescriptor,
+  RpcAgentEventEnvelope,
+  RpcCommand,
+  RpcEventEnvelope,
+  RpcResponse,
+  RpcSessionState,
+  RpcToolCallRequest,
+} from './rpc-types';
 import type { Transport } from './transport';
 
 type Pending = {
@@ -14,6 +23,14 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 type RpcCommandPayload = DistributiveOmit<RpcCommand, 'id'>;
 
 /**
+ * Handler invoked when the server upcalls a tool that lives on this side of
+ * the boundary (e.g. an MCP tool whose closure can't cross the Worker).
+ * Returns the tool result; throws to surface a tool-call error back to the
+ * Worker-side AgentSession.
+ */
+export type ToolCallHandler = (toolName: string, args: unknown) => Promise<unknown>;
+
+/**
  * Typed client over a `Transport`.
  *
  * Each method issues a correlated RpcCommand and resolves when the matching
@@ -22,10 +39,11 @@ type RpcCommandPayload = DistributiveOmit<RpcCommand, 'id'>;
  */
 export class RpcClient {
   private readonly pending = new Map<string, Pending>();
-  private readonly listeners = new Set<(envelope: RpcEventEnvelope) => void>();
+  private readonly listeners = new Set<(envelope: RpcAgentEventEnvelope) => void>();
   private readonly transport: Transport;
   private readonly unsubscribe: () => void;
   private idCounter = 0;
+  private toolCallHandler: ToolCallHandler | null = null;
 
   constructor(transport: Transport) {
     this.transport = transport;
@@ -60,7 +78,34 @@ export class RpcClient {
     return this.send({ type: 'reset' }) as Promise<void>;
   }
 
-  subscribe(listener: (envelope: RpcEventEnvelope) => void): () => void {
+  setAuthToken(token: string | null): Promise<void> {
+    return this.send({ type: 'set_auth_token', token }) as Promise<void>;
+  }
+
+  mountVault(handle: FileSystemDirectoryHandle): Promise<void> {
+    return this.send({ type: 'mount_vault', handle }) as Promise<void>;
+  }
+
+  unmountVault(): Promise<void> {
+    return this.send({ type: 'unmount_vault' }) as Promise<void>;
+  }
+
+  setMcpTools(tools: McpToolDescriptor[]): Promise<void> {
+    return this.send({ type: 'set_mcp_tools', tools }) as Promise<void>;
+  }
+
+  /**
+   * Register the handler invoked when the Worker upcalls a tool.
+   *
+   * The handler runs the tool (typically an MCP call) on this side and
+   * returns the result; the client marshals success/failure back to the
+   * Worker via `tool_call_response`.
+   */
+  setToolCallHandler(handler: ToolCallHandler | null): void {
+    this.toolCallHandler = handler;
+  }
+
+  subscribe(listener: (envelope: RpcAgentEventEnvelope) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -72,6 +117,7 @@ export class RpcClient {
     }
     this.pending.clear();
     this.listeners.clear();
+    this.toolCallHandler = null;
   }
 
   private send(cmd: RpcCommandPayload): Promise<unknown> {
@@ -88,6 +134,10 @@ export class RpcClient {
       for (const listener of this.listeners) listener(raw);
       return;
     }
+    if (raw.type === 'tool_call_request') {
+      void this.handleToolCallRequest(raw);
+      return;
+    }
     if (raw.type === 'response') {
       const pending = this.pending.get(raw.id);
       if (!pending) return;
@@ -95,8 +145,37 @@ export class RpcClient {
       if (raw.success) {
         pending.resolve('data' in raw ? raw.data : undefined);
       } else {
-        pending.reject(new Error(raw.error));
+        pending.reject(deserializeError(raw.error));
       }
+    }
+  }
+
+  private async handleToolCallRequest(req: RpcToolCallRequest): Promise<void> {
+    const handler = this.toolCallHandler;
+    if (!handler) {
+      void this.send({
+        type: 'tool_call_response',
+        callId: req.callId,
+        ok: false,
+        error: serializeError(new Error(`No handler for tool ${req.toolName}`)),
+      });
+      return;
+    }
+    try {
+      const result = await handler(req.toolName, req.args);
+      void this.send({
+        type: 'tool_call_response',
+        callId: req.callId,
+        ok: true,
+        result,
+      });
+    } catch (err) {
+      void this.send({
+        type: 'tool_call_response',
+        callId: req.callId,
+        ok: false,
+        error: serializeError(err),
+      });
     }
   }
 }
@@ -104,5 +183,5 @@ export class RpcClient {
 function isEnvelope(value: unknown): value is RpcResponse | RpcEventEnvelope {
   if (typeof value !== 'object' || value === null) return false;
   const t = (value as { type?: unknown }).type;
-  return t === 'response' || t === 'event';
+  return t === 'response' || t === 'event' || t === 'tool_call_request';
 }
