@@ -29,8 +29,8 @@ export const isHeadless =
     ? false
     : process.env.HEADLESS === 'true' || process.env.CI === 'true';
 
-export const BODHI_SERVER_PORT = 51135;
-export const BODHI_DEFAULT_PORT = 1135;
+export const BODHI_SERVER_PORT = 21135;
+export const DEV_SERVER_PORT = 25173;
 export const BODHI_SERVER_URL = `http://localhost:${BODHI_SERVER_PORT}`;
 export const API_MODEL_PREFIX = 'oai/';
 export const API_MODEL_NAME = 'gpt-4.1-nano';
@@ -50,7 +50,11 @@ function isPortInUse(port: number): Promise<boolean> {
 }
 
 async function assertPortsFree(): Promise<void> {
-  const portsToCheck = [BODHI_SERVER_PORT, BODHI_DEFAULT_PORT];
+  // 25173 is owned by Playwright's `webServer` (npm run dev:e2e), which boots
+  // in parallel with globalSetup — checking it here races and spuriously fails.
+  // Playwright's `reuseExistingServer: false` already surfaces a clear error if
+  // that port is taken before the run starts.
+  const portsToCheck = [BODHI_SERVER_PORT];
   for (const port of portsToCheck) {
     if (await isPortInUse(port)) {
       throw new Error(

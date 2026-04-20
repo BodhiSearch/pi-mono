@@ -4,7 +4,7 @@ import { defineConfig, devices } from '@playwright/test';
 const isCI = !!process.env.CI;
 const isHeadless =
   process.env.HEADLESS === 'false' ? false : process.env.HEADLESS === 'true' || isCI;
-const baseURL = 'http://localhost:5173/';
+const baseURL = 'http://localhost:25173/';
 
 function buildUserAgent(): string {
   const platform = os.platform();
@@ -42,7 +42,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
+    command: 'npm run dev:e2e',
     url: baseURL,
     reuseExistingServer: false,
   },

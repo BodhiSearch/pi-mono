@@ -16,7 +16,7 @@ function need(k: string): string {
 }
 
 const server = new BodhiServerManager({
-  port: 51135,
+  port: 21135,
   host: 'localhost',
   appStatus: 'ready',
   createdBy: need('BODHIAPP_USERID'),
