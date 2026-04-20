@@ -18,6 +18,18 @@ export interface InMemoryVaultSeed {
   name: string;
 }
 
+/**
+ * Library-level configuration options. Passed through the Worker init
+ * envelope so both the main thread and the Worker agree on the concrete
+ * values without either side hard-coding defaults in business logic.
+ */
+export interface WebAgentOptions {
+  /** ZenFS mount path for the user's vault. Defaults to `/vault`. */
+  vaultMount?: string;
+  /** Dexie IDB database name for session storage. Defaults to `web-agent`. */
+  sessionsDbName?: string;
+}
+
 export interface AgentWorkerInit {
   type: typeof AGENT_WORKER_INIT_TYPE;
   agentPort: MessagePort;
@@ -28,6 +40,8 @@ export interface AgentWorkerInit {
    * the FSA `mount_vault` flow.
    */
   devSeed?: InMemoryVaultSeed;
+  /** Library-level options forwarded from `getAgentWorker()`. */
+  options?: WebAgentOptions;
 }
 
 export function isAgentWorkerInit(value: unknown): value is AgentWorkerInit {

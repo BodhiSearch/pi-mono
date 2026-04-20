@@ -78,8 +78,6 @@ export type {
   SessionStore,
 } from './core/session/store';
 
-export { ExtensionRegistry } from './core/extensions/registry';
-
 // Vault filesystem tools — exported for the Worker to instantiate
 // against its local ZenFS, and for tests.
 export { createVaultTools } from './core/tools';
@@ -96,11 +94,6 @@ export type {
 } from './fs/zenfs-operations';
 export { fs, isVaultMounted, mountVaultPort, unmountVault, VAULT_MOUNT } from './fs/zenfs-provider';
 export { resolveVaultPath, VaultPathError } from './fs/path-utils';
-export type {
-  Extension,
-  ExtensionAPI,
-  ExtensionContext,
-  ExtensionEventHandler,
-  ExtensionFactory,
-  ExtensionManifest,
-} from './core/extensions/types';
+
+// Extension types (M8 scaffolding) live internally at ./core/extensions/types
+// and will be re-exported from this barrel when the extension host ships.

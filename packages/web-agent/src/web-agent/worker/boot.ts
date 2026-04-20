@@ -19,7 +19,7 @@ import { RpcServer } from '../rpc/rpc-server';
 import { createInProcessTransportPair } from '../rpc/transports/in-process';
 import { createWorkerTransportPair } from '../rpc/transports/worker';
 import type { Transport } from '../rpc/transport';
-import type { InMemoryVaultSeed } from './init-protocol';
+import type { InMemoryVaultSeed, WebAgentOptions } from './init-protocol';
 import { WorkerAgentHost } from './worker-host';
 
 export interface AgentWorkerBoot {
@@ -34,11 +34,18 @@ export interface AgentWorkerBoot {
   worker: Worker | null;
 }
 
+export interface GetAgentWorkerOptions {
+  /** Dev seed for Playwright / local testing. */
+  devSeed?: InMemoryVaultSeed;
+  /** Library-level options (vault mount path, sessions DB name). */
+  agentOptions?: WebAgentOptions;
+}
+
 let booted: AgentWorkerBoot | null = null;
 
-export function getAgentWorker(devSeed?: InMemoryVaultSeed): AgentWorkerBoot {
+export function getAgentWorker(options: GetAgentWorkerOptions = {}): AgentWorkerBoot {
   if (booted) return booted;
-  booted = bootOnce(devSeed);
+  booted = bootOnce(options);
   return booted;
 }
 
@@ -47,9 +54,9 @@ export function _resetAgentWorkerForTests(): void {
   booted = null;
 }
 
-function bootOnce(devSeed?: InMemoryVaultSeed): AgentWorkerBoot {
+function bootOnce(options: GetAgentWorkerOptions): AgentWorkerBoot {
   if (typeof Worker === 'undefined') {
-    return bootInProcess();
+    return bootInProcess(options.agentOptions);
   }
   try {
     const worker = new Worker(new URL('./agent-worker.ts', import.meta.url), {
@@ -62,7 +69,10 @@ function bootOnce(devSeed?: InMemoryVaultSeed): AgentWorkerBoot {
     worker.addEventListener('messageerror', e => {
       console.error('[web-agent] Worker messageerror:', e);
     });
-    const { client, vfsPort } = createWorkerTransportPair(worker, { devSeed });
+    const { client, vfsPort } = createWorkerTransportPair(worker, {
+      devSeed: options.devSeed,
+      agentOptions: options.agentOptions,
+    });
     return {
       rpcClient: new RpcClient(client),
       vfsPort,
@@ -73,16 +83,18 @@ function bootOnce(devSeed?: InMemoryVaultSeed): AgentWorkerBoot {
     // is true but construction throws (jsdom + module workers historically).
     // Fall back to in-process so the caller still has a functional client.
     console.warn('[web-agent] Worker construction failed; falling back to in-process:', err);
-    return bootInProcess();
+    return bootInProcess(options.agentOptions);
   }
 }
 
-function bootInProcess(): AgentWorkerBoot {
+function bootInProcess(agentOptions?: WebAgentOptions): AgentWorkerBoot {
   const session = new AgentSession({});
   // No vfs port in fallback; vault tools won't work, but the agent does.
   const fakePort = makeFakePort();
   // In-process fallback uses MemorySessionStore so jsdom tests don't need IDB.
-  const host = new WorkerAgentHost(session, fakePort, new MemorySessionStore());
+  const host = new WorkerAgentHost(session, fakePort, new MemorySessionStore(), {
+    vaultMount: agentOptions?.vaultMount,
+  });
   const { client: clientT, server: serverT } = createInProcessTransportPair();
   // Server retains itself via the transport's listener closure.
   new RpcServer(serverT, host);

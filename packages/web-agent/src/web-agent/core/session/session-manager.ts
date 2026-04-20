@@ -41,8 +41,6 @@ import {
   type ThinkingLevelChangeEntry,
 } from './types';
 
-const DEFAULT_CWD = '/vault';
-
 interface SessionManagerArgs {
   store: SessionStore;
   sessionId: string;
@@ -84,11 +82,11 @@ export class SessionManager implements ReadonlySessionManager {
 
   static async create(
     store: SessionStore,
-    options: NewSessionOptions & { cwd?: string } = {}
+    options: NewSessionOptions & { cwd: string }
   ): Promise<SessionManager> {
     const row = await store.createSession({
       id: options.id,
-      cwd: options.cwd ?? DEFAULT_CWD,
+      cwd: options.cwd,
       parentSession: options.parentSession,
     });
     return new SessionManager({
@@ -414,16 +412,6 @@ export class SessionManager implements ReadonlySessionManager {
       this.labelTimestampsById.delete(targetId);
     }
     return id;
-  }
-
-  /**
-   * Legacy compatibility shim — the old file-backed manager had a write
-   * queue that callers drained before switching sessions. Store-backed
-   * appends await inline, so there is nothing to flush; kept as a no-op
-   * so existing call-sites continue to compile.
-   */
-  async flush(): Promise<void> {
-    // noop
   }
 
   // ==========================================================================

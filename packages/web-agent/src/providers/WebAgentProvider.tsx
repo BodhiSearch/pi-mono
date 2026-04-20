@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { readDevSeed } from '@/fs/in-memory-vault';
-import { disposeAgentWorker, getAgentWorker } from '@/web-agent/worker/boot';
+import { disposeAgentWorker, getAgentWorker } from '@/web-agent';
 import { WebAgentContext } from '@/providers/web-agent-context';
 import type { WebAgentContextValue } from '@/providers/web-agent-context';
 
@@ -21,7 +21,7 @@ export function WebAgentProvider({ children }: { children: ReactNode }) {
   // Read seed + boot synchronously inside the lazy initializer so
   // StrictMode's double-render doesn't double-spawn the Worker (boot is
   // module-singleton-guarded but we avoid the redundant call too).
-  const [boot] = useState(() => getAgentWorker(readDevSeed()));
+  const [boot] = useState(() => getAgentWorker({ devSeed: readDevSeed() }));
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;

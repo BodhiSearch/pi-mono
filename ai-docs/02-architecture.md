@@ -148,6 +148,39 @@ At the end of the roadmap, `packages/web-agent/src/web-agent/` gets lifted to it
 
 This only works if Principle "`src/web-agent/` imports inward only" (see `04-principles.md`) holds through every phase. Every Phase 2–5 review must check this.
 
+### Dependency classification (audit, Post-M5)
+
+The current `packages/web-agent/package.json` mixes library-grade and app-grade
+dependencies; Phase 6 re-classifies. This audit locks in which is which so the
+extraction commit is mechanical.
+
+**Library-grade (will ship with `@bodhiapp/web-agent`):**
+
+| Dependency | Where it enters | Phase-6 classification |
+| --- | --- | --- |
+| `@mariozechner/pi-ai` | `core/agent-session.ts`, `worker/agent-worker.ts` | `peerDependency` |
+| `@mariozechner/pi-agent-core` | `core/agent-session.ts`, tools, session manager | `peerDependency` |
+| `react` | `hooks/useSessionsList.ts` (only) | `peerDependency` |
+| `@zenfs/core` | `fs/zenfs-provider.ts`, `fs/zenfs-operations.ts`, `worker/worker-host.ts` | `dependency` |
+| `@zenfs/dom` | `worker/worker-host.ts` (WebAccess) | `dependency` |
+| `dexie` | `core/session/dexie-store.ts` | `dependency` |
+| `dexie-react-hooks` | `hooks/useSessionsList.ts` (only) | `dependency` |
+| `minimatch` | `core/tools/glob.ts`, `core/tools/grep.ts` | `dependency` |
+| `@sinclair/typebox` | every `core/tools/*.ts` schema | `dependency` |
+
+**App-grade (stays with the reference app, not in the extracted package):**
+
+`@bodhiapp/bodhi-js-react`, `@milkdown/*`, `@modelcontextprotocol/sdk`,
+`@radix-ui/*`, `radix-ui`, `class-variance-authority`, `clsx`, `lucide-react`,
+`next-themes`, `sonner`, `tailwind-merge`, `idb-keyval` (used by
+`src/hooks/useDirectoryHandle.ts` on the outer app side, not by `src/web-agent/`),
+`react-dom`. All of these are imported only from `packages/web-agent/src/`
+outside `src/web-agent/**` — grep-verified, Post-M5.
+
+Phase 6 re-classifies in one `package.json` edit. Until then, the monorepo
+keeps them all in `dependencies` — simpler for local dev, no functional
+impact.
+
 ## Open architectural questions (to resolve before the phase that needs them)
 
 - **Phase 4:** which thread holds the ZenFS mount? Handle mounted on main thread + proxy over port, or mounted in Worker directly? Needs benchmarking and an FSA-handle-transferability check before committing.

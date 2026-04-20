@@ -22,6 +22,11 @@ import type { AgentSessionHost, HostEventSink, ToolUpcallInvoker } from '../rpc/
 import type { McpToolDescriptor, RpcSessionState } from '../rpc/rpc-types';
 import type { InMemoryVaultSeed } from './init-protocol';
 
+export interface WorkerAgentHostOptions {
+  /** ZenFS mount path for the vault. Defaults to `VAULT_MOUNT` (`/vault`). */
+  vaultMount?: string;
+}
+
 // ZenFS's `Channel` type union includes WebSocket which makes structural
 // matching against the browser's MessagePort fail. At runtime `RPC.from`
 // detects MessagePort via `addEventListener in port`, so the cast is safe.
@@ -52,11 +57,18 @@ export class WorkerAgentHost implements AgentSessionHost {
   private readonly session: AgentSession;
   private readonly vfsPort: MessagePort;
   private readonly store: SessionStore;
+  private readonly vaultMount: string;
 
-  constructor(session: AgentSession, vfsPort: MessagePort, store: SessionStore) {
+  constructor(
+    session: AgentSession,
+    vfsPort: MessagePort,
+    store: SessionStore,
+    options: WorkerAgentHostOptions = {}
+  ) {
     this.session = session;
     this.vfsPort = vfsPort;
     this.store = store;
+    this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
     // Persist user/assistant/toolResult messages on turn boundaries.
     this.session.subscribe(event => {
       if (event.type !== 'message_end') return;
@@ -129,7 +141,7 @@ export class WorkerAgentHost implements AgentSessionHost {
       this.detachVault();
     }
     const webAccessFs = await WebAccess.create({ handle });
-    vfs.mount(VAULT_MOUNT, webAccessFs);
+    vfs.mount(this.vaultMount, webAccessFs);
     attachFS(asChannel(this.vfsPort), webAccessFs);
     this.attachedFs = {
       detach: () => {
@@ -139,13 +151,13 @@ export class WorkerAgentHost implements AgentSessionHost {
           // best-effort; channel may already be closed
         }
         try {
-          vfs.umount(VAULT_MOUNT);
+          vfs.umount(this.vaultMount);
         } catch {
           // best-effort
         }
       },
     };
-    this.vaultTools = createVaultTools(createZenfsVaultOperations());
+    this.vaultTools = createVaultTools(createZenfsVaultOperations(), { cwd: this.vaultMount });
     this.refreshTools();
   }
 
@@ -158,7 +170,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     if (this.attachedFs) this.detachVault();
     await configure({ mounts: {} });
     const memFs = InMemory.create({ label: seed.name });
-    vfs.mount(VAULT_MOUNT, memFs);
+    vfs.mount(this.vaultMount, memFs);
     const paths = Object.keys(seed.files).sort();
     for (const absPath of paths) {
       const lastSlash = absPath.lastIndexOf('/');
@@ -189,7 +201,7 @@ export class WorkerAgentHost implements AgentSessionHost {
         }
       },
     };
-    this.vaultTools = createVaultTools(createZenfsVaultOperations());
+    this.vaultTools = createVaultTools(createZenfsVaultOperations(), { cwd: this.vaultMount });
     this.refreshTools();
   }
 
@@ -234,7 +246,7 @@ export class WorkerAgentHost implements AgentSessionHost {
   async newSession(parentSession?: string): Promise<{ sessionId: string }> {
     const sm = await SessionManager.create(this.store, {
       parentSession,
-      cwd: VAULT_MOUNT,
+      cwd: this.vaultMount,
     });
     this.sessionManager = sm;
     this.session.reset();

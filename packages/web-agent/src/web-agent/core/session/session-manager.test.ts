@@ -171,11 +171,3 @@ describe('SessionManager — concurrent appends', () => {
     expect(roles).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
   });
 });
-
-describe('SessionManager — flush (legacy no-op)', () => {
-  test('flush resolves without throwing', async () => {
-    const store = new MemorySessionStore();
-    const sm = await SessionManager.create(store, { cwd: '/vault' });
-    await expect(sm.flush()).resolves.toBeUndefined();
-  });
-});

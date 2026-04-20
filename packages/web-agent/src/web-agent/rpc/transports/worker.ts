@@ -14,6 +14,7 @@ import {
   AGENT_WORKER_INIT_TYPE,
   type AgentWorkerInit,
   type InMemoryVaultSeed,
+  type WebAgentOptions,
 } from '../../worker/init-protocol';
 import type { Transport } from '../transport';
 
@@ -31,6 +32,8 @@ export interface CreateWorkerTransportPairOptions {
    * — matching the existing `useDevSeedBoot` semantics for Playwright.
    */
   devSeed?: InMemoryVaultSeed;
+  /** Library-level options forwarded to the Worker. */
+  agentOptions?: WebAgentOptions;
 }
 
 export function createWorkerTransportPair(
@@ -45,6 +48,7 @@ export function createWorkerTransportPair(
     agentPort: channelA.port2,
     vfsPort: channelB.port2,
     devSeed: options.devSeed,
+    options: options.agentOptions,
   };
   worker.postMessage(init, [channelA.port2, channelB.port2]);
 

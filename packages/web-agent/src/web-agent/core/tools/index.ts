@@ -28,13 +28,6 @@ export type { GlobToolInput, GlobToolDetails } from './glob';
 export { createGrepTool } from './grep';
 export type { GrepToolInput, GrepToolDetails } from './grep';
 export { withFileMutationQueue } from './file-mutation-queue';
-export {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-  truncateHead,
-  type TruncationResult,
-} from './truncation';
 
 export interface CreateVaultToolsOptions {
   /** Directory against which relative paths resolve. Defaults to /vault. */
