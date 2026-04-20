@@ -20,7 +20,7 @@ Consolidated roadmap for porting `packages/coding-agent`'s feature set into `pac
 | —   | Post-M5 cleanup (pre-extraction hygiene)                                    | ✅ done  | `af2b7086` | [post-m5-cleanup.md](post-m5-cleanup.md) |
 | M6  | Session tree: fork from entry, switch sessions, branch navigation           | ✅ done  | latest     | [m6-session-tree.md](m6-session-tree.md) |
 | M7  | Compaction: auto + manual, result persistence, UI observability             | ✅ done  | latest     | [m7-compaction.md](m7-compaction.md) |
-| M8  | Extensions + skills: loader, sandbox, hook surface, skills-as-extensions    | planned | —          | [m8-extensions.md](m8-extensions.md) |
+| M8  | Extensions: dynamic, toggleable behaviour layer over the agent              | 🧪 spike | latest     | [m8-extensions.md](m8-extensions.md) |
 | M9  | Resources: slash commands, prompt templates, themes through extensions      | planned | —          | [m9-resources.md](m9-resources.md) |
 | M10 | Polish: HTML export, diagnostics, logging, debug traces                     | planned | —          | [m10-polish.md](m10-polish.md) |
 | M11 | Library extraction: `@bodhiapp/web-agent` publishable package               | planned | —          | [m11-library-extraction.md](m11-library-extraction.md) |
@@ -41,9 +41,9 @@ Load the file only if its hook matches what you're about to do.
 - **[post-m5-cleanup.md](post-m5-cleanup.md)** — dead-code removal, `WebAgentOptions` added, extension scaffolding de-exported; pre-Phase-6 hygiene.
 - **[m6-session-tree.md](m6-session-tree.md)** — `forkSession` (atomic copy preserving ids/timestamps), ephemeral `navigateToLeaf`, per-message Fork/Branch UI.
 - **[m7-compaction.md](m7-compaction.md)** — auto+manual compaction, `UiMessageMeta` pipeline, compaction summary bubble with data-test attributes, forced compaction for e2e.
+- **[m8-extensions.md](m8-extensions.md)** — spike complete; feature goal (dynamic toggleable behaviours — prompt shaping, tool output shaping, tool registration, skills) is agreed, production shape deferred. Archive in [`ai-docs/extension-spike/`](../extension-spike/) — read `README.md` first, then `01-feasibility.md`, `03-unbiased-approach.md`, `06-open-questions.md` before planning the next iteration.
 
 ### Planned — previews (load when picking up that milestone)
-- **[m8-extensions.md](m8-extensions.md)** — biggest milestone; extension manifest/loader/Worker sandbox, full hook surface, skills-as-extensions.
 - **[m9-resources.md](m9-resources.md)** — slash commands, prompt templates, themes via extension registration.
 - **[m10-polish.md](m10-polish.md)** — HTML export, diagnostics, debug logging.
 - **[m11-library-extraction.md](m11-library-extraction.md)** — lift `src/web-agent/` into `@bodhiapp/web-agent`; reference app consumes it.
