@@ -4,6 +4,7 @@ import { useAgent } from '@/hooks/useAgent';
 import { useMcpList } from '@/hooks/useMcpList';
 import { useMcpSelection } from '@/hooks/useMcpSelection';
 import { useMcpAgentTools } from '@/hooks/useMcpAgentTools';
+import { SessionPicker } from '@/components/sessions/SessionPicker';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 
@@ -31,6 +32,7 @@ export default function ChatDemo() {
     models,
     isLoadingModels,
     loadModels,
+    sessions,
   } = useAgent({ mcpToolDescriptors, toolCallHandler });
 
   useEffect(() => {
@@ -44,6 +46,17 @@ export default function ChatDemo() {
 
   return (
     <>
+      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-3 py-2">
+        <SessionPicker
+          current={sessions.current}
+          list={sessions.list}
+          onRefresh={sessions.refresh}
+          onSwitch={sessions.load}
+          onNew={sessions.newSession}
+          onDelete={sessions.delete}
+          onRename={sessions.rename}
+        />
+      </div>
       <ChatMessages
         messages={messages}
         streamingMessage={streamingMessage}

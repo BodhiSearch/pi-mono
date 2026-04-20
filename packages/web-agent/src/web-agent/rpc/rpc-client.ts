@@ -1,5 +1,6 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { deserializeError, serializeError } from './error';
 import type {
   McpToolDescriptor,
@@ -7,6 +8,7 @@ import type {
   RpcCommand,
   RpcEventEnvelope,
   RpcResponse,
+  RpcSessionLoadedEvent,
   RpcSessionState,
   RpcToolCallRequest,
 } from './rpc-types';
@@ -40,6 +42,7 @@ export type ToolCallHandler = (toolName: string, args: unknown) => Promise<unkno
 export class RpcClient {
   private readonly pending = new Map<string, Pending>();
   private readonly listeners = new Set<(envelope: RpcAgentEventEnvelope) => void>();
+  private readonly sessionLoadedListeners = new Set<(event: RpcSessionLoadedEvent) => void>();
   private readonly transport: Transport;
   private readonly unsubscribe: () => void;
   private idCounter = 0;
@@ -110,6 +113,42 @@ export class RpcClient {
     return () => this.listeners.delete(listener);
   }
 
+  /** Session-loaded events are a separate stream from agent envelopes. */
+  onSessionLoaded(listener: (event: RpcSessionLoadedEvent) => void): () => void {
+    this.sessionLoadedListeners.add(listener);
+    return () => this.sessionLoadedListeners.delete(listener);
+  }
+
+  // --------------------------------------------------------------------------
+  // Session commands (M5)
+  // --------------------------------------------------------------------------
+
+  listSessions(): Promise<SessionSummary[]> {
+    return this.send({ type: 'list_sessions' }) as Promise<SessionSummary[]>;
+  }
+
+  loadSession(sessionId: string): Promise<void> {
+    return this.send({ type: 'load_session', sessionId }) as Promise<void>;
+  }
+
+  newSession(parentSession?: string): Promise<{ sessionId: string }> {
+    return this.send({ type: 'new_session', parentSession }) as Promise<{
+      sessionId: string;
+    }>;
+  }
+
+  deleteSession(sessionId: string): Promise<void> {
+    return this.send({ type: 'delete_session', sessionId }) as Promise<void>;
+  }
+
+  setSessionName(name: string): Promise<void> {
+    return this.send({ type: 'set_session_name', name }) as Promise<void>;
+  }
+
+  getSessionMeta(): Promise<SessionMeta | null> {
+    return this.send({ type: 'get_session_meta' }) as Promise<SessionMeta | null>;
+  }
+
   dispose(): void {
     this.unsubscribe();
     for (const p of this.pending.values()) {
@@ -117,6 +156,7 @@ export class RpcClient {
     }
     this.pending.clear();
     this.listeners.clear();
+    this.sessionLoadedListeners.clear();
     this.toolCallHandler = null;
   }
 
@@ -136,6 +176,10 @@ export class RpcClient {
     }
     if (raw.type === 'tool_call_request') {
       void this.handleToolCallRequest(raw);
+      return;
+    }
+    if (raw.type === 'session_loaded') {
+      for (const listener of this.sessionLoadedListeners) listener(raw);
       return;
     }
     if (raw.type === 'response') {
@@ -183,5 +227,5 @@ export class RpcClient {
 function isEnvelope(value: unknown): value is RpcResponse | RpcEventEnvelope {
   if (typeof value !== 'object' || value === null) return false;
   const t = (value as { type?: unknown }).type;
-  return t === 'response' || t === 'event' || t === 'tool_call_request';
+  return t === 'response' || t === 'event' || t === 'tool_call_request' || t === 'session_loaded';
 }

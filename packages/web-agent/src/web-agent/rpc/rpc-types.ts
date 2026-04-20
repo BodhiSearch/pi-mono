@@ -9,6 +9,7 @@
 
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { SessionHeader, SessionMeta, SessionSummary } from '../core/session/types';
 import type { SerializedError } from './error';
 
 // ============================================================================
@@ -40,7 +41,13 @@ export type RpcCommand =
       callId: string;
       ok: false;
       error: SerializedError;
-    };
+    }
+  | { id: string; type: 'list_sessions' }
+  | { id: string; type: 'load_session'; sessionId: string }
+  | { id: string; type: 'new_session'; parentSession?: string }
+  | { id: string; type: 'delete_session'; sessionId: string }
+  | { id: string; type: 'set_session_name'; name: string }
+  | { id: string; type: 'get_session_meta' };
 
 export type RpcCommandType = RpcCommand['type'];
 
@@ -87,6 +94,30 @@ export type RpcResponse =
   | {
       id: string;
       type: 'response';
+      command: 'list_sessions';
+      success: true;
+      data: SessionSummary[];
+    }
+  | { id: string; type: 'response'; command: 'load_session'; success: true }
+  | {
+      id: string;
+      type: 'response';
+      command: 'new_session';
+      success: true;
+      data: { sessionId: string };
+    }
+  | { id: string; type: 'response'; command: 'delete_session'; success: true }
+  | { id: string; type: 'response'; command: 'set_session_name'; success: true }
+  | {
+      id: string;
+      type: 'response';
+      command: 'get_session_meta';
+      success: true;
+      data: SessionMeta | null;
+    }
+  | {
+      id: string;
+      type: 'response';
       command: RpcCommandType;
       success: false;
       error: SerializedError;
@@ -122,7 +153,22 @@ export interface RpcToolCallRequest {
   args: unknown;
 }
 
-export type RpcEventEnvelope = RpcAgentEventEnvelope | RpcToolCallRequest;
+/**
+ * Worker → Main synthetic event: a session was loaded (either at boot
+ * restore from localStorage, or after an explicit `load_session` command).
+ * Carries the full restored message list + header + name so the main
+ * thread can update its UI state from one envelope without further
+ * round-trips.
+ */
+export interface RpcSessionLoadedEvent {
+  type: 'session_loaded';
+  sessionId: string;
+  header: SessionHeader | null;
+  name?: string;
+  messages: AgentMessage[];
+}
+
+export type RpcEventEnvelope = RpcAgentEventEnvelope | RpcToolCallRequest | RpcSessionLoadedEvent;
 
 // ============================================================================
 // Wire envelope

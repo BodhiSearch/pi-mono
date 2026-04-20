@@ -6,8 +6,15 @@ import { buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
 import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { useWebAgent } from '@/providers/web-agent-context';
-import type { McpToolDescriptor } from '@/web-agent';
-import type { ToolCallHandler } from '@/web-agent';
+import type { McpToolDescriptor, SessionSummary, ToolCallHandler } from '@/web-agent';
+
+const ACTIVE_SESSION_STORAGE_KEY = 'web-agent.activeSessionId';
+const EMPTY_SUMMARIES: SessionSummary[] = [];
+
+interface ActiveSession {
+  id: string;
+  name?: string;
+}
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
@@ -31,8 +38,11 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
+  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  const [sessionSummaries, setSessionSummaries] = useState<SessionSummary[]>(EMPTY_SUMMARIES);
 
   const isLoadingModelsRef = useRef(false);
+  const sessionBootRef = useRef(false);
 
   // Push the auth token to the Worker on every change. The Worker's
   // streamFn closure reads this synchronously per request.
@@ -85,6 +95,73 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
       }
     });
     return unsubscribe;
+  }, [rpcClient]);
+
+  // Session-loaded envelopes are the authoritative signal that the Worker
+  // has swapped sessions. Replace the local message buffer, surface the
+  // new active-session meta, and persist the id so a reload restores it.
+  // Also trigger a sessions-list refresh so newly-created sessions appear
+  // in the picker without the caller having to poll.
+  useEffect(() => {
+    return rpcClient.onSessionLoaded(event => {
+      setMessages(event.messages);
+      setStreamingMessage(undefined);
+      setIsStreaming(false);
+      setError(null);
+      setActiveSession({ id: event.sessionId, name: event.name });
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, event.sessionId);
+        } catch {
+          // localStorage disabled or full — fall back to in-memory only.
+        }
+      }
+      rpcClient
+        .listSessions()
+        .then(summaries => setSessionSummaries(summaries))
+        .catch(() => setSessionSummaries(EMPTY_SUMMARIES));
+    });
+  }, [rpcClient]);
+
+  // Boot-time session restore: prefer the session id from localStorage so
+  // reloads pick up where the user left off. StrictMode-safe via a ref.
+  useEffect(() => {
+    if (sessionBootRef.current) return;
+    sessionBootRef.current = true;
+
+    let storedId: string | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        storedId = window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+      } catch {
+        storedId = null;
+      }
+    }
+
+    (async () => {
+      if (storedId) {
+        try {
+          await rpcClient.loadSession(storedId);
+          return;
+        } catch {
+          // Stored id is stale / file was deleted — fall through to new.
+        }
+      }
+      try {
+        await rpcClient.newSession();
+      } catch (err) {
+        console.error('[useAgent] failed to start a session:', err);
+      }
+    })();
+  }, [rpcClient]);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const summaries = await rpcClient.listSessions();
+      setSessionSummaries(summaries);
+    } catch {
+      setSessionSummaries(EMPTY_SUMMARIES);
+    }
   }, [rpcClient]);
 
   const loadModels = useCallback(async () => {
@@ -159,15 +236,44 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   }, [rpcClient]);
 
   const clearMessages = useCallback(() => {
-    void rpcClient.reset();
-    setMessages([]);
-    setStreamingMessage(undefined);
-    setError(null);
+    // "Clear" in the UI starts a fresh persisted session so the existing
+    // conversation stays accessible via the picker. The Worker emits
+    // session_loaded, which resets local state + activeSession.
+    void rpcClient.newSession().catch(err => {
+      console.error('[useAgent] newSession failed:', err);
+    });
   }, [rpcClient]);
 
   const clearError = useCallback(() => {
     setError(null);
   }, []);
+
+  // --------------------------------------------------------------------------
+  // Sessions API (M5)
+  // --------------------------------------------------------------------------
+
+  const loadSession = useCallback((id: string) => rpcClient.loadSession(id), [rpcClient]);
+
+  const newSession = useCallback(async () => {
+    const { sessionId } = await rpcClient.newSession();
+    return sessionId;
+  }, [rpcClient]);
+
+  const deleteSession = useCallback(
+    async (id: string) => {
+      await rpcClient.deleteSession(id);
+      await refreshSessions();
+    },
+    [rpcClient, refreshSessions]
+  );
+
+  const renameSession = useCallback(
+    async (name: string) => {
+      await rpcClient.setSessionName(name);
+      await refreshSessions();
+    },
+    [rpcClient, refreshSessions]
+  );
 
   return {
     messages: isAuthenticated ? messages : EMPTY_MESSAGES,
@@ -184,5 +290,14 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     models: isAuthenticated ? models : EMPTY_MODELS,
     isLoadingModels: isAuthenticated ? isLoadingModels : false,
     loadModels,
+    sessions: {
+      current: activeSession,
+      list: sessionSummaries,
+      refresh: refreshSessions,
+      load: loadSession,
+      newSession,
+      delete: deleteSession,
+      rename: renameSession,
+    },
   };
 }

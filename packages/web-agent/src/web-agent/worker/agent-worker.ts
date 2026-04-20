@@ -50,6 +50,14 @@ async function boot(
   vfsPort.start();
 
   const host = new WorkerAgentHost(session, vfsPort);
+  // Mount the IndexedDB `/sessions` store before any session RPC can run.
+  // Failure here is non-fatal — the agent still works for transient chats,
+  // but session persistence is a no-op until we fix it.
+  try {
+    await host.initSessions();
+  } catch (err) {
+    console.error('[agent-worker] failed to mount /sessions:', err);
+  }
 
   agentPort.start();
   const transport = {

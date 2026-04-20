@@ -7,16 +7,24 @@
  */
 
 import { attachFS, configure, detachFS, fs, InMemory, vfs } from '@zenfs/core';
-import { WebAccess } from '@zenfs/dom';
+import { IndexedDB, WebAccess } from '@zenfs/dom';
 import type { AgentEvent, AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { AgentSession } from '../core/agent-session';
+import { SessionManager } from '../core/session/session-manager';
+import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { createVaultTools } from '../core/tools';
 import { createZenfsVaultOperations } from '../fs/zenfs-operations';
 import { VAULT_MOUNT } from '../fs/zenfs-provider';
-import type { AgentSessionHost, ToolUpcallInvoker } from '../rpc/rpc-server';
+import type { AgentSessionHost, HostEventSink, ToolUpcallInvoker } from '../rpc/rpc-server';
 import type { McpToolDescriptor, RpcSessionState } from '../rpc/rpc-types';
 import type { InMemoryVaultSeed } from './init-protocol';
+
+export const SESSIONS_MOUNT = '/sessions';
+const SESSIONS_STORE_NAME = 'web-agent-sessions';
+
+/** Module-level guard so repeat calls to `initSessions()` are no-ops. */
+let sessionsMounted = false;
 
 // ZenFS's `Channel` type union includes WebSocket which makes structural
 // matching against the browser's MessagePort fail. At runtime `RPC.from`
@@ -33,6 +41,14 @@ export class WorkerAgentHost implements AgentSessionHost {
   private vaultTools: AgentTool[] = [];
   private mcpTools: AgentTool[] = [];
   private attachedFs: { detach: () => void } | null = null;
+  /**
+   * Active session. `null` until `newSession` or `loadSession` runs.
+   * The message_end subscriber short-circuits when null — a prompt sent
+   * before either method (shouldn't happen, useAgent primes on mount)
+   * would leave that turn un-persisted rather than crash.
+   */
+  private sessionManager: SessionManager | null = null;
+  private hostEventSink: HostEventSink | null = null;
 
   private readonly session: AgentSession;
   private readonly vfsPort: MessagePort;
@@ -40,6 +56,33 @@ export class WorkerAgentHost implements AgentSessionHost {
   constructor(session: AgentSession, vfsPort: MessagePort) {
     this.session = session;
     this.vfsPort = vfsPort;
+    // Persist user/assistant/toolResult messages on turn boundaries.
+    this.session.subscribe(event => {
+      if (event.type !== 'message_end') return;
+      const sm = this.sessionManager;
+      if (!sm) return;
+      const role = (event.message as { role?: string }).role;
+      if (role === 'user' || role === 'assistant' || role === 'toolResult') {
+        sm.appendMessage(event.message);
+      }
+    });
+  }
+
+  /**
+   * Mount the IndexedDB-backed `/sessions` store. Called once from
+   * `agent-worker.ts` boot before any session RPC flows. Idempotent across
+   * StrictMode / fast-refresh / multiple WorkerAgentHost instances in the
+   * same worker lifetime (guarded by module-level `sessionsMounted`).
+   *
+   * The store is per-origin + per-storeName — opening a second tab shares
+   * the same IDB store, so IDB's transaction serialisation is what makes
+   * multi-tab writes safe (see ai-docs/05-decisions.md D12 on landing).
+   */
+  async initSessions(): Promise<void> {
+    if (sessionsMounted) return;
+    const sessionsFs = await IndexedDB.create({ storeName: SESSIONS_STORE_NAME });
+    vfs.mount(SESSIONS_MOUNT, sessionsFs);
+    sessionsMounted = true;
   }
 
   // ==========================================================================
@@ -175,8 +218,100 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   // ==========================================================================
+  // M5 — session persistence
+  // ==========================================================================
+
+  setHostEventSink(sink: HostEventSink): void {
+    this.hostEventSink = sink;
+  }
+
+  listSessions(): Promise<SessionSummary[]> {
+    return SessionManager.list(SESSIONS_MOUNT);
+  }
+
+  /**
+   * Swap the active session to `sessionId`. Flushes any pending writes on
+   * the current session, resets the agent's message buffer, then rehydrates
+   * it from the persisted session file. Emits a synthetic `session_loaded`
+   * event so the main thread can refresh its UI from one envelope.
+   */
+  async loadSession(sessionId: string): Promise<void> {
+    await this.sessionManager?.flush();
+
+    const summaries = await SessionManager.list(SESSIONS_MOUNT);
+    const target = summaries.find(s => s.id === sessionId);
+    if (!target) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    const sm = await SessionManager.open(SESSIONS_MOUNT, target.path);
+    this.sessionManager = sm;
+    this.session.reset();
+    const ctx = sm.buildSessionContext();
+    this.session.restoreMessages(ctx.messages);
+    this.emitSessionLoaded();
+  }
+
+  async newSession(parentSession?: string): Promise<{ sessionId: string }> {
+    await this.sessionManager?.flush();
+    const sm = await SessionManager.create(SESSIONS_MOUNT, {
+      parentSession,
+      cwd: VAULT_MOUNT,
+    });
+    this.sessionManager = sm;
+    this.session.reset();
+    this.session.restoreMessages([]);
+    this.emitSessionLoaded();
+    return { sessionId: sm.getSessionId() };
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const summaries = await SessionManager.list(SESSIONS_MOUNT);
+    const target = summaries.find(s => s.id === sessionId);
+    if (!target) return;
+    await SessionManager.delete(target.path);
+    if (this.sessionManager?.getSessionId() === sessionId) {
+      // Active session gone — spin up a fresh one so the next prompt lands
+      // somewhere sane. Main-thread UI will react via session_loaded.
+      await this.newSession();
+    }
+  }
+
+  async setSessionName(name: string): Promise<void> {
+    const sm = this.sessionManager;
+    if (!sm) return;
+    sm.appendSessionInfo(name);
+    await sm.flush();
+    this.emitSessionLoaded();
+  }
+
+  async getSessionMeta(): Promise<SessionMeta | null> {
+    const sm = this.sessionManager;
+    if (!sm) return null;
+    return {
+      id: sm.getSessionId(),
+      path: sm.getSessionFile() ?? null,
+      name: sm.getSessionName(),
+      cwd: sm.getCwd(),
+      parentSession: sm.getHeader()?.parentSession,
+    };
+  }
+
+  // ==========================================================================
   // Internals
   // ==========================================================================
+
+  private emitSessionLoaded(): void {
+    const sink = this.hostEventSink;
+    const sm = this.sessionManager;
+    if (!sink || !sm) return;
+    sink({
+      type: 'session_loaded',
+      sessionId: sm.getSessionId(),
+      header: sm.getHeader(),
+      name: sm.getSessionName(),
+      messages: sm.buildSessionContext().messages,
+    });
+  }
 
   private detachVault(): void {
     if (!this.attachedFs) return;

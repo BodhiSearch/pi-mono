@@ -1,16 +1,26 @@
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { deserializeError, serializeError } from './error';
 import type {
   McpToolDescriptor,
   RpcAgentEventEnvelope,
   RpcCommand,
   RpcCommandType,
+  RpcEventEnvelope,
   RpcResponse,
   RpcSessionState,
   RpcToolCallRequest,
 } from './rpc-types';
 import type { Transport } from './transport';
+
+/**
+ * Emitter for synthetic Worker-side events that aren't produced by
+ * pi-agent-core (e.g. `session_loaded`). The RpcServer registers itself
+ * as the sink so any host that has something to emit can forward it
+ * through the same transport without wiring its own channel.
+ */
+export type HostEventSink = (event: RpcEventEnvelope) => void;
 
 /**
  * Narrow interface of the session surface the RPC server drives.
@@ -37,6 +47,19 @@ export interface AgentSessionHost {
   mountVault?(handle: FileSystemDirectoryHandle): Promise<void>;
   unmountVault?(): Promise<void>;
   setMcpTools?(tools: McpToolDescriptor[], invoker: ToolUpcallInvoker): void;
+  // M5 additions — session persistence.
+  listSessions?(): Promise<SessionSummary[]>;
+  loadSession?(sessionId: string): Promise<void>;
+  newSession?(parentSession?: string): Promise<{ sessionId: string }>;
+  deleteSession?(sessionId: string): Promise<void>;
+  setSessionName?(name: string): Promise<void>;
+  getSessionMeta?(): Promise<SessionMeta | null>;
+  /**
+   * Register a sink for synthetic Worker-originated events (e.g.
+   * `session_loaded`). Optional because test fakes and the jsdom
+   * fallback host typically don't need one.
+   */
+  setHostEventSink?(sink: HostEventSink): void;
 }
 
 /**
@@ -91,6 +114,13 @@ export class RpcServer {
         transport.send(envelope);
       })
     );
+
+    // Route synthetic host events (session_loaded, etc.) through the same
+    // transport so the main-thread client gets one coherent event stream.
+    session.setHostEventSink?.(event => {
+      if (this.disposed) return;
+      transport.send(event);
+    });
   }
 
   private async handleCommand(raw: unknown): Promise<void> {
@@ -164,6 +194,53 @@ export class RpcServer {
           this.transport.send(ok(id, 'tool_call_response'));
           return;
         }
+        case 'list_sessions': {
+          const data = (await this.session.listSessions?.()) ?? [];
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'list_sessions',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'load_session':
+          await (this.session.loadSession?.(raw.sessionId) ?? Promise.resolve());
+          this.transport.send(ok(id, 'load_session'));
+          return;
+        case 'new_session': {
+          const data = (await this.session.newSession?.(raw.parentSession)) ?? {
+            sessionId: '',
+          };
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'new_session',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'delete_session':
+          await (this.session.deleteSession?.(raw.sessionId) ?? Promise.resolve());
+          this.transport.send(ok(id, 'delete_session'));
+          return;
+        case 'set_session_name':
+          await (this.session.setSessionName?.(raw.name) ?? Promise.resolve());
+          this.transport.send(ok(id, 'set_session_name'));
+          return;
+        case 'get_session_meta': {
+          const data = (await this.session.getSessionMeta?.()) ?? null;
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'get_session_meta',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
       }
     } catch (err) {
       this.transport.send({
@@ -227,6 +304,12 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   unmount_vault: true,
   set_mcp_tools: true,
   tool_call_response: true,
+  list_sessions: true,
+  load_session: true,
+  new_session: true,
+  delete_session: true,
+  set_session_name: true,
+  get_session_meta: true,
 };
 
 function isKnownCommandType(value: string): value is RpcCommandType {

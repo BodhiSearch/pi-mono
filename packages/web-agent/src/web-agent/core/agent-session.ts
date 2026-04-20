@@ -78,6 +78,20 @@ export class AgentSession {
     this.agent.reset();
   }
 
+  /**
+   * Replace the agent's message buffer without firing lifecycle events.
+   * Used by the Worker-side `loadSession` path after reading a persisted
+   * JSONL file — we want the UI to see the restored history but we must
+   * not re-trigger `message_end` handlers (which would re-persist every
+   * restored message and would double-count in extension hooks).
+   *
+   * If pi-agent-core later adds caches derived from `state.messages` they
+   * may need to be invalidated here; for now, direct assignment is enough.
+   */
+  restoreMessages(messages: AgentMessage[]): void {
+    this.agent.state.messages = [...messages];
+  }
+
   // ==========================================================================
   // Host-only surface — non-serializable state, called inside the Worker
   // ==========================================================================

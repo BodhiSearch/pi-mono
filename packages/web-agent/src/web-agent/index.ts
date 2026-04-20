@@ -39,7 +39,32 @@ export { disposeAgentWorker, getAgentWorker, _resetAgentWorkerForTests } from '.
 export type { AgentWorkerBoot } from './worker/boot';
 export type { AgentWorkerInit, InMemoryVaultSeed } from './worker/init-protocol';
 export { AGENT_WORKER_INIT_TYPE, isAgentWorkerInit } from './worker/init-protocol';
-export { WorkerAgentHost } from './worker/worker-host';
+export { SESSIONS_MOUNT, WorkerAgentHost } from './worker/worker-host';
+
+// Session persistence (M5).
+export { CURRENT_SESSION_VERSION } from './core/session/types';
+export type {
+  BranchSummaryEntry,
+  CompactionEntry,
+  CustomEntry,
+  CustomMessageEntry,
+  FileEntry,
+  LabelEntry,
+  ModelChangeEntry,
+  NewSessionOptions,
+  ReadonlySessionManager,
+  SessionContext,
+  SessionEntry,
+  SessionEntryBase,
+  SessionHeader,
+  SessionInfoEntry,
+  SessionMessageEntry,
+  SessionMeta,
+  SessionSummary,
+  SessionTreeNode,
+  ThinkingLevelChangeEntry,
+} from './core/session/types';
+export { generateEntryId, generateSessionId } from './core/session/ids';
 
 export { ExtensionRegistry } from './core/extensions/registry';
 
