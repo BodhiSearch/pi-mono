@@ -39,7 +39,7 @@ export { disposeAgentWorker, getAgentWorker, _resetAgentWorkerForTests } from '.
 export type { AgentWorkerBoot } from './worker/boot';
 export type { AgentWorkerInit, InMemoryVaultSeed } from './worker/init-protocol';
 export { AGENT_WORKER_INIT_TYPE, isAgentWorkerInit } from './worker/init-protocol';
-export { SESSIONS_MOUNT, WorkerAgentHost } from './worker/worker-host';
+export { WorkerAgentHost } from './worker/worker-host';
 
 // Session persistence (M5).
 export { CURRENT_SESSION_VERSION } from './core/session/types';
@@ -65,6 +65,18 @@ export type {
   ThinkingLevelChangeEntry,
 } from './core/session/types';
 export { generateEntryId, generateSessionId } from './core/session/ids';
+export { SessionManager } from './core/session/session-manager';
+export { MemorySessionStore } from './core/session/memory-store';
+export { DexieSessionStore, WebAgentDB, DEFAULT_DB_NAME } from './core/session/dexie-store';
+export type {
+  BranchSummaryAppend,
+  CompactionAppend,
+  CreateSessionOptions,
+  CustomMessageAppend,
+  EntryRow,
+  SessionRow,
+  SessionStore,
+} from './core/session/store';
 
 export { ExtensionRegistry } from './core/extensions/registry';
 

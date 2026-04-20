@@ -1,22 +1,22 @@
 /**
  * WorkerAgentHost — session persistence integration tests.
  *
- * These cover the M5 wiring: how the host drives its SessionManager,
+ * Covers how the host drives its SessionManager against a `SessionStore`,
  * persists message_end events, restores state on loadSession, and emits
  * the synthetic `session_loaded` event sink. The pi-agent-core Agent is
- * stubbed with a minimal fake so we can emit events deterministically
- * without driving a real stream.
+ * stubbed so we can emit events deterministically without driving a real
+ * stream. Persistence goes through `MemorySessionStore` — parity with
+ * the Dexie backend is validated by the dedicated `*-store.test.ts` pair.
  */
 
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
-import { InMemory, vfs } from '@zenfs/core';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import type { AgentSession } from '../core/agent-session';
+import { MemorySessionStore } from '../core/session/memory-store';
+import type { SessionStore } from '../core/session/store';
 import type { HostEventSink } from '../rpc/rpc-server';
 import type { RpcEventEnvelope } from '../rpc/rpc-types';
-import { SESSIONS_MOUNT, WorkerAgentHost } from './worker-host';
-
-const SESSIONS_STORE_NAME = 'test';
+import { WorkerAgentHost } from './worker-host';
 
 type FakeSession = {
   session: AgentSession;
@@ -95,27 +95,19 @@ function userMessage(text: string): AgentMessage {
   return { role: 'user', content: text } as unknown as AgentMessage;
 }
 
-beforeEach(() => {
-  try {
-    vfs.umount(SESSIONS_MOUNT);
-  } catch {
-    // not mounted
-  }
-  vfs.mount(SESSIONS_MOUNT, InMemory.create({ label: SESSIONS_STORE_NAME }));
-});
-
-afterEach(() => {
-  try {
-    vfs.umount(SESSIONS_MOUNT);
-  } catch {
-    // already gone
-  }
-});
+function makeHost(store: SessionStore = new MemorySessionStore()): {
+  host: WorkerAgentHost;
+  fake: FakeSession;
+  store: SessionStore;
+} {
+  const fake = makeFakeAgentSession();
+  const host = new WorkerAgentHost(fake.session, makeFakePort(), store);
+  return { host, fake, store };
+}
 
 describe('WorkerAgentHost session persistence', () => {
   test('newSession creates a session and emits session_loaded', async () => {
-    const fake = makeFakeAgentSession();
-    const host = new WorkerAgentHost(fake.session, makeFakePort());
+    const { host } = makeHost();
     const events: RpcEventEnvelope[] = [];
     const sink: HostEventSink = e => events.push(e);
     host.setHostEventSink(sink);
@@ -135,13 +127,13 @@ describe('WorkerAgentHost session persistence', () => {
   });
 
   test('message_end events are appended to the active session', async () => {
-    const fake = makeFakeAgentSession();
-    const host = new WorkerAgentHost(fake.session, makeFakePort());
+    const { host, fake } = makeHost();
     const { sessionId } = await host.newSession();
 
     fake.emit({ type: 'message_end', message: userMessage('hello') });
     fake.emit({ type: 'message_end', message: assistantMessage('hi there') });
-    // Give the SessionManager write chain a tick to flush.
+    // Let the queued appendMessage promises settle.
+    await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
 
     const summaries = await host.listSessions();
@@ -152,17 +144,17 @@ describe('WorkerAgentHost session persistence', () => {
   });
 
   test('loadSession rehydrates messages and emits session_loaded', async () => {
-    // First, set up a persisted session.
-    const fake1 = makeFakeAgentSession();
-    const host1 = new WorkerAgentHost(fake1.session, makeFakePort());
+    // First host persists a session into a shared store.
+    const store = new MemorySessionStore();
+    const { host: host1, fake: fake1 } = makeHost(store);
     const { sessionId } = await host1.newSession();
     fake1.emit({ type: 'message_end', message: userMessage('q') });
     fake1.emit({ type: 'message_end', message: assistantMessage('a') });
     await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
 
-    // Second host simulates a fresh page load.
-    const fake2 = makeFakeAgentSession();
-    const host2 = new WorkerAgentHost(fake2.session, makeFakePort());
+    // Second host simulates a fresh page load against the same store.
+    const { host: host2, fake: fake2 } = makeHost(store);
     const events: RpcEventEnvelope[] = [];
     host2.setHostEventSink(e => events.push(e));
 
@@ -174,12 +166,12 @@ describe('WorkerAgentHost session persistence', () => {
     expect(events.some(e => e.type === 'session_loaded')).toBe(true);
   });
 
-  test('deleteSession removes the file and swaps to a fresh session when active', async () => {
-    const fake = makeFakeAgentSession();
-    const host = new WorkerAgentHost(fake.session, makeFakePort());
+  test('deleteSession removes the session and swaps to a fresh one when active', async () => {
+    const { host, fake } = makeHost();
     const { sessionId } = await host.newSession();
     fake.emit({ type: 'message_end', message: userMessage('u') });
     fake.emit({ type: 'message_end', message: assistantMessage('a') });
+    await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
 
     await host.deleteSession(sessionId);
@@ -193,11 +185,11 @@ describe('WorkerAgentHost session persistence', () => {
   });
 
   test('setSessionName appends a session_info entry reflected in getSessionMeta', async () => {
-    const fake = makeFakeAgentSession();
-    const host = new WorkerAgentHost(fake.session, makeFakePort());
+    const { host, fake } = makeHost();
     await host.newSession();
     fake.emit({ type: 'message_end', message: userMessage('u') });
     fake.emit({ type: 'message_end', message: assistantMessage('a') });
+    await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
 
     await host.setSessionName('My Demo');
@@ -206,12 +198,12 @@ describe('WorkerAgentHost session persistence', () => {
   });
 
   test('listSessions is empty initially and populated after a flush', async () => {
-    const fake = makeFakeAgentSession();
-    const host = new WorkerAgentHost(fake.session, makeFakePort());
+    const { host, fake } = makeHost();
     expect(await host.listSessions()).toEqual([]);
     await host.newSession();
     fake.emit({ type: 'message_end', message: userMessage('hello') });
     fake.emit({ type: 'message_end', message: assistantMessage('world') });
+    await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
     const summaries = await host.listSessions();
     expect(summaries.length).toBe(1);

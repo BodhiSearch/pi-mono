@@ -83,6 +83,15 @@ test.describe('Session persistence — M5', () => {
       await expect(firstBubble).toContainText('hello');
     });
 
+    await test.step('rename — picker trigger + row label reflect the new name', async () => {
+      await sessions.rename('Renamed Chat');
+      await expect(sessions.trigger).toContainText('Renamed Chat');
+      await sessions.open();
+      await expect(sessions.listItem(firstSessionId)).toContainText('Renamed Chat');
+      await page.keyboard.press('Escape');
+      await expect(sessions.list).not.toBeVisible();
+    });
+
     await test.step('new session is still deletable from the picker', async () => {
       await sessions.deleteSession(secondSessionId);
       // Picker stays open after delete; pressing Escape closes it.

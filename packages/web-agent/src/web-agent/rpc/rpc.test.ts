@@ -182,7 +182,7 @@ function createSessionedHost(): AgentSessionHost {
 
   const summary = (r: FakeSessionRecord): SessionSummary => ({
     id: r.id,
-    path: `/sessions/${r.id}.jsonl`,
+    path: r.id,
     name: r.name,
     cwd: '/vault',
     created: new Date(0).toISOString(),
@@ -246,7 +246,7 @@ function createSessionedHost(): AgentSessionHost {
       if (!activeId) return null;
       const rec = sessions.get(activeId);
       if (!rec) return null;
-      return { id: rec.id, path: `/sessions/${rec.id}.jsonl`, name: rec.name, cwd: '/vault' };
+      return { id: rec.id, path: rec.id, name: rec.name, cwd: '/vault' };
     },
   };
 }

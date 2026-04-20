@@ -2,16 +2,18 @@
  * Worker-side AgentSessionHost implementation.
  *
  * Wraps a single `AgentSession`, owns the ZenFS attach/detach lifecycle on
- * the VFS port, and constructs MCP proxy tools that upcall to the main
+ * the VFS port, delegates session persistence to an injected
+ * `SessionStore`, and constructs MCP proxy tools that upcall to the main
  * thread for execution.
  */
 
 import { attachFS, configure, detachFS, fs, InMemory, vfs } from '@zenfs/core';
-import { IndexedDB, WebAccess } from '@zenfs/dom';
+import { WebAccess } from '@zenfs/dom';
 import type { AgentEvent, AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { AgentSession } from '../core/agent-session';
 import { SessionManager } from '../core/session/session-manager';
+import type { SessionStore } from '../core/session/store';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { createVaultTools } from '../core/tools';
 import { createZenfsVaultOperations } from '../fs/zenfs-operations';
@@ -20,69 +22,54 @@ import type { AgentSessionHost, HostEventSink, ToolUpcallInvoker } from '../rpc/
 import type { McpToolDescriptor, RpcSessionState } from '../rpc/rpc-types';
 import type { InMemoryVaultSeed } from './init-protocol';
 
-export const SESSIONS_MOUNT = '/sessions';
-const SESSIONS_STORE_NAME = 'web-agent-sessions';
-
-/** Module-level guard so repeat calls to `initSessions()` are no-ops. */
-let sessionsMounted = false;
-
 // ZenFS's `Channel` type union includes WebSocket which makes structural
 // matching against the browser's MessagePort fail. At runtime `RPC.from`
 // detects MessagePort via `addEventListener in port`, so the cast is safe.
 type ZenfsChannel = Parameters<typeof attachFS>[0];
 const asChannel = (port: MessagePort): ZenfsChannel => port as unknown as ZenfsChannel;
 
-export interface WorkerHostOptions {
-  session: AgentSession;
-  vfsPort: MessagePort;
-}
-
 export class WorkerAgentHost implements AgentSessionHost {
   private vaultTools: AgentTool[] = [];
   private mcpTools: AgentTool[] = [];
   private attachedFs: { detach: () => void } | null = null;
   /**
-   * Active session. `null` until `newSession` or `loadSession` runs.
-   * The message_end subscriber short-circuits when null — a prompt sent
-   * before either method (shouldn't happen, useAgent primes on mount)
-   * would leave that turn un-persisted rather than crash.
+   * Active session's in-memory tree + leaf pointer. `null` until
+   * `newSession` or `loadSession` runs. The message_end subscriber
+   * short-circuits when null — a prompt sent before either method
+   * (shouldn't happen, useAgent primes on mount) would leave that turn
+   * un-persisted rather than crash.
    */
   private sessionManager: SessionManager | null = null;
   private hostEventSink: HostEventSink | null = null;
+  /**
+   * Serialises `appendMessage` calls from the message_end subscriber. Two
+   * `message_end` events firing in the same microtask would otherwise both
+   * read the same `leafId` before either resolved `store.appendMessage`,
+   * leaving the second entry's parent link dangling.
+   */
+  private writeChain: Promise<unknown> = Promise.resolve();
 
   private readonly session: AgentSession;
   private readonly vfsPort: MessagePort;
+  private readonly store: SessionStore;
 
-  constructor(session: AgentSession, vfsPort: MessagePort) {
+  constructor(session: AgentSession, vfsPort: MessagePort, store: SessionStore) {
     this.session = session;
     this.vfsPort = vfsPort;
+    this.store = store;
     // Persist user/assistant/toolResult messages on turn boundaries.
     this.session.subscribe(event => {
       if (event.type !== 'message_end') return;
       const sm = this.sessionManager;
       if (!sm) return;
       const role = (event.message as { role?: string }).role;
-      if (role === 'user' || role === 'assistant' || role === 'toolResult') {
-        sm.appendMessage(event.message);
-      }
+      if (role !== 'user' && role !== 'assistant' && role !== 'toolResult') return;
+      this.writeChain = this.writeChain
+        .then(() => sm.appendMessage(event.message))
+        .catch(err => {
+          console.error('[WorkerAgentHost] appendMessage failed:', err);
+        });
     });
-  }
-
-  /**
-   * Mount the IndexedDB-backed `/sessions` store. Called once from
-   * `agent-worker.ts` boot before any session RPC flows. Idempotent across
-   * StrictMode / fast-refresh / multiple WorkerAgentHost instances in the
-   * same worker lifetime (guarded by module-level `sessionsMounted`).
-   *
-   * The store is per-origin + per-storeName — opening a second tab shares
-   * the same IDB store, so IDB's transaction serialisation is what makes
-   * multi-tab writes safe (see ai-docs/05-decisions.md D12 on landing).
-   */
-  async initSessions(): Promise<void> {
-    if (sessionsMounted) return;
-    const sessionsFs = await IndexedDB.create({ storeName: SESSIONS_STORE_NAME });
-    vfs.mount(SESSIONS_MOUNT, sessionsFs);
-    sessionsMounted = true;
   }
 
   // ==========================================================================
@@ -218,7 +205,7 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   // ==========================================================================
-  // M5 — session persistence
+  // M5 — session persistence (Dexie-backed)
   // ==========================================================================
 
   setHostEventSink(sink: HostEventSink): void {
@@ -226,24 +213,17 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   listSessions(): Promise<SessionSummary[]> {
-    return SessionManager.list(SESSIONS_MOUNT);
+    return this.store.listSessions();
   }
 
   /**
-   * Swap the active session to `sessionId`. Flushes any pending writes on
-   * the current session, resets the agent's message buffer, then rehydrates
-   * it from the persisted session file. Emits a synthetic `session_loaded`
-   * event so the main thread can refresh its UI from one envelope.
+   * Swap the active session to `sessionId`. Rebuilds the in-memory tree from
+   * the store, resets the agent's message buffer, then rehydrates it from the
+   * persisted entries. Emits a synthetic `session_loaded` event so the main
+   * thread can refresh its UI from one envelope.
    */
   async loadSession(sessionId: string): Promise<void> {
-    await this.sessionManager?.flush();
-
-    const summaries = await SessionManager.list(SESSIONS_MOUNT);
-    const target = summaries.find(s => s.id === sessionId);
-    if (!target) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-    const sm = await SessionManager.open(SESSIONS_MOUNT, target.path);
+    const sm = await SessionManager.load(this.store, sessionId);
     this.sessionManager = sm;
     this.session.reset();
     const ctx = sm.buildSessionContext();
@@ -252,8 +232,7 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   async newSession(parentSession?: string): Promise<{ sessionId: string }> {
-    await this.sessionManager?.flush();
-    const sm = await SessionManager.create(SESSIONS_MOUNT, {
+    const sm = await SessionManager.create(this.store, {
       parentSession,
       cwd: VAULT_MOUNT,
     });
@@ -265,10 +244,7 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    const summaries = await SessionManager.list(SESSIONS_MOUNT);
-    const target = summaries.find(s => s.id === sessionId);
-    if (!target) return;
-    await SessionManager.delete(target.path);
+    await this.store.deleteSession(sessionId);
     if (this.sessionManager?.getSessionId() === sessionId) {
       // Active session gone — spin up a fresh one so the next prompt lands
       // somewhere sane. Main-thread UI will react via session_loaded.
@@ -279,8 +255,7 @@ export class WorkerAgentHost implements AgentSessionHost {
   async setSessionName(name: string): Promise<void> {
     const sm = this.sessionManager;
     if (!sm) return;
-    sm.appendSessionInfo(name);
-    await sm.flush();
+    await sm.appendSessionInfo(name);
     this.emitSessionLoaded();
   }
 
@@ -289,7 +264,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     if (!sm) return null;
     return {
       id: sm.getSessionId(),
-      path: sm.getSessionFile() ?? null,
+      path: null,
       name: sm.getSessionName(),
       cwd: sm.getCwd(),
       parentSession: sm.getHeader()?.parentSession,

@@ -23,13 +23,25 @@ export class ChatPage {
 
   async waitServerReady(bodhiServerUrl: string): Promise<void> {
     await this.page.locator(this.selectors.appTitle).waitFor();
-    await this.walkSetupModal(bodhiServerUrl);
-    await this.page.locator(this.selectors.clientReady).waitFor();
+    // On cold load the setup overlay renders and the user walks through it.
+    // On reload, bodhi-js-react reads the persisted server URL from
+    // localStorage and skips the overlay entirely — so we race the iframe's
+    // attach against `clientReady` and only walk the modal when the former
+    // wins. Either path finishes at the same terminal check below.
+    const iframe = this.page.locator(this.selectors.setupIframe);
+    const clientReady = this.page.locator(this.selectors.clientReady);
+    const winner = await Promise.race([
+      iframe.waitFor({ state: 'attached' }).then(() => 'modal' as const),
+      clientReady.waitFor().then(() => 'ready' as const),
+    ]);
+    if (winner === 'modal') {
+      await this.walkSetupModal(bodhiServerUrl);
+    }
+    await clientReady.waitFor();
     await this.page.locator(this.selectors.serverReady).waitFor();
   }
 
   private async walkSetupModal(bodhiServerUrl: string): Promise<void> {
-    await this.page.locator(this.selectors.setupIframe).waitFor({ state: 'attached' });
     const iframe = this.page.frameLocator(this.selectors.setupIframe);
 
     // Wait for setup screen to render inside the iframe

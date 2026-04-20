@@ -6,10 +6,10 @@ import { buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
 import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { useWebAgent } from '@/providers/web-agent-context';
-import type { McpToolDescriptor, SessionSummary, ToolCallHandler } from '@/web-agent';
+import { useSessionsList } from '@/hooks/useSessionsList';
+import type { McpToolDescriptor, ToolCallHandler } from '@/web-agent';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'web-agent.activeSessionId';
-const EMPTY_SUMMARIES: SessionSummary[] = [];
 
 interface ActiveSession {
   id: string;
@@ -39,7 +39,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
-  const [sessionSummaries, setSessionSummaries] = useState<SessionSummary[]>(EMPTY_SUMMARIES);
+  const sessionSummaries = useSessionsList();
 
   const isLoadingModelsRef = useRef(false);
   const sessionBootRef = useRef(false);
@@ -100,8 +100,9 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   // Session-loaded envelopes are the authoritative signal that the Worker
   // has swapped sessions. Replace the local message buffer, surface the
   // new active-session meta, and persist the id so a reload restores it.
-  // Also trigger a sessions-list refresh so newly-created sessions appear
-  // in the picker without the caller having to poll.
+  // The picker list is driven by `useSessionsList` (Dexie liveQuery), so
+  // no manual refresh is needed — new/renamed/deleted sessions appear
+  // automatically on cross-context write.
   useEffect(() => {
     return rpcClient.onSessionLoaded(event => {
       setMessages(event.messages);
@@ -116,10 +117,6 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
           // localStorage disabled or full — fall back to in-memory only.
         }
       }
-      rpcClient
-        .listSessions()
-        .then(summaries => setSessionSummaries(summaries))
-        .catch(() => setSessionSummaries(EMPTY_SUMMARIES));
     });
   }, [rpcClient]);
 
@@ -153,15 +150,6 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
         console.error('[useAgent] failed to start a session:', err);
       }
     })();
-  }, [rpcClient]);
-
-  const refreshSessions = useCallback(async () => {
-    try {
-      const summaries = await rpcClient.listSessions();
-      setSessionSummaries(summaries);
-    } catch {
-      setSessionSummaries(EMPTY_SUMMARIES);
-    }
   }, [rpcClient]);
 
   const loadModels = useCallback(async () => {
@@ -262,17 +250,15 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const deleteSession = useCallback(
     async (id: string) => {
       await rpcClient.deleteSession(id);
-      await refreshSessions();
     },
-    [rpcClient, refreshSessions]
+    [rpcClient]
   );
 
   const renameSession = useCallback(
     async (name: string) => {
       await rpcClient.setSessionName(name);
-      await refreshSessions();
     },
-    [rpcClient, refreshSessions]
+    [rpcClient]
   );
 
   return {
@@ -293,7 +279,6 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     sessions: {
       current: activeSession,
       list: sessionSummaries,
-      refresh: refreshSessions,
       load: loadSession,
       newSession,
       delete: deleteSession,

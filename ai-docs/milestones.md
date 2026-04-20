@@ -320,6 +320,16 @@ Surprises worth remembering:
 - **Lazy flush interacts with concurrent writes.** The per-session promise chain captures `[...fileEntries]` at enqueue time so the `hasAssistant` check inside the write body sees the state that was present when that entry was appended, not whatever the chain drains to. Without the snapshot, two rapid appends could both "see" no assistant and both skip writing even though an assistant did land in between.
 - **`vfs.mount` throws if the path is already mounted.** SessionManager tests `try { vfs.umount } catch {}` before `vfs.mount` in `beforeEach` to keep each test isolated; the worker-host mount uses a module-level guard instead since it's a one-shot per Worker lifetime.
 
+#### Post-script — Dexie storage swap (2026-04-20)
+
+The original M5 storage path — `/sessions` mounted on `@zenfs/dom`'s IndexedDB backend with JSONL files per session — shipped but turned out to persist nothing in the browser. The ZenFS → `StoreFS` → `IndexedDBTransaction` write chain failed silently for reasons we did not pin down; IDB's `web-agent-sessions` store was empty after assistant replies despite the active session id being set in `localStorage`.
+
+Rather than chase the failure mode inside ZenFS, M5's storage layer was replaced without touching the public interface. Sessions are now records in a Dexie-backed `web-agent` IDB DB behind a `SessionStore` interface (`src/web-agent/core/session/store.ts`). Writes live in the Worker, main-thread reads go through `useLiveQuery` — no RPC for the picker list, BroadcastChannel-backed cross-context reactivity for free. The full swap is documented at `ai-docs/plans/indexeddb-dexie-for-session.md` and captured as decisions D13/D14/D15 in `05-decisions.md`. See also `ai-docs/PENDING.md` for the coding-agent JSONL interop that was scope-deferred.
+
+The extension-facing contract (`ReadonlySessionManager`, full `SessionEntry` union, `CURRENT_SESSION_VERSION = 3`) is unchanged, so M8 plans that assumed coding-agent-compatible session shape still hold.
+
+The legacy `web-agent-sessions` IDB database is best-effort-deleted on Worker boot — no migration path, `localStorage` active-session id stays meaningful across the swap because both implementations use UUIDv7 ids.
+
 ---
 
 ## Milestone gate

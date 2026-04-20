@@ -1,29 +1,28 @@
 /**
  * Web Worker entry — owns the agent runtime, its tool execution, and the
- * real ZenFS mount.
+ * real ZenFS mount. Session persistence is Dexie-backed (IndexedDB);
+ * see `core/session/store.ts` + `core/session/dexie-store.ts`.
  *
  * Boot sequence:
  *   1. Wait for the init message on the global self port.
- *   2. Construct an AgentSession + WorkerAgentHost.
+ *   2. Construct an AgentSession + SessionStore + WorkerAgentHost.
  *   3. Bind the agent RPC server to the agent port.
  *   4. If a dev seed was provided, mount the InMemory ZenFS backend
  *      immediately. Otherwise, the host waits for `mount_vault(handle)`
  *      from the main thread.
- *
- * Everything inside this Worker shares one JS context with the agent and
- * the ZenFS backend, so vault tool execution touches the filesystem
- * directly without any per-call RPC hop. MCP tools are the exception —
- * they upcall to the main thread via the existing agent RPC channel.
+ *   5. Best-effort delete the legacy ZenFS-backed IDB DB (`web-agent-sessions`).
  */
 
 import { streamSimple } from '@mariozechner/pi-ai';
 import type { StreamFn } from '@mariozechner/pi-agent-core';
 import { AgentSession } from '../core/agent-session';
+import { DexieSessionStore } from '../core/session/dexie-store';
 import { RpcServer } from '../rpc/rpc-server';
 import { isAgentWorkerInit } from './init-protocol';
 import { WorkerAgentHost } from './worker-host';
 
 const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
+const LEGACY_SESSIONS_DB = 'web-agent-sessions';
 
 self.addEventListener('message', event => {
   const data = event.data;
@@ -49,15 +48,8 @@ async function boot(
   // listeners require an explicit start() before delivery begins.
   vfsPort.start();
 
-  const host = new WorkerAgentHost(session, vfsPort);
-  // Mount the IndexedDB `/sessions` store before any session RPC can run.
-  // Failure here is non-fatal — the agent still works for transient chats,
-  // but session persistence is a no-op until we fix it.
-  try {
-    await host.initSessions();
-  } catch (err) {
-    console.error('[agent-worker] failed to mount /sessions:', err);
-  }
+  const store = new DexieSessionStore();
+  const host = new WorkerAgentHost(session, vfsPort, store);
 
   agentPort.start();
   const transport = {
@@ -83,6 +75,15 @@ async function boot(
     } catch (err) {
       console.error('[agent-worker] dev seed mount failed:', err);
     }
+  }
+
+  // Best-effort cleanup of the legacy M5 IDB DB (ZenFS-backed sessions).
+  // No-op if it never existed. Guarded with a try so a concurrent tab
+  // holding the DB open doesn't crash boot.
+  try {
+    indexedDB.deleteDatabase(LEGACY_SESSIONS_DB);
+  } catch {
+    // best-effort
   }
 }
 

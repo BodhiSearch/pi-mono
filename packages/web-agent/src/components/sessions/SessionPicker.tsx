@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, History, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -28,7 +28,6 @@ interface ActiveSession {
 interface SessionPickerProps {
   current: ActiveSession | null;
   list: SessionSummary[];
-  onRefresh: () => Promise<void>;
   onSwitch: (id: string) => Promise<void>;
   onNew: () => Promise<string>;
   onDelete: (id: string) => Promise<void>;
@@ -60,7 +59,6 @@ function relativeTime(iso: string): string {
 export function SessionPicker({
   current,
   list,
-  onRefresh,
   onSwitch,
   onNew,
   onDelete,
@@ -70,12 +68,6 @@ export function SessionPicker({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-
-  // Pull a fresh summary list whenever the popover opens.
-  useEffect(() => {
-    if (!open) return;
-    void onRefresh();
-  }, [open, onRefresh]);
 
   useEffect(() => {
     if (isRenaming) {
@@ -128,7 +120,7 @@ export function SessionPicker({
     <div
       data-testid="session-picker"
       data-active-session-id={current?.id ?? ''}
-      className="flex items-center gap-2"
+      className="flex min-w-0 flex-1 items-center gap-1"
     >
       {isRenaming ? (
         <form
@@ -158,12 +150,20 @@ export function SessionPicker({
               data-testid="session-picker-trigger"
               variant="outline"
               size="sm"
-              className="h-7 max-w-[18rem] justify-start gap-1 text-xs font-normal"
+              title="Switch or start a chat session"
+              className="h-8 min-w-0 flex-1 justify-start gap-1.5 px-2 text-xs font-normal"
             >
+              <History className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{displayTitle}</span>
+              {list.length > 0 ? (
+                <span className="ml-auto rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                  {list.length}
+                </span>
+              ) : null}
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent data-testid="session-picker-list" align="start" className="w-80 p-2">
+          <PopoverContent data-testid="session-picker-list" align="end" className="w-80 p-2">
             <div className="flex items-center justify-between pb-1">
               <span className="text-xs font-semibold text-muted-foreground">Sessions</span>
               <Button

@@ -46,11 +46,13 @@ export default function ChatDemo() {
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-2">
+        <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Chat
+        </span>
         <SessionPicker
           current={sessions.current}
           list={sessions.list}
-          onRefresh={sessions.refresh}
           onSwitch={sessions.load}
           onNew={sessions.newSession}
           onDelete={sessions.delete}

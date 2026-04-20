@@ -13,6 +13,7 @@
  */
 
 import { AgentSession } from '../core/agent-session';
+import { MemorySessionStore } from '../core/session/memory-store';
 import { RpcClient } from '../rpc/rpc-client';
 import { RpcServer } from '../rpc/rpc-server';
 import { createInProcessTransportPair } from '../rpc/transports/in-process';
@@ -80,7 +81,8 @@ function bootInProcess(): AgentWorkerBoot {
   const session = new AgentSession({});
   // No vfs port in fallback; vault tools won't work, but the agent does.
   const fakePort = makeFakePort();
-  const host = new WorkerAgentHost(session, fakePort);
+  // In-process fallback uses MemorySessionStore so jsdom tests don't need IDB.
+  const host = new WorkerAgentHost(session, fakePort, new MemorySessionStore());
   const { client: clientT, server: serverT } = createInProcessTransportPair();
   // Server retains itself via the transport's listener closure.
   new RpcServer(serverT, host);
