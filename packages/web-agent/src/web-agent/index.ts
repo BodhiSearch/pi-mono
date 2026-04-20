@@ -38,7 +38,7 @@ export type {
   VaultOperations,
   WriteOperations,
 } from './fs/zenfs-operations';
-export { mountVault, unmountVault, isVaultMounted, VAULT_MOUNT } from './fs/zenfs-provider';
+export { mountVault, unmountVault, isVaultMounted, VAULT_MOUNT, fs } from './fs/zenfs-provider';
 export { resolveVaultPath, VaultPathError } from './fs/path-utils';
 export type {
   Extension,

@@ -6,6 +6,7 @@
   "packageManager": "npm@11.6.2",
   "scripts": {
     "dev": "vite",
+    "dev1": "vite --port 15173",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings 0",

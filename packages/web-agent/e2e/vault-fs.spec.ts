@@ -5,15 +5,18 @@ import { VaultPage } from './tests/pages/VaultPage';
 import { FULL_MODEL_ID, getTestState } from './tests/global-setup';
 
 test.describe('Vault mount — M2', () => {
-  test('seeded vault mounts and status indicator reflects state', async ({ page }) => {
+  test('seeded vault mounts and lists its files in the side panel', async ({ page }) => {
+    const { bodhiServerUrl } = getTestState();
+    const chat = new ChatPage(page);
     const vault = new VaultPage(page);
 
     await test.step('install seeded vault before page load', async () => {
       await installVault(page, 'sample');
     });
 
-    await test.step('load app', async () => {
+    await test.step('load app and dismiss the Bodhi setup overlay', async () => {
       await page.goto('/');
+      await chat.waitServerReady(bodhiServerUrl);
     });
 
     await test.step('vault status badge reports mounted', async () => {
@@ -24,11 +27,15 @@ test.describe('Vault mount — M2', () => {
       await vault.expectName('sample');
     });
 
-    await test.step('seeded files are reachable through the dev fs hook', async () => {
-      const readme = await vault.readFile('/vault/README.md');
-      expect(readme.trim()).toBe('# Sample vault');
-      const hello = await vault.readFile('/vault/src/hello.ts');
-      expect(hello.trim()).toBe(`export const greeting = 'hello';`);
+    await test.step('seeded files appear in the file tree', async () => {
+      await vault.waitForFile('/vault/README.md');
+      await vault.waitForFile('/vault/src/hello.ts');
+      await vault.waitForFile('/vault/docs/note.txt');
+    });
+
+    await test.step('opening a seeded file shows its contents in the viewer', async () => {
+      await vault.openFile('/vault/README.md');
+      expect((await vault.currentFileContent()).trim()).toBe('# Sample vault');
     });
   });
 });
@@ -65,14 +72,18 @@ test.describe('FS tools round-trip — M3', () => {
       await chat.waitForAssistantTurn(0);
     });
 
-    await test.step('verify both tool calls were made', async () => {
+    await test.step('both tool-call bubbles rendered', async () => {
       await expect(chat.toolCall('read')).toBeVisible();
       await expect(chat.toolCall('write')).toBeVisible();
     });
 
-    await test.step('verify the file landed in the seeded vault', async () => {
-      const content = await vault.readFile('/vault/summary.txt');
-      expect(content).toBe('ok!!');
+    await test.step('the new file shows up in the side panel', async () => {
+      await vault.waitForFile('/vault/summary.txt');
+    });
+
+    await test.step('opening it in the viewer reveals the expected content', async () => {
+      await vault.openFile('/vault/summary.txt');
+      expect(await vault.currentFileContent()).toBe('ok!!');
     });
   });
 });

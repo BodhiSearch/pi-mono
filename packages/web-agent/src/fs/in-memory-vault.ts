@@ -65,10 +65,4 @@ async function performMount(seed: InMemoryVaultSeed): Promise<void> {
   }
 
   setMountedForSeed(true);
-
-  // Dev-only convenience for e2e secondary assertions. Tests that need to
-  // read a file back (because the UI surface doesn't render vault content
-  // yet in this milestone) can reach ZenFS through this hook. Production
-  // bundles never load this module, so the hook is strictly test-only.
-  (window as unknown as { __zenfsFs?: unknown }).__zenfsFs = fs.promises;
 }
