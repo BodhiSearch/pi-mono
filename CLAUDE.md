@@ -15,7 +15,7 @@ The other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`
 - **Architecture**: @ai-docs/02-architecture.md — RPC + ZenFS + FSA shape, extension sandboxing
 - **Milestones**: @ai-docs/milestones/index.md — status board + progressive-disclosure hooks to per-milestone files under `ai-docs/milestones/`
 - **Principles**: @ai-docs/04-principles.md — how we work
-- **Decisions log**: @ai-docs/05-decisions.md — append-only architectural decisions
+- **Decisions log**: @ai-docs/decisions/index.md — append-only architectural decisions, progressive-disclosure index
 
 Per-deliverable implementation plans live at `ai-docs/plans/*.md`. They are disposable and change with every session — the six files above are durable.
 
@@ -68,7 +68,7 @@ These are not dependencies; we study them to replicate proven patterns.
 | Artefact | Location | Lifecycle |
 |---|---|---|
 | Durable steering (vision, goals, architecture, milestones, principles, decisions) | `ai-docs/*.md` | Durable; edit in place (decisions are append-only) |
-| Architectural decisions log | `ai-docs/05-decisions.md` | Append-only |
+| Architectural decisions log | `ai-docs/decisions/` (index + per-group files) | Append-only |
 | Per-deliverable implementation plans | `ai-docs/plans/*.md` | Disposable per session; gitignored is off (`!ai-docs/plans/` in `.gitignore`) so can be committed if useful |
 | Auto-memory | `~/.claude/projects/-Users-amir36-…/memory/` | Cross-session, scoped to this repo |
 | Code | `packages/web-agent/src/**` | Committed |
