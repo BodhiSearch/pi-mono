@@ -75,7 +75,7 @@ OPFS (Origin Private File System) is the obvious-looking choice for app-owned st
 - **No transactional story.** IndexedDB has `readwrite` transactions that abort atomically. With OPFS, a half-written file stays half-written if the tab closes mid-write.
 - **IndexedDB's cost is negligible at our scale.** Session metadata and extension manifests are small. The performance delta doesn't matter.
 
-This is binding. If a contributor reaches for OPFS, the answer is no without a new decision in `05-decisions.md` that explains what changed.
+This is binding. If a contributor reaches for OPFS, the answer is no without a new decision in `decisions/` that explains what changed.
 
 ## Extension sandboxing
 
@@ -134,7 +134,7 @@ This isn't on npm and we don't depend on it. We read its code for technique; we 
 
 ### `@mariozechner/pi-ai` and `@mariozechner/pi-agent-core` (direct deps)
 
-Actually used. `pi-ai` gives us model adapters and the stream abstraction; `pi-agent-core` gives us the Agent loop. Both are browser-safe with the `/* @vite-ignore */` hint applied in Phase 0. See `05-decisions.md` D1.
+Actually used. `pi-ai` gives us model adapters and the stream abstraction; `pi-agent-core` gives us the Agent loop. Both are browser-safe with the `/* @vite-ignore */` hint applied in Phase 0. See `decisions/m0-workspace.md` D1.
 
 ## Phase-6 extraction shape
 
@@ -188,4 +188,4 @@ impact.
 - **Phase 5:** network allow-list format for extensions — glob-on-origin, or full URL patterns?
 - **Phase 6:** final package name and scope. `@bodhiapp/web-agent` is a working placeholder.
 
-Each of these lands as a decision in `05-decisions.md` when we actually need the answer.
+Each of these lands as a decision in `decisions/` when we actually need the answer.

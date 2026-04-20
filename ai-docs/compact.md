@@ -50,8 +50,9 @@ DURABLE STEERING (read before touching code)
 - ai-docs/milestones.md — M0–M5 done + Post-M5 cleanup post-script. M6 is the next
   milestone, the one we are implementing now.
 - ai-docs/plans/m6-session-tree.md — the plan we are executing
-- ai-docs/05-decisions.md — D1–D17 landed. D18 (fork storage = full copy) and D19
-  (ephemeral leaf navigation) land with M6.
+- ai-docs/decisions/ — D1–D21 landed (split into per-group files; start at
+  `decisions/index.md`). D18 (fork storage) + D19 (ephemeral leaf nav) in
+  `decisions/m6-session-tree.md`.
 - ai-docs/02-architecture.md (ZenFS mount layout, dependency classification from Post-M5)
 - ai-docs/04-principles.md (web-agent imports inward only; storage is IndexedDB not OPFS;
   few high-value e2e with test.step per concern)

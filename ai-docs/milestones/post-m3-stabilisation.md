@@ -14,7 +14,7 @@ Not a new milestone — three follow-up commits that fix gaps the user surfaced 
 - Hoisted vault mount state into a single `<VaultProvider>` (`src/providers/{VaultProvider.tsx,vault-context.ts}`). Three components (Header, VaultPanel, ChatDemo) were each calling `useVaultMount`, which meant the mount effect ran in parallel from each subtree. The last racer won the actual VFS mount (so files rendered) but an earlier racer threw on a half-configured VFS and pinned `status` to `"error"` on reload. After hoisting, the mount effect runs exactly once per app.
 - Added in-flight promise guard inside `mountVault`/`unmountVault` so React StrictMode effect re-runs and fast-refresh remounts serialise; mounting the same handle twice is a no-op.
 - Replaced the flat file list with a nested collapsible tree. `useVaultTree` returns `VaultTreeNode[]`; `FileTree` renders recursive `TreeNode`s with chevron + folder icons. Folders render `data-testid="vault-dir-entry"` + `data-teststate="expanded|collapsed"` so the e2e helper can walk the ancestor chain.
-- See [decision D5](../05-decisions.md) for the rationale on hoisting mount state.
+- See [decision D5](../decisions/post-m3-stabilisation.md#d5-vault-mount-state-is-owned-by-a-single-vaultprovider-not-by-usevaultmount-callers) for the rationale on hoisting mount state.
 
 ## `4c3401d3` — 3-column layout + Milkdown markdown viewer
 
@@ -22,7 +22,7 @@ Not a new milestone — three follow-up commits that fix gaps the user surfaced 
 - Markdown files (`.md` / `.mdx` / `.markdown`) render through Milkdown Crepe WYSIWYG with autosave (blur + 5s) writing back through `fs.promises.writeFile` — proves the FSA round-trip end-to-end. Non-markdown text files keep the read-only `<pre>` viewer; unrecognised extensions show a placeholder.
 - Folders default collapsed; auto-expand removed. `VaultPage.expandAncestors()` walks the parent chain and click-expands collapsed dirs so existing nested-path assertions (`/vault/src/hello.ts`, `/vault/docs/note.txt`) still work without touching the specs.
 - `currentFileContent()` reads from Milkdown's ProseMirror root for markdown files; the seeded README assertion changes from `# Sample vault` to the rendered `Sample vault`.
-- New deps: `@milkdown/{crepe,kit,react}`. See [decision D6](../05-decisions.md) for the scope rationale.
+- New deps: `@milkdown/{crepe,kit,react}`. See [decision D6](../decisions/post-m3-stabilisation.md#d6-reference-app-uses-a-3-column-tree--viewer--chat-layout-with-a-milkdown-markdown-editor) for the scope rationale.
 
 ## Surprises worth remembering
 

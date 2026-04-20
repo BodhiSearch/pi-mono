@@ -20,7 +20,7 @@ Durable steering (in order):
 
 1. `CLAUDE.md` — project focus, core values
 2. `ai-docs/milestones.md` — M0–M6 done with outcome paragraphs; M7+ planned
-3. `ai-docs/05-decisions.md` — D1–D19 landed (D18 + D19 = M6 fork storage + ephemeral leaf nav)
+3. `ai-docs/decisions/index.md` — D1–D21 landed, split into per-group files (D18 + D19 = M6 fork storage + ephemeral leaf nav in `decisions/m6-session-tree.md`)
 4. `ai-docs/02-architecture.md` — ZenFS mount layout, dep classification
 5. `ai-docs/04-principles.md` — imports inward only, IndexedDB not OPFS, few high-value e2e
 
@@ -37,7 +37,7 @@ Durable steering (in order):
 - React: `useAgent.sessions.fork(entryId)` + `.navigateToLeaf(entryId)` + `messageEntryIds`. New `useSessionEntries(sessionId)` liveQuery hook (parallel to `useSessionsList`) — available for future tree-panel UI.
 - UI: `MessageBubble` shows hover-revealed Fork + Branch action buttons. **Assistant-only** rule (branching from a user message would create orphan sibling-user-messages — no semantics). Actions are `position: absolute` overlay at the bubble's bottom-right with `opacity-0 group-hover:opacity-100` + `pointer-events-none group-hover:pointer-events-auto` — reply height never shifts on hover.
 - `SessionPicker` — **flat-under-root forest rendering** (`src/components/sessions/session-forest.ts`): walk each session's parent chain to its topmost ancestor, group all descendants under that root, render at depth 1. Picker is a narrow dropdown — a real ladder doesn't fit; flat one-level grouping is enough to communicate "this fork belongs to that root." Indent is `marginLeft: depth * 16px` inline. New testids: `session-fork-indicator`, `chat-message-fork-action`, `chat-message-branch-action`, `chat-message-actions`. M5 testids preserved.
-- D18 (fork storage = full copy) + D19 (ephemeral leaf nav) appended to `05-decisions.md`. M6 outcome paragraph in `milestones.md`.
+- D18 (fork storage = full copy) + D19 (ephemeral leaf nav) live in `decisions/m6-session-tree.md`. M6 outcome paragraph in `milestones.md`.
 
 ### Bug fixes shipped on top of M6
 

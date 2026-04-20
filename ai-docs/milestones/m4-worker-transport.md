@@ -7,7 +7,7 @@
 **Scope preview (historical).**
 - Spawn an agent Worker from the app; instantiate `AgentSession` + RPC server inside.
 - Implement `createWorkerTransportPair()` backed by a `Worker` + `MessagePort`, same `Transport` interface as `createInProcessTransportPair()`.
-- Decide mount location for ZenFS handles: main thread + proxy vs. Worker-side mount. Benchmark + verify FSA handle transferability, record decision in `../05-decisions.md`.
+- Decide mount location for ZenFS handles: main thread + proxy vs. Worker-side mount. Benchmark + verify FSA handle transferability, record decision in `../decisions/`.
 - Proxy-tool pattern: tools carrying closures become host-side stubs that RPC back to the main thread.
 
 **Coding-agent references.** `packages/coding-agent/src/modes/rpc/rpc-mode.ts` for the stdio transport pattern — we mirror the dispatcher shape; the transport itself is ours.

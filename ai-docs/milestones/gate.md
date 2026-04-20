@@ -9,4 +9,4 @@ A milestone is only "done" when all of these are true:
 5. No new `any`, no new `// @ts-ignore`, no new `// @ts-nocheck`, no `TODO: revisit`-without-tracking-note.
 6. A paragraph in the per-milestone file describes what landed.
 
-Skipping any item breaks the milestone contract. If a gate item cannot be met for a real reason, document it as a decision in `../05-decisions.md` — don't silently bypass. See principle #9 in `../04-principles.md`.
+Skipping any item breaks the milestone contract. If a gate item cannot be met for a real reason, document it as a decision in `../decisions/` — don't silently bypass. See principle #9 in `../04-principles.md`.

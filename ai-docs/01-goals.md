@@ -81,7 +81,7 @@ Skills are validated *as* extensions — there is no separate skill loader. This
 | ST1 | `/vault` — Chrome FSA handle, persisted across reloads via IndexedDB (`idb-keyval`) | direct user-local access, reload-safe |
 | ST2 | `/extensions` — IndexedDB-backed ZenFS mount | app-owned, must tolerate multi-tab |
 | ST3 | `/sessions` — IndexedDB-backed ZenFS mount | app-owned, must tolerate multi-tab |
-| ST4 | **No OPFS.** All app-owned storage is IndexedDB. | OPFS does not coordinate across tabs; concurrent writes corrupt state. IndexedDB transactions serialise naturally. See `05-decisions.md` when this entry lands. |
+| ST4 | **No OPFS.** All app-owned storage is IndexedDB. | OPFS does not coordinate across tabs; concurrent writes corrupt state. IndexedDB transactions serialise naturally. See `decisions/index.md` for related entries (D12, D14). |
 
 ## Packaging
 

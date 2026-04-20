@@ -18,7 +18,7 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 
 **Why.** OPFS does not coordinate across browser tabs. Two tabs of the same origin writing the same file produce torn bytes with no error surface. We will not ship a library that corrupts user state when the user opens a second tab. IndexedDB transactions serialise naturally and abort atomically.
 
-**How to apply.** All app-owned storage (`/extensions`, `/sessions`, any future app-owned mount) uses the `@zenfs/core` IndexedDB backend. `/vault` is the exception — it's the user's real disk via Chrome File System Access API, and concurrent-tab writes there are the user's problem, not ours. If a proposal reaches for OPFS, the answer is no unless a new entry in `05-decisions.md` explains what changed about the concurrency story.
+**How to apply.** All app-owned storage (`/extensions`, `/sessions`, any future app-owned mount) uses the `@zenfs/core` IndexedDB backend. `/vault` is the exception — it's the user's real disk via Chrome File System Access API, and concurrent-tab writes there are the user's problem, not ours. If a proposal reaches for OPFS, the answer is no unless a new entry in `decisions/` explains what changed about the concurrency story.
 
 ## 3. `src/web-agent/` imports inward only
 
@@ -69,7 +69,7 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 
 - Per-deliverable plans live at `ai-docs/plans/*.md`. Disposable. Name them by deliverable, not by phase number (phases get re-planned; filenames shouldn't collide).
 - Steering docs live at `ai-docs/*.md` — vision, goals, architecture, milestones, principles. Durable. Update in place; do not version with date suffixes.
-- Decisions log at `ai-docs/05-decisions.md`. **Append-only.** A decision that turns out to be wrong gets a *new* decision entry that supersedes it by reference — the old entry stays as historical record.
+- Decisions log at `ai-docs/decisions/` (index + per-group files). **Append-only.** A decision that turns out to be wrong gets a *new* decision entry that supersedes it by reference — the old entry stays as historical record, and the ledger row in `decisions/index.md` is updated to `superseded by Dxx`.
 
 ## 8. Ask before widening scope
 
@@ -88,7 +88,7 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 **How to apply.**
 
 - Every gate item listed in `milestones/gate.md` must pass before a milestone is declared done.
-- If a real reason makes a gate item impossible, write it into `05-decisions.md` with the tradeoff explained. Then the gate is updated, not bypassed.
+- If a real reason makes a gate item impossible, write it into `decisions/` with the tradeoff explained. Then the gate is updated, not bypassed.
 - New `any`, new `// @ts-ignore`, new skipped tests require the same decision record.
 
 ## 10. When the evidence surprises you, write it down
