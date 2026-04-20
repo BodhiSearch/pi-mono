@@ -304,12 +304,21 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // Capture the parent BEFORE deleting — once the row is gone we can't
+    // recover the link from the store. Used for the "delete a fork → land
+    // on the parent" UX so users don't get a surprise blank session.
+    const wasActive = this.sessionManager?.getSessionId() === sessionId;
+    const parentId = wasActive ? this.sessionManager?.getHeader()?.parentSession : undefined;
     await this.store.deleteSession(sessionId);
-    if (this.sessionManager?.getSessionId() === sessionId) {
-      // Active session gone — spin up a fresh one so the next prompt lands
-      // somewhere sane. Main-thread UI will react via session_loaded.
-      await this.newSession();
+    if (!wasActive) return;
+    if (parentId) {
+      const parentRow = await this.store.getSession(parentId);
+      if (parentRow) {
+        await this.loadSession(parentId);
+        return;
+      }
     }
+    await this.newSession();
   }
 
   async setSessionName(name: string): Promise<void> {

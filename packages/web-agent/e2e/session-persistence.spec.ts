@@ -152,6 +152,67 @@ test.describe('Session persistence — M5', () => {
       await expect(sessions.list).not.toBeVisible();
     });
 
+    let forkOfForkId: string | null = null;
+    await test.step('M6: fork-of-fork — depth-2 fork is rendered (bug repro)', async () => {
+      // Pre-condition: active session is the depth-1 fork from the previous
+      // step. Fork again from one of the assistant messages it copied — this
+      // creates a depth-2 fork whose parent is the depth-1 fork.
+      if (!forkedSessionId) throw new Error('no forkedSessionId');
+      // Make sure we're on forkedSessionId (some prior step may have swapped).
+      if ((await sessions.currentSessionId()) !== forkedSessionId) {
+        await sessions.switchTo(forkedSessionId);
+        await expect
+          .poll(async () => sessions.currentSessionId(), { timeout: 10_000 })
+          .toBe(forkedSessionId);
+      }
+      const assistantBubble = page
+        .locator('[data-testid^="chat-message-turn-"][data-messagetype="assistant"]')
+        .first();
+      const assistantEntryId = await assistantBubble.getAttribute('data-entry-id');
+      expect(assistantEntryId).toBeTruthy();
+
+      await sessions.forkFromEntry(assistantEntryId!);
+      await expect
+        .poll(async () => sessions.currentSessionId(), { timeout: 10_000 })
+        .not.toBe(forkedSessionId);
+      forkOfForkId = await sessions.currentSessionId();
+      expect(forkOfForkId).toBeTruthy();
+      expect(forkOfForkId).not.toBe(firstSessionId);
+
+      // The bug: picker only rendered one level deep, so the grand-fork
+      // would be invisible until something in its chain was deleted. With
+      // the fix, BOTH the direct fork AND the grand-fork render flat under
+      // their topmost root at depth 1 — picker is too narrow for a real
+      // tree, and grouping-by-root is enough to communicate ownership.
+      await sessions.open();
+      const directForkRow = sessions.listItem(forkedSessionId);
+      const grandForkRow = sessions.listItem(forkOfForkId!);
+      await expect(directForkRow).toBeVisible();
+      await expect(grandForkRow).toBeVisible();
+      await expect(directForkRow).toHaveAttribute('data-depth', '1');
+      await expect(grandForkRow).toHaveAttribute('data-depth', '1'); // flat
+      await expect(grandForkRow).toHaveAttribute('data-parent-session', forkedSessionId);
+      await expect(directForkRow.locator('[data-testid="session-fork-indicator"]')).toBeVisible();
+      await expect(grandForkRow.locator('[data-testid="session-fork-indicator"]')).toBeVisible();
+      await page.keyboard.press('Escape');
+    });
+
+    await test.step('M6: deleting an active fork lands on its parent (no surprise blank)', async () => {
+      // Active is the depth-2 fork. Delete it → expect active to swap to
+      // the depth-1 fork (its parent), NOT a fresh untitled session.
+      if (!forkOfForkId || !forkedSessionId) throw new Error('fork ids missing');
+      await sessions.deleteSession(forkOfForkId);
+      await page.keyboard.press('Escape');
+      await expect
+        .poll(async () => sessions.currentSessionId(), { timeout: 10_000 })
+        .toBe(forkedSessionId);
+      // And the depth-2 fork is no longer in the list.
+      await sessions.open();
+      await expect(sessions.listItem(forkOfForkId)).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      forkOfForkId = null;
+    });
+
     await test.step('M6: switch back to parent — original messages intact', async () => {
       await sessions.switchTo(firstSessionId);
       await expect

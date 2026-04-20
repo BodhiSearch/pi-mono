@@ -335,6 +335,55 @@ describe('WorkerAgentHost — navigateToLeaf', () => {
   });
 });
 
+describe('WorkerAgentHost — deleteSession parent fallback', () => {
+  test('deleting an active fork switches to the parent (not a fresh session)', async () => {
+    const store = new MemorySessionStore();
+    const { host, fake } = makeHost(store);
+    const { sessionId: parentId } = await host.newSession();
+    fake.emit({ type: 'message_end', message: userMessage('q') });
+    fake.emit({ type: 'message_end', message: assistantMessage('a') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const parentEntries = await store.getEntries(parentId);
+    const forkPoint = parentEntries[parentEntries.length - 1].id;
+    const { sessionId: forkId } = await host.forkSession(forkPoint);
+    expect((await host.getSessionMeta())?.id).toBe(forkId);
+
+    await host.deleteSession(forkId);
+
+    // Active session must now be the PARENT, not a fresh empty one.
+    const meta = await host.getSessionMeta();
+    expect(meta?.id).toBe(parentId);
+    // And the parent's persisted history should be restored to the agent.
+    expect(fake.restoredCalls.at(-1)?.length).toBe(2);
+  });
+
+  test('deleting an active fork whose parent has been deleted falls back to a new session', async () => {
+    const store = new MemorySessionStore();
+    const { host, fake } = makeHost(store);
+    const { sessionId: parentId } = await host.newSession();
+    fake.emit({ type: 'message_end', message: userMessage('q') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const parentEntries = await store.getEntries(parentId);
+    const { sessionId: forkId } = await host.forkSession(
+      parentEntries[parentEntries.length - 1].id
+    );
+    // Wipe the parent from the store directly to simulate it being deleted
+    // earlier in the session.
+    await store.deleteSession(parentId);
+
+    await host.deleteSession(forkId);
+
+    const meta = await host.getSessionMeta();
+    expect(meta?.id).toBeDefined();
+    expect(meta?.id).not.toBe(parentId);
+    expect(meta?.id).not.toBe(forkId);
+  });
+});
+
 describe('WorkerAgentHost — loadSession aborts before reset', () => {
   test('loadSession drains writeChain and aborts the agent before swapping', async () => {
     const store = new MemorySessionStore();

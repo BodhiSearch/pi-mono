@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { SessionSummary } from '@/web-agent';
+import { buildSessionForest } from './session-forest';
 
 interface ActiveSession {
   id: string;
@@ -44,39 +45,6 @@ function titleFor(summary: SessionSummary): string {
     return trimmed.length > 40 ? `${trimmed.slice(0, 37)}…` : trimmed;
   }
   return 'Untitled session';
-}
-
-/**
- * Group sessions into a flat-by-display forest: roots first (sorted by
- * `modified` desc, original order), then children of each root immediately
- * after their parent. Children are tagged with `depth: 1` so the row can
- * indent + render the fork breadcrumb. We deliberately keep the structure
- * single-level — the picker is a narrow dropdown; deeper trees flatten
- * visually but each child still labels its parent.
- */
-function buildForest(list: SessionSummary[]): Array<{ summary: SessionSummary; depth: number }> {
-  const byId = new Map(list.map(s => [s.id, s]));
-  const childrenByParent = new Map<string, SessionSummary[]>();
-  const roots: SessionSummary[] = [];
-  for (const s of list) {
-    const parent = s.parentSessionPath;
-    if (parent && byId.has(parent)) {
-      const arr = childrenByParent.get(parent) ?? [];
-      arr.push(s);
-      childrenByParent.set(parent, arr);
-    } else {
-      roots.push(s);
-    }
-  }
-  const out: Array<{ summary: SessionSummary; depth: number }> = [];
-  for (const root of roots) {
-    out.push({ summary: root, depth: 0 });
-    const kids = childrenByParent.get(root.id);
-    if (kids) {
-      for (const k of kids) out.push({ summary: k, depth: 1 });
-    }
-  }
-  return out;
 }
 
 function relativeTime(iso: string): string {
@@ -104,7 +72,7 @@ export function SessionPicker({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const forest = useMemo(() => buildForest(list), [list]);
+  const forest = useMemo(() => buildSessionForest(list), [list]);
   const summaryById = useMemo(() => new Map(list.map(s => [s.id, s])), [list]);
 
   useEffect(() => {
@@ -234,9 +202,10 @@ export function SessionPicker({
                       data-parent-session={s.parentSessionPath ?? ''}
                       data-active={active ? 'true' : 'false'}
                       data-depth={depth}
+                      style={depth > 0 ? { marginLeft: depth * 16 } : undefined}
                       className={`flex items-center gap-1 rounded px-2 py-1.5 text-xs hover:bg-accent ${
                         active ? 'bg-accent' : ''
-                      } ${depth > 0 ? 'ml-4' : ''}`}
+                      }`}
                     >
                       {depth > 0 ? (
                         <GitFork
