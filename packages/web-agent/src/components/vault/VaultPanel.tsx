@@ -9,12 +9,12 @@
 import { useState } from 'react';
 import FileTree from './FileTree';
 import FileViewer from './FileViewer';
-import { useVaultFiles } from '@/hooks/useVaultFiles';
 import { useVaultMount } from '@/hooks/useVaultMount';
+import { useVaultTree } from '@/hooks/useVaultTree';
 
 export default function VaultPanel() {
   const { status } = useVaultMount();
-  const files = useVaultFiles(status);
+  const { nodes, allDirectoryPaths } = useVaultTree(status);
   const [selected, setSelected] = useState<string | null>(null);
 
   return (
@@ -28,7 +28,8 @@ export default function VaultPanel() {
       </div>
       <div className="flex-1 overflow-auto">
         <FileTree
-          files={files}
+          nodes={nodes}
+          allDirectoryPaths={allDirectoryPaths}
           selected={selected}
           onSelect={setSelected}
           isEmpty={status !== 'mounted'}

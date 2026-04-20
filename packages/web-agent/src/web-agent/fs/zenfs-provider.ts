@@ -13,33 +13,60 @@ export { fs };
 export const VAULT_MOUNT = '/vault';
 
 let mounted = false;
+let mountedHandle: FileSystemDirectoryHandle | null = null;
+let inFlight: Promise<void> | null = null;
 
 /**
  * Mount the given FileSystemDirectoryHandle at /vault.
  *
- * If a previous mount exists it is unmounted first (handle switching).
- * The root filesystem is configured with an empty mounts map so the /vault
- * subdirectory exists in the VFS.
+ * Serialised via a module-level promise so overlapping callers (React
+ * StrictMode re-running effects, provider unmount/remount on fast refresh)
+ * don't race `configure`/`vfs.mount`. If the same handle is already mounted
+ * or is currently being mounted the call is a no-op / shares the in-flight
+ * promise.
  */
 export async function mountVault(handle: FileSystemDirectoryHandle): Promise<void> {
-  if (mounted) {
-    await unmountVault();
+  if (inFlight) {
+    await inFlight;
+    if (mounted && mountedHandle === handle) return;
   }
-  await configure({ mounts: {} });
-  const webAccessFs = await WebAccess.create({ handle });
-  vfs.mount(VAULT_MOUNT, webAccessFs);
-  mounted = true;
+  if (mounted && mountedHandle === handle) return;
+
+  inFlight = (async () => {
+    if (mounted) {
+      await unmountInternal();
+    }
+    await configure({ mounts: {} });
+    const webAccessFs = await WebAccess.create({ handle });
+    vfs.mount(VAULT_MOUNT, webAccessFs);
+    mounted = true;
+    mountedHandle = handle;
+  })();
+
+  try {
+    await inFlight;
+  } finally {
+    inFlight = null;
+  }
 }
 
-/** Unmount /vault. Safe to call when nothing is mounted. */
-export async function unmountVault(): Promise<void> {
-  if (!mounted) return;
+async function unmountInternal(): Promise<void> {
   try {
     vfs.umount(VAULT_MOUNT);
   } catch {
     // mount may not exist if the page was freshly loaded
   }
   mounted = false;
+  mountedHandle = null;
+}
+
+/** Unmount /vault. Safe to call when nothing is mounted. */
+export async function unmountVault(): Promise<void> {
+  if (inFlight) {
+    await inFlight;
+  }
+  if (!mounted) return;
+  await unmountInternal();
 }
 
 export function isVaultMounted(): boolean {
@@ -53,4 +80,5 @@ export function isVaultMounted(): boolean {
  */
 export function setMountedForSeed(value: boolean): void {
   mounted = value;
+  if (!value) mountedHandle = null;
 }
