@@ -163,18 +163,31 @@ test.describe('Session persistence — M5', () => {
       await expect(firstBubble).toContainText('hello');
     });
 
-    await test.step('M6: branch from an earlier message — leaf moves, no new session', async () => {
-      // Pick the user message entry id and "branch from here".
+    await test.step('M6: branch from an assistant reply — leaf moves, no new session', async () => {
+      // Branch + Fork actions are assistant-only (branching from a user
+      // message would create orphan sibling-user-messages). Pick the first
+      // assistant bubble and use its entry id.
+      const assistantBubble = page
+        .locator('[data-testid^="chat-message-turn-"][data-messagetype="assistant"]')
+        .first();
+      const assistantEntryId = await assistantBubble.getAttribute('data-entry-id');
+      expect(assistantEntryId).toBeTruthy();
+
+      const beforeId = await sessions.currentSessionId();
+      await sessions.branchFromEntry(assistantEntryId!);
+      // navigateToLeaf is in-session — the active session id does NOT change.
+      await expect.poll(async () => sessions.currentSessionId(), { timeout: 5_000 }).toBe(beforeId);
+    });
+
+    await test.step('M6: user-message bubbles intentionally have no fork/branch actions', async () => {
       const userBubble = page
         .locator('[data-testid="chat-message-turn-0"][data-messagetype="user"]')
         .first();
       const userEntryId = await userBubble.getAttribute('data-entry-id');
       expect(userEntryId).toBeTruthy();
-
-      const beforeId = await sessions.currentSessionId();
-      await sessions.branchFromEntry(userEntryId!);
-      // navigateToLeaf is in-session — the active session id does NOT change.
-      await expect.poll(async () => sessions.currentSessionId(), { timeout: 5_000 }).toBe(beforeId);
+      // Assistant rule: no chat-message-actions overlay on user bubbles.
+      await expect(sessions.forkAction(userEntryId!)).toHaveCount(0);
+      await expect(sessions.branchAction(userEntryId!)).toHaveCount(0);
     });
 
     await test.step('M6: forked session is deletable; parent stays', async () => {
