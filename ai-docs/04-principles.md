@@ -83,11 +83,11 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 
 ## 9. Don't silently bypass the phase gate
 
-**Why.** The gate in `milestones.md` is what guarantees each commit is shippable. If a gate step fails and gets worked around with `// @ts-ignore` or a skipped test, the milestone contract breaks — and the next milestone starts from a broken foundation.
+**Why.** The gate in `milestones/gate.md` is what guarantees each commit is shippable. If a gate step fails and gets worked around with `// @ts-ignore` or a skipped test, the milestone contract breaks — and the next milestone starts from a broken foundation.
 
 **How to apply.**
 
-- Every gate item listed in `milestones.md#milestone-gate` must pass before a milestone is declared done.
+- Every gate item listed in `milestones/gate.md` must pass before a milestone is declared done.
 - If a real reason makes a gate item impossible, write it into `05-decisions.md` with the tradeoff explained. Then the gate is updated, not bypassed.
 - New `any`, new `// @ts-ignore`, new skipped tests require the same decision record.
 

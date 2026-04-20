@@ -1,110 +1,108 @@
-Resume M6 implementation for packages/web-agent (session tree — fork + in-session
-branch navigation). The plan is approved; we are executing it. No replanning.
+# Resume — web-agent (post M6)
 
-Step 1 — Read durable steering in this exact order:
-  1. CLAUDE.md (repo root)
-  2. ai-docs/milestones.md — M0–M5 done; M6 is the next milestone.
-  3. ai-docs/plans/m6-session-tree.md — THE plan. Follow phase order; each phase has
-      its own gate.
-  4. ai-docs/05-decisions.md — D1–D17 landed. D18 + D19 land with M6 in Phase 5.
-  5. ai-docs/02-architecture.md (ZenFS mount layout, Post-M5 dependency classification)
-      and ai-docs/04-principles.md (web-agent imports inward only; few high-value e2e
-      with test.step per concern).
+## Where we are
 
-Step 2 — In parallel, read the current web-agent shape you're about to touch:
-  - packages/web-agent/src/web-agent/core/session/store.ts — interface gets a new
-      forkSession method in Phase 1.
-  - packages/web-agent/src/web-agent/core/session/memory-store.ts — new forkSession
-      impl + new tests in Phase 1.
-  - packages/web-agent/src/web-agent/core/session/dexie-store.ts — new forkSession
-      impl using a single Dexie transaction; direct `this.db.entries.add(row)` call
-      (bypassing `_writeEntry`'s monotonic-timestamp bump so copied entries keep their
-      original timestamps).
-  - packages/web-agent/src/web-agent/core/session/session-manager.ts — gets `fork`
-      and `navigateToLeaf` methods in Phase 2.
-  - packages/web-agent/src/web-agent/core/session/types.ts — already has every type
-      M6 needs (BranchSummaryEntry, SessionHeader.parentSession, SessionTreeNode).
-      Do not widen.
-  - packages/web-agent/src/web-agent/worker/worker-host.ts — Phase 3: `forkSession`,
-      `navigateToLeaf`, and the abort-before-reset fix to loadSession.
-  - packages/web-agent/src/web-agent/rpc/rpc-types.ts + rpc-client.ts + rpc-server.ts
-      — Phase 3: two new commands (`fork_session`, `navigate_to_leaf`) and responses.
-  - packages/web-agent/src/hooks/useAgent.ts + useSessionsList.ts — Phase 4: add a
-      new useSessionEntries hook + expose sessions.fork / sessions.navigateToLeaf.
-  - packages/web-agent/src/components/sessions/SessionPicker.tsx — Phase 4: tree-indent
-      forest rendering + breadcrumb for forked sessions. Keep existing data-testids.
-  - packages/web-agent/src/components/chat/ChatMessages.tsx (and related bubble
-      components) — Phase 4: per-message action menu (Fork / Branch).
-  - packages/web-agent/e2e/session-persistence.spec.ts — Phase 5: extended with
-      test.step entries for fork + navigate. Do not create a new spec file.
-  - Existing tests to keep green without edits: memory-store.test.ts, dexie-store.test.ts
-      (extend, don't rewrite), session-manager.test.ts (extend), rpc.test.ts (extend),
-      worker-host.test.ts (extend), zenfs-operations.test.ts, zenfs-provider.test.ts,
-      agent-session.test.ts.
+- Repo: `pi-mono` at `/Users/amir36/Documents/workspace/src/github.com/BodhiSearch/pi-mono`
+- Branch: `main`, 18 commits ahead of `origin/main`. Working tree clean.
+- Last 5 commits (newest first):
+  - `a46df87e` — chore(web-agent): dedicated e2e ports (bodhi 21135, vite 25173)
+  - `bab0dfd8` — gitignore tweak
+  - `7bd358e1` — fix(web-agent): nested forks visible in picker; delete-fork lands on parent
+  - `1971c70a` — fix(web-agent): M6 fork/branch UX — overlay at end of message, assistant-only
+  - `18b7c857` — feat(web-agent): M6 — session tree (fork + in-session branch navigation)
+- Test baseline (gates green at HEAD): **205 unit tests + 4 e2e specs**.
 
-Step 3 — Reference patterns to study (read-only; do not import):
-  - packages/coding-agent/src/core/session-manager.ts lines 1125–1262 — the fork
-      (`createBranchedSession`) and branch (`branch` / `branchWithSummary`) patterns.
-      Copy shapes; skip the LLM summarisation path (out of scope for M6).
-  - packages/coding-agent/src/core/agent-session-runtime.ts lines 141–262 — the
-      switchSession + fork runtime transitions. Mirror the abort-before-teardown
-      ordering (we add it to loadSession in Phase 3).
-  - packages/coding-agent tree-traversal tests (test/session-manager/tree-traversal.test.ts)
-      — structural patterns for our session-manager.test.ts additions.
+**M5 (session persistence) and M6 (session tree) are both done.** Next planned milestone is **M7 — Compaction**. No M7 plan file exists yet.
 
-Step 4 — Confirm installed deps + working tree:
-  - `cd packages/web-agent && grep -E "dexie|dexie-react-hooks" package.json`
-      expected: dexie ^4.4.2 + dexie-react-hooks ^1.1.7 (both already installed from M5).
-  - `git status` should show:
-      new:       ai-docs/compact.md (this prompt's sibling)
-      new:       ai-docs/resume.md (this prompt itself)
-      new:       ai-docs/plans/m6-session-tree.md
-    No other uncommitted changes.
-  - `git log --oneline -3` expected top: af2b7086 (Post-M5 cleanup).
+## Read these first
 
-Step 5 — Create a TaskCreate list mirroring the 5 phases in the plan, then start
-Phase 1 (store layer):
-  - Phase 1 — SessionStore.forkSession + tree.ts helper + tests (both stores)
-  - Phase 2 — SessionManager.fork + navigateToLeaf + tests
-  - Phase 3 — RPC commands + WorkerAgentHost handlers + abort-before-reset fix
-  - Phase 4 — useSessionEntries hook + useAgent pass-through + SessionPicker forest
-      rendering + per-message action menu
-  - Phase 5 — Extend session-persistence.spec.ts; write M6 outcome in milestones.md;
-      append D18 + D19 to 05-decisions.md; single commit covering all phases.
+Durable steering (in order):
 
-Gates (run after each phase):
-  cd packages/web-agent && npm run check   # lint + tsc -b
-  cd packages/web-agent && npm test         # vitest — 156 existing + ~15 new
-Phase 4 and 5 additionally:
-  cd packages/web-agent && npm run test:e2e # 4 existing + extended spec
+1. `CLAUDE.md` — project focus, core values
+2. `ai-docs/milestones.md` — M0–M6 done with outcome paragraphs; M7+ planned
+3. `ai-docs/05-decisions.md` — D1–D19 landed (D18 + D19 = M6 fork storage + ephemeral leaf nav)
+4. `ai-docs/02-architecture.md` — ZenFS mount layout, dep classification
+5. `ai-docs/04-principles.md` — imports inward only, IndexedDB not OPFS, few high-value e2e
 
-Mandatory milestone gate before commit (per ai-docs/milestones.md#milestone-gate):
-  Repo-level `npm run check` at the repo root — biome + tsgo + browser-smoke +
-  web-ui check + web-agent check must all be green.
+## Recent changes the next session must know about
 
-Must stay green: 156 existing unit tests + 4 existing e2e specs. Do not modify
-unrelated specs. session-persistence.spec.ts may be EXTENDED (per the plan), but its
-existing steps + data-testids must keep passing.
+### M6 shipped (commits `18b7c857`, `1971c70a`, `7bd358e1`)
 
-Locked design decisions (do NOT re-litigate):
-  - Fork storage = full entry copy (coding-agent JSONL shape). Preserved ids + parentIds
-      + timestamps on copied entries. Labels skipped.
-  - navigateToLeaf is EPHEMERAL — no persisted marker, no LLM summary. Matches
-      coding-agent `branch(fromId)`. M6.1 can revisit with BranchSummaryEntry persistence.
-  - DB schema is unchanged from M5. No new indexes or tables.
-  - Fork is atomic via Dexie's `db.transaction('rw', [sessions, entries], ...)` —
-      use direct `db.entries.add(row)` inside the tx, NOT the monotonic-timestamp
-      `_writeEntry` helper (which would rewrite source timestamps).
+- `SessionStore.forkSession({ sourceSessionId, upToEntryId, id? })` — atomic root-to-target copy in a single Dexie `rw` transaction. Both `MemorySessionStore` + `DexieSessionStore` implement it. **Critical**: Dexie path uses direct `db.entries.add(row)` to bypass `_writeEntry`'s monotonic-timestamp bump so copied entries keep their source timestamps verbatim.
+- `core/session/tree.ts` — `walkPathToEntry(entries, targetId)` pure helper.
+- `SessionManager.fork(fromEntryId)` returns a loaded child manager. `SessionManager.navigateToLeaf(entryId)` is an **ephemeral** in-memory leaf move (no persistence; reload re-derives leaf as the chronologically-latest entry).
+- `WorkerAgentHost.forkSession` + `navigateToLeaf` handlers; `loadSession` + `newSession` + `forkSession` + `navigateToLeaf` all `await this.writeChain; this.session.abort()` before swapping (prevents orphaned streaming buffer mid-turn).
+- `WorkerAgentHost.deleteSession` **prefers parent over fresh session** when deleting an active fork. Captures `parentSession` before delete; if parent still exists, `loadSession(parent)`; else falls back to `newSession()`.
+- RPC: two new commands `fork_session` + `navigate_to_leaf`. `RpcSessionLoadedEvent` carries `messageEntryIds: string[]` (positionally aligned with `messages`) — the Worker re-emits `session_loaded` after **every successful append** so main's per-message Fork/Branch buttons stay correctly bound after `navigateToLeaf` truncates the visible chat.
+- React: `useAgent.sessions.fork(entryId)` + `.navigateToLeaf(entryId)` + `messageEntryIds`. New `useSessionEntries(sessionId)` liveQuery hook (parallel to `useSessionsList`) — available for future tree-panel UI.
+- UI: `MessageBubble` shows hover-revealed Fork + Branch action buttons. **Assistant-only** rule (branching from a user message would create orphan sibling-user-messages — no semantics). Actions are `position: absolute` overlay at the bubble's bottom-right with `opacity-0 group-hover:opacity-100` + `pointer-events-none group-hover:pointer-events-auto` — reply height never shifts on hover.
+- `SessionPicker` — **flat-under-root forest rendering** (`src/components/sessions/session-forest.ts`): walk each session's parent chain to its topmost ancestor, group all descendants under that root, render at depth 1. Picker is a narrow dropdown — a real ladder doesn't fit; flat one-level grouping is enough to communicate "this fork belongs to that root." Indent is `marginLeft: depth * 16px` inline. New testids: `session-fork-indicator`, `chat-message-fork-action`, `chat-message-branch-action`, `chat-message-actions`. M5 testids preserved.
+- D18 (fork storage = full copy) + D19 (ephemeral leaf nav) appended to `05-decisions.md`. M6 outcome paragraph in `milestones.md`.
 
-If anything in the plan looks ambiguous or contradicts the current code state, stop
-and ask via AskUserQuestion before deviating.
+### Bug fixes shipped on top of M6
 
-Final commit covers all 5 phases. Checkpoint commits are OK if any phase takes longer
-than ~½ day. Commit message style mirrors af2b7086 (short title + bulleted body +
-Co-Authored-By trailer).
+- **Nested forks now visible** (`7bd358e1`). Original `buildForest` only walked direct children of roots — fork-of-fork was invisible until something in its chain was deleted. Extracted to `session-forest.ts` with the flat-under-root semantics described above. 10-test unit suite covers depth chains, orphans, cycle guard.
+- **Delete-active-fork lands on parent**, not blank "Untitled" (`7bd358e1`). 2 new worker-host tests cover this branch + the no-parent fallback.
+- **Per-message action overlay** (`1971c70a`). Initially the actions were anchored to the full-width chat row (off-screen on the wrong side). Now anchored inside the bubble's `relative` container at bottom-right with no layout shift on hover.
 
-Decision records to append in Phase 5:
-  - D18 — Fork storage: full entry copy, parentSession pointer, ids + parentIds +
-      timestamps preserved verbatim, labels skipped during copy.
-  - D19 — Ephemeral leaf navigation: in-memory leafId move only; reload re-derives
-      leaf from the latest entry. BranchSummaryEntry persistence deferred to M6.1+.
+### E2E port changes ⚠️ READ THIS (`a46df87e`)
+
+The e2e suite uses **dedicated ports** so a locally-running Bodhi or dev server can coexist:
+
+- **Bodhi server (e2e):** port `21135` (was `51135`)
+- **Vite dev server (e2e):** port `25173` (was `5173`)
+- Manual dev: `npm run dev` → port `5173` (default Vite); the old `dev1` script is gone.
+- E2E dev server: `npm run dev:e2e` → port `25173`. Playwright's `webServer` config boots this automatically; you do not run it manually.
+- Pre-flight only checks `21135` is free. Port `25173` races with Playwright's own webServer startup; `reuseExistingServer: false` already surfaces a clear error if it's taken.
+- `ChatPage.login` waits for `localhost:25173` redirect after Keycloak SSO.
+
+### Locked decisions from M6 (do NOT re-litigate)
+
+- Fork storage: **full entry copy**, ids/parentIds/timestamps preserved verbatim, labels skipped, `parentSession` pointer on child. Atomic Dexie transaction. (D18)
+- Leaf navigation: **ephemeral**, in-memory `leafId` move only. No persisted marker. Reload re-derives leaf. M6.1+ may add `BranchSummaryEntry` persistence. (D19)
+- Picker forest: **flat under topmost ancestor**, every descendant at depth 1 (not a tree ladder).
+- Per-message Fork/Branch buttons: **assistant-only**, hover-revealed overlay.
+
+## Latent gotchas (don't re-learn)
+
+- `_writeEntry` bumps timestamp; fork copies must bypass it via `db.entries.add(row)` directly.
+- `API_KEY_PRESENCE_PLACEHOLDER` in `agent-worker.ts` is required — pi-ai's OpenAI provider gates on `getApiKey()` returning something even when real auth is via `Authorization: Bearer` headers.
+- Two `message_end` events in the same microtask race on `leafId`; `WorkerAgentHost.writeChain` (promise chain) serialises them.
+- `restoreMessages` only reassigns `agent.state.messages` — derived caches like `errorMessage` / `streamingMessage` are readonly on pi-agent-core's typing.
+- E2E action buttons hidden by `opacity-0 + pointer-events-none` until group-hover. Page object hovers the bubble first then `click({ force: true })`.
+- `npx playwright test <spec>` directly **skips** the global-setup project that writes `.test-state.json`. Always use `npm run test:e2e` (full pipeline) so the Bodhi server boots and state file is written.
+- Dexie's `liveQuery` listens to **Dexie writes**, not raw `indexedDB` API writes. Direct IDB writes don't trigger picker refresh; navigate or use Dexie to inject test data.
+
+## Commands
+
+From `packages/web-agent/`:
+
+```bash
+npm run dev          # local dev on :5173 (Vite default)
+npm run dev:e2e      # e2e dev on :25173 (used by Playwright webServer)
+npm test             # vitest, 205 tests
+npm run test:e2e     # playwright, 4 specs (auto-boots Bodhi + Vite)
+npm run check        # eslint + tsc -b
+```
+
+From repo root:
+
+```bash
+npm run check        # biome + tsgo + browser-smoke + web-ui + web-agent (milestone gate)
+```
+
+## Current task list
+
+No active task list — M6 + bug fixes complete. Next session can either:
+
+1. Open M7 (compaction): write `ai-docs/plans/m7-compaction.md`, then implement.
+2. Address any user-reported polish items on M6.
+3. Anything else the user asks.
+
+## Working tree expectations
+
+```
+M  ai-docs/resume.md         ← this file (written for the new session)
+```
+
+Nothing else uncommitted. `compact.md` from prior session is committed (`ai-docs/compact.md`). The M6 plan stays at `ai-docs/plans/m6-session-tree.md` for reference.

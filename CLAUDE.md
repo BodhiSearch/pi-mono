@@ -13,7 +13,7 @@ The other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`
 - **Vision**: @ai-docs/00-vision.md — what we're building and why
 - **Goals**: @ai-docs/01-goals.md — capability checklist (with test seams)
 - **Architecture**: @ai-docs/02-architecture.md — RPC + ZenFS + FSA shape, extension sandboxing
-- **Milestones**: @ai-docs/milestones.md — porting roadmap, status, and gate
+- **Milestones**: @ai-docs/milestones/index.md — status board + progressive-disclosure hooks to per-milestone files under `ai-docs/milestones/`
 - **Principles**: @ai-docs/04-principles.md — how we work
 - **Decisions log**: @ai-docs/05-decisions.md — append-only architectural decisions
 
