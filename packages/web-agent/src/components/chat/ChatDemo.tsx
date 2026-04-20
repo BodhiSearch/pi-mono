@@ -64,6 +64,13 @@ export default function ChatDemo() {
         streamingMessage={streamingMessage}
         isStreaming={isStreaming}
         error={chatError}
+        messageEntryIds={sessions.messageEntryIds}
+        onForkFromEntry={entryId => {
+          void sessions.fork(entryId);
+        }}
+        onBranchFromEntry={entryId => {
+          void sessions.navigateToLeaf(entryId);
+        }}
       />
       <ChatInput
         onSendMessage={sendMessage}

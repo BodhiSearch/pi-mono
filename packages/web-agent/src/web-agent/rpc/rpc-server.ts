@@ -54,6 +54,9 @@ export interface AgentSessionHost {
   deleteSession?(sessionId: string): Promise<void>;
   setSessionName?(name: string): Promise<void>;
   getSessionMeta?(): Promise<SessionMeta | null>;
+  // M6 — session tree (fork + in-session leaf navigation).
+  forkSession?(fromEntryId: string): Promise<{ sessionId: string }>;
+  navigateToLeaf?(entryId: string): Promise<void>;
   /**
    * Register a sink for synthetic Worker-originated events (e.g.
    * `session_loaded`). Optional because test fakes and the jsdom
@@ -241,6 +244,23 @@ export class RpcServer {
           } satisfies RpcResponse);
           return;
         }
+        case 'fork_session': {
+          const data = (await this.session.forkSession?.(raw.fromEntryId)) ?? {
+            sessionId: '',
+          };
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'fork_session',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'navigate_to_leaf':
+          await (this.session.navigateToLeaf?.(raw.entryId) ?? Promise.resolve());
+          this.transport.send(ok(id, 'navigate_to_leaf'));
+          return;
       }
     } catch (err) {
       this.transport.send({
@@ -310,6 +330,8 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   delete_session: true,
   set_session_name: true,
   get_session_meta: true,
+  fork_session: true,
+  navigate_to_leaf: true,
 };
 
 function isKnownCommandType(value: string): value is RpcCommandType {

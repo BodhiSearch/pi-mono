@@ -2,19 +2,22 @@
  * Session picker — minimal dropdown for switching, renaming, and deleting
  * persisted sessions. Wired into the chat panel header.
  *
- * Data testids used by e2e:
+ * Data testids used by e2e (M5 unchanged + M6 additions):
  *   - session-picker              — root (carries data-active-session-id)
  *   - session-picker-trigger      — the button that opens the list
  *   - session-picker-list         — popover content once open
- *   - session-list-item           — per-row (carries data-path=<id>)
+ *   - session-list-item           — per-row (carries data-path=<id>,
+ *                                    data-parent-session=<parentId | "">
+ *                                    so e2e can assert fork relationships)
+ *   - session-fork-indicator      — small icon shown on forked rows (M6)
  *   - session-new                 — "New session" button
  *   - session-rename              — in-place rename input (active-only)
  *   - session-rename-submit       — save rename
  *   - session-delete-<id>         — per-row delete button
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, History, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, GitFork, History, MessageSquarePlus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -43,6 +46,39 @@ function titleFor(summary: SessionSummary): string {
   return 'Untitled session';
 }
 
+/**
+ * Group sessions into a flat-by-display forest: roots first (sorted by
+ * `modified` desc, original order), then children of each root immediately
+ * after their parent. Children are tagged with `depth: 1` so the row can
+ * indent + render the fork breadcrumb. We deliberately keep the structure
+ * single-level — the picker is a narrow dropdown; deeper trees flatten
+ * visually but each child still labels its parent.
+ */
+function buildForest(list: SessionSummary[]): Array<{ summary: SessionSummary; depth: number }> {
+  const byId = new Map(list.map(s => [s.id, s]));
+  const childrenByParent = new Map<string, SessionSummary[]>();
+  const roots: SessionSummary[] = [];
+  for (const s of list) {
+    const parent = s.parentSessionPath;
+    if (parent && byId.has(parent)) {
+      const arr = childrenByParent.get(parent) ?? [];
+      arr.push(s);
+      childrenByParent.set(parent, arr);
+    } else {
+      roots.push(s);
+    }
+  }
+  const out: Array<{ summary: SessionSummary; depth: number }> = [];
+  for (const root of roots) {
+    out.push({ summary: root, depth: 0 });
+    const kids = childrenByParent.get(root.id);
+    if (kids) {
+      for (const k of kids) out.push({ summary: k, depth: 1 });
+    }
+  }
+  return out;
+}
+
 function relativeTime(iso: string): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
@@ -68,6 +104,8 @@ export function SessionPicker({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const forest = useMemo(() => buildForest(list), [list]);
+  const summaryById = useMemo(() => new Map(list.map(s => [s.id, s])), [list]);
 
   useEffect(() => {
     if (isRenaming) {
@@ -183,18 +221,30 @@ export function SessionPicker({
               </p>
             ) : (
               <ul className="max-h-64 space-y-1 overflow-auto">
-                {list.map(s => {
+                {forest.map(({ summary: s, depth }) => {
                   const active = s.id === current?.id;
+                  const parent = s.parentSessionPath
+                    ? summaryById.get(s.parentSessionPath)
+                    : undefined;
                   return (
                     <li
                       key={s.id}
                       data-testid="session-list-item"
                       data-path={s.id}
+                      data-parent-session={s.parentSessionPath ?? ''}
                       data-active={active ? 'true' : 'false'}
+                      data-depth={depth}
                       className={`flex items-center gap-1 rounded px-2 py-1.5 text-xs hover:bg-accent ${
                         active ? 'bg-accent' : ''
-                      }`}
+                      } ${depth > 0 ? 'ml-4' : ''}`}
                     >
+                      {depth > 0 ? (
+                        <GitFork
+                          data-testid="session-fork-indicator"
+                          className="h-3 w-3 shrink-0 text-muted-foreground"
+                          aria-label="Forked session"
+                        />
+                      ) : null}
                       <button
                         type="button"
                         className="min-w-0 flex-1 text-left"
@@ -203,6 +253,12 @@ export function SessionPicker({
                         <div className="truncate font-medium">{titleFor(s)}</div>
                         <div className="text-[11px] text-muted-foreground">
                           {s.messageCount} msg · {relativeTime(s.modified)}
+                          {parent ? (
+                            <span data-testid="session-parent-breadcrumb">
+                              {' · forked from '}
+                              {titleFor(parent)}
+                            </span>
+                          ) : null}
                         </div>
                       </button>
                       <Button

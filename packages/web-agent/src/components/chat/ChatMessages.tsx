@@ -10,6 +10,14 @@ interface ChatMessagesProps {
   streamingMessage?: AgentMessage;
   isStreaming: boolean;
   error?: string | null;
+  /**
+   * Entry ids positionally aligned with `messages`. Empty entries (or shorter
+   * array) hide per-message actions for those rows. Streaming + uncommitted
+   * messages naturally have no entry id.
+   */
+  messageEntryIds?: string[];
+  onForkFromEntry?: (entryId: string) => void;
+  onBranchFromEntry?: (entryId: string) => void;
 }
 
 export default function ChatMessages({
@@ -17,6 +25,9 @@ export default function ChatMessages({
   streamingMessage,
   isStreaming,
   error,
+  messageEntryIds,
+  onForkFromEntry,
+  onBranchFromEntry,
 }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -111,18 +122,38 @@ export default function ChatMessages({
               {renderList.map((msg, index) => {
                 if (msg.role === 'toolResult') return null;
                 const turn = turnByIndex[index];
+                // Streaming message lives at the tail with no entry id yet.
+                const isStreamingTail = streamingMessage && index === renderList.length - 1;
+                const entryId = isStreamingTail ? undefined : messageEntryIds?.[index];
 
                 if (msg.role === 'assistant' && getToolCalls(msg).length > 0) {
                   const hasText = !!extractTextFromAgentMessage(msg);
                   return (
                     <div key={index}>
-                      {hasText && <MessageBubble message={msg} turn={turn} />}
+                      {hasText && (
+                        <MessageBubble
+                          message={msg}
+                          turn={turn}
+                          entryId={entryId}
+                          onFork={onForkFromEntry}
+                          onBranchHere={onBranchFromEntry}
+                        />
+                      )}
                       <ToolCallMessage message={msg} toolResults={toolResults} />
                     </div>
                   );
                 }
 
-                return <MessageBubble key={index} message={msg} turn={turn} />;
+                return (
+                  <MessageBubble
+                    key={index}
+                    message={msg}
+                    turn={turn}
+                    entryId={entryId}
+                    onFork={onForkFromEntry}
+                    onBranchHere={onBranchFromEntry}
+                  />
+                );
               })}
               {showPending && (
                 <div data-testid="streaming-indicator" className="flex justify-start mb-4">

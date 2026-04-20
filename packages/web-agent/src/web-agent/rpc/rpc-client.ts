@@ -149,6 +149,20 @@ export class RpcClient {
     return this.send({ type: 'get_session_meta' }) as Promise<SessionMeta | null>;
   }
 
+  // --------------------------------------------------------------------------
+  // Session-tree commands (M6)
+  // --------------------------------------------------------------------------
+
+  forkSession(fromEntryId: string): Promise<{ sessionId: string }> {
+    return this.send({ type: 'fork_session', fromEntryId }) as Promise<{
+      sessionId: string;
+    }>;
+  }
+
+  navigateToLeaf(entryId: string): Promise<void> {
+    return this.send({ type: 'navigate_to_leaf', entryId }) as Promise<void>;
+  }
+
   dispose(): void {
     this.unsubscribe();
     for (const p of this.pending.values()) {

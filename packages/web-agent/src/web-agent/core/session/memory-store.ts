@@ -14,9 +14,11 @@ import type {
   CreateSessionOptions,
   CustomMessageAppend,
   EntryRow,
+  ForkSessionOptions,
   SessionRow,
   SessionStore,
 } from './store';
+import { walkPathToEntry } from './tree';
 import {
   CURRENT_SESSION_VERSION,
   type BranchSummaryEntry,
@@ -51,6 +53,46 @@ export class MemorySessionStore implements SessionStore {
     this.sessions.set(id, row);
     this.entries.set(id, []);
     return { ...row };
+  }
+
+  async forkSession(opts: ForkSessionOptions): Promise<SessionRow> {
+    const source = this.sessions.get(opts.sourceSessionId);
+    if (!source) throw new Error(`Session not found: ${opts.sourceSessionId}`);
+    const sourceEntries = this.entries.get(opts.sourceSessionId);
+    if (!sourceEntries) throw new Error(`Session entries missing: ${opts.sourceSessionId}`);
+
+    const path = walkPathToEntry(
+      sourceEntries.map(r => r.data),
+      opts.upToEntryId
+    );
+
+    const now = Date.now();
+    const newRow: SessionRow = {
+      id: opts.id ?? generateSessionId(),
+      name: null,
+      cwd: source.cwd,
+      parentSession: source.id,
+      createdAt: now,
+      modifiedAt: now,
+      entryVersion: source.entryVersion,
+    };
+
+    const copiedRows: EntryRow[] = [];
+    for (const entry of path) {
+      if (entry.type === 'label') continue;
+      copiedRows.push({
+        sessionId: newRow.id,
+        id: entry.id,
+        parentId: entry.parentId,
+        timestamp: Date.parse(entry.timestamp),
+        type: entry.type,
+        data: entry,
+      });
+    }
+
+    this.sessions.set(newRow.id, newRow);
+    this.entries.set(newRow.id, copiedRows);
+    return { ...newRow };
   }
 
   async deleteSession(sessionId: string): Promise<void> {

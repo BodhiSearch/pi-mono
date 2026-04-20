@@ -237,3 +237,106 @@ describe('MemorySessionStore — observers', () => {
     expect(store.observeEntries).toBeUndefined();
   });
 });
+
+describe('MemorySessionStore — forkSession', () => {
+  test('copies the root-to-target path verbatim with parentSession set', async () => {
+    const store = new MemorySessionStore();
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    const a1 = await store.appendMessage(source.id, assistantMessage('a1'), u1);
+    const u2 = await store.appendMessage(source.id, userMessage('u2'), a1);
+    await store.appendMessage(source.id, assistantMessage('a2'), u2);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: a1,
+    });
+
+    expect(forked.id).not.toBe(source.id);
+    expect(forked.parentSession).toBe(source.id);
+    expect(forked.cwd).toBe(source.cwd);
+    expect(forked.name).toBeNull();
+
+    const forkedEntries = await store.getEntries(forked.id);
+    expect(forkedEntries.map(e => e.id)).toEqual([u1, a1]);
+    expect(forkedEntries[0].parentId).toBeNull();
+    expect(forkedEntries[1].parentId).toBe(u1);
+  });
+
+  test('preserves copied entry timestamps verbatim', async () => {
+    const store = new MemorySessionStore();
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    const [originalEntry] = await store.getEntries(source.id);
+    expect(originalEntry.id).toBe(u1);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: u1,
+    });
+    const [copied] = await store.getEntries(forked.id);
+    expect(copied.timestamp).toBe(originalEntry.timestamp);
+    expect(copied.id).toBe(originalEntry.id);
+  });
+
+  test('LabelEntry rows are skipped on copy', async () => {
+    const store = new MemorySessionStore();
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    await store.appendLabel(source.id, u1, 'flag', u1);
+    const a1 = await store.appendMessage(source.id, assistantMessage('a1'), u1);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: a1,
+    });
+    const types = (await store.getEntries(forked.id)).map(e => e.type);
+    expect(types).toEqual(['message', 'message']);
+  });
+
+  test('shared ids do not collide between source and fork', async () => {
+    const store = new MemorySessionStore();
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: u1,
+    });
+
+    const sourceEntries = await store.getEntries(source.id);
+    const forkedEntries = await store.getEntries(forked.id);
+    expect(sourceEntries[0].id).toBe(forkedEntries[0].id);
+    expect(sourceEntries[0].id).toBe(u1);
+    expect(await store.getEntry(source.id, u1)).not.toBeNull();
+    expect(await store.getEntry(forked.id, u1)).not.toBeNull();
+  });
+
+  test('throws when source session is missing', async () => {
+    const store = new MemorySessionStore();
+    await expect(store.forkSession({ sourceSessionId: 'nope', upToEntryId: 'x' })).rejects.toThrow(
+      /Session not found/
+    );
+  });
+
+  test('throws when upToEntryId is not in the source', async () => {
+    const store = new MemorySessionStore();
+    const source = await store.createSession({ cwd: '/vault' });
+    await store.appendMessage(source.id, userMessage('u'), null);
+    await expect(
+      store.forkSession({ sourceSessionId: source.id, upToEntryId: 'missing-id' })
+    ).rejects.toThrow(/Entry not found/);
+  });
+
+  test('respects explicit id override', async () => {
+    const store = new MemorySessionStore();
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: u1,
+      id: 'custom-id',
+    });
+    expect(forked.id).toBe('custom-id');
+  });
+});

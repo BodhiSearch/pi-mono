@@ -26,9 +26,11 @@ import type {
   CreateSessionOptions,
   CustomMessageAppend,
   EntryRow,
+  ForkSessionOptions,
   SessionRow,
   SessionStore,
 } from './store';
+import { walkPathToEntry } from './tree';
 import {
   CURRENT_SESSION_VERSION,
   type BranchSummaryEntry,
@@ -91,6 +93,49 @@ export class DexieSessionStore implements SessionStore {
     };
     await this.db.sessions.add(row);
     return { ...row };
+  }
+
+  async forkSession(opts: ForkSessionOptions): Promise<SessionRow> {
+    return this.db.transaction('rw', [this.db.sessions, this.db.entries], async () => {
+      const source = await this.db.sessions.get(opts.sourceSessionId);
+      if (!source) throw new Error(`Session not found: ${opts.sourceSessionId}`);
+
+      const sourceEntries = await this.getEntries(opts.sourceSessionId);
+      const path = walkPathToEntry(sourceEntries, opts.upToEntryId);
+
+      const now = Date.now();
+      const newRow: SessionRow = {
+        id: opts.id ?? generateSessionId(),
+        name: null,
+        cwd: source.cwd,
+        parentSession: source.id,
+        createdAt: now,
+        modifiedAt: now,
+        entryVersion: source.entryVersion,
+      };
+      await this.db.sessions.add(newRow);
+
+      let maxTs = 0;
+      for (const entry of path) {
+        if (entry.type === 'label') continue;
+        const ts = Date.parse(entry.timestamp);
+        if (ts > maxTs) maxTs = ts;
+        // Bypass _writeEntry's monotonic-timestamp bump so copied timestamps
+        // stay verbatim — critical for preserving causal ordering in the fork.
+        await this.db.entries.add({
+          sessionId: newRow.id,
+          id: entry.id,
+          parentId: entry.parentId,
+          timestamp: ts,
+          type: entry.type,
+          data: entry,
+        });
+      }
+      // Seed the monotonic cursor so future appends on the child stay > copied entries.
+      if (maxTs > 0) this.lastTimestamp.set(newRow.id, maxTs);
+
+      return { ...newRow };
+    });
   }
 
   async deleteSession(sessionId: string): Promise<void> {

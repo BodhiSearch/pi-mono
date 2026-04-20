@@ -116,6 +116,35 @@ export class SessionManager implements ReadonlySessionManager {
   }
 
   // ==========================================================================
+  // Tree ops — M6
+  // ==========================================================================
+
+  /**
+   * Fork into a new session whose entries are the root-to-`fromEntryId` path
+   * of this session, copied verbatim. Returns a loaded SessionManager for the
+   * child. The parent session is untouched.
+   */
+  async fork(fromEntryId: string): Promise<SessionManager> {
+    if (!this.byId.has(fromEntryId)) throw new Error(`Entry not found: ${fromEntryId}`);
+    const row = await this.store.forkSession({
+      sourceSessionId: this.sessionId,
+      upToEntryId: fromEntryId,
+    });
+    return SessionManager.load(this.store, row.id);
+  }
+
+  /**
+   * Move the leaf pointer to `entryId` in memory. Ephemeral — no entry is
+   * persisted; reload re-derives the leaf as the chronologically-latest entry.
+   * The next append uses the new leaf as its `parentId`, growing a sibling
+   * branch on the DAG.
+   */
+  navigateToLeaf(entryId: string): void {
+    if (!this.byId.has(entryId)) throw new Error(`Entry not found: ${entryId}`);
+    this.leafId = entryId;
+  }
+
+  // ==========================================================================
   // ReadonlySessionManager surface
   // ==========================================================================
 

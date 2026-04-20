@@ -34,6 +34,52 @@ export class SessionPage {
     return this.page.locator(`[data-testid="session-delete-${sessionId}"]`);
   }
 
+  forkAction(entryId: string): Locator {
+    return this.page.locator(
+      `[data-testid="chat-message-fork-action"][data-entry-id="${entryId}"]`
+    );
+  }
+
+  branchAction(entryId: string): Locator {
+    return this.page.locator(
+      `[data-testid="chat-message-branch-action"][data-entry-id="${entryId}"]`
+    );
+  }
+
+  bubbleByEntryId(entryId: string): Locator {
+    return this.page.locator(`[data-testid^="chat-message-turn-"][data-entry-id="${entryId}"]`);
+  }
+
+  /**
+   * Click the per-message Fork action. Hovers the bubble first so the
+   * group-hover-gated action button becomes interactable, then clicks via
+   * `force` to bypass the opacity transition's visibility check.
+   */
+  async forkFromEntry(entryId: string): Promise<void> {
+    const bubble = this.bubbleByEntryId(entryId);
+    await bubble.hover();
+    await this.forkAction(entryId).click({ force: true });
+  }
+
+  async branchFromEntry(entryId: string): Promise<void> {
+    const bubble = this.bubbleByEntryId(entryId);
+    await bubble.hover();
+    await this.branchAction(entryId).click({ force: true });
+  }
+
+  /** Returns entry ids of all rendered (non-streaming) chat bubbles in DOM order. */
+  async messageEntryIds(): Promise<string[]> {
+    const handles = await this.page
+      .locator('[data-testid^="chat-message-turn-"][data-entry-id]')
+      .all();
+    const ids: string[] = [];
+    for (const h of handles) {
+      const id = await h.getAttribute('data-entry-id');
+      if (id) ids.push(id);
+    }
+    return ids;
+  }
+
   /** Wait until a persisted session is active (localStorage id restored). */
   async waitForActiveSession(timeoutMs = 15_000): Promise<string> {
     await expect(this.root).toBeVisible({ timeout: timeoutMs });

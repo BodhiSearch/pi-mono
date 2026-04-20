@@ -172,6 +172,107 @@ describe('DexieSessionStore — appends', () => {
   });
 });
 
+describe('DexieSessionStore — forkSession', () => {
+  test('copies path verbatim in an atomic transaction, sets parentSession', async () => {
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    const a1 = await store.appendMessage(source.id, assistantMessage('a1'), u1);
+    const u2 = await store.appendMessage(source.id, userMessage('u2'), a1);
+    await store.appendMessage(source.id, assistantMessage('a2'), u2);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: a1,
+    });
+    expect(forked.parentSession).toBe(source.id);
+    expect(forked.cwd).toBe(source.cwd);
+    expect(forked.name).toBeNull();
+
+    const entries = await store.getEntries(forked.id);
+    expect(entries.map(e => e.id)).toEqual([u1, a1]);
+    expect(entries[0].parentId).toBeNull();
+    expect(entries[1].parentId).toBe(u1);
+  });
+
+  test('preserves source entry timestamps verbatim (bypass monotonic bump)', async () => {
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    const sourceEntries = await store.getEntries(source.id);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: u1,
+    });
+    const forkedEntries = await store.getEntries(forked.id);
+    expect(forkedEntries[0].timestamp).toBe(sourceEntries[0].timestamp);
+  });
+
+  test('label rows are skipped on copy', async () => {
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+    await store.appendLabel(source.id, u1, 'flag', u1);
+    const a1 = await store.appendMessage(source.id, assistantMessage('a1'), u1);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: a1,
+    });
+    const types = (await store.getEntries(forked.id)).map(e => e.type);
+    expect(types).toEqual(['message', 'message']);
+  });
+
+  test('shared ids coexist — compound [sessionId+id] pk keeps entries distinct', async () => {
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: u1,
+    });
+
+    const sourceEntry = await store.getEntry(source.id, u1);
+    const forkedEntry = await store.getEntry(forked.id, u1);
+    expect(sourceEntry?.id).toBe(u1);
+    expect(forkedEntry?.id).toBe(u1);
+    expect(sourceEntry).not.toBeNull();
+    expect(forkedEntry).not.toBeNull();
+  });
+
+  test('appends after fork stay monotonic on the child session', async () => {
+    const source = await store.createSession({ cwd: '/vault' });
+    const u1 = await store.appendMessage(source.id, userMessage('u1'), null);
+
+    const forked = await store.forkSession({
+      sourceSessionId: source.id,
+      upToEntryId: u1,
+    });
+    const afterFork = await store.appendMessage(forked.id, assistantMessage('new reply'), u1);
+    const entries = await store.getEntries(forked.id);
+    expect(entries.map(e => e.id)).toEqual([u1, afterFork]);
+    expect(entries[1].timestamp >= entries[0].timestamp).toBe(true);
+  });
+
+  test('transactional rollback — missing source leaves no session / entries behind', async () => {
+    const before = (await store.listSessions()).length;
+    await expect(store.forkSession({ sourceSessionId: 'nope', upToEntryId: 'x' })).rejects.toThrow(
+      /Session not found/
+    );
+    const after = (await store.listSessions()).length;
+    expect(after).toBe(before);
+  });
+
+  test('rollback when upToEntryId is not in the source', async () => {
+    const source = await store.createSession({ cwd: '/vault' });
+    await store.appendMessage(source.id, userMessage('u'), null);
+    const before = (await store.listSessions()).length;
+    await expect(
+      store.forkSession({ sourceSessionId: source.id, upToEntryId: 'missing-id' })
+    ).rejects.toThrow(/Entry not found/);
+    const after = (await store.listSessions()).length;
+    expect(after).toBe(before);
+  });
+});
+
 describe('DexieSessionStore — observers', () => {
   test('observeSessionList emits after create and after appendMessage', async () => {
     const updates: number[] = [];

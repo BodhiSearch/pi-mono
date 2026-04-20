@@ -69,7 +69,10 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.vfsPort = vfsPort;
     this.store = store;
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
-    // Persist user/assistant/toolResult messages on turn boundaries.
+    // Persist user/assistant/toolResult messages on turn boundaries. After
+    // each successful append, re-emit `session_loaded` so the main thread's
+    // message↔entryId mapping stays aligned (used by per-message Fork /
+    // Branch actions).
     this.session.subscribe(event => {
       if (event.type !== 'message_end') return;
       const sm = this.sessionManager;
@@ -77,7 +80,10 @@ export class WorkerAgentHost implements AgentSessionHost {
       const role = (event.message as { role?: string }).role;
       if (role !== 'user' && role !== 'assistant' && role !== 'toolResult') return;
       this.writeChain = this.writeChain
-        .then(() => sm.appendMessage(event.message))
+        .then(async () => {
+          await sm.appendMessage(event.message);
+          this.emitSessionLoaded();
+        })
         .catch(err => {
           console.error('[WorkerAgentHost] appendMessage failed:', err);
         });
@@ -229,12 +235,16 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   /**
-   * Swap the active session to `sessionId`. Rebuilds the in-memory tree from
-   * the store, resets the agent's message buffer, then rehydrates it from the
-   * persisted entries. Emits a synthetic `session_loaded` event so the main
-   * thread can refresh its UI from one envelope.
+   * Swap the active session to `sessionId`. Drains pending appends, aborts any
+   * in-flight turn (so the streaming buffer doesn't get orphaned mid-write),
+   * rebuilds the in-memory tree from the store, resets the agent's message
+   * buffer, then rehydrates it from the persisted entries. Emits a synthetic
+   * `session_loaded` event so the main thread can refresh its UI from one
+   * envelope.
    */
   async loadSession(sessionId: string): Promise<void> {
+    await this.writeChain;
+    this.session.abort();
     const sm = await SessionManager.load(this.store, sessionId);
     this.sessionManager = sm;
     this.session.reset();
@@ -244,6 +254,8 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   async newSession(parentSession?: string): Promise<{ sessionId: string }> {
+    await this.writeChain;
+    this.session.abort();
     const sm = await SessionManager.create(this.store, {
       parentSession,
       cwd: this.vaultMount,
@@ -253,6 +265,42 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.restoreMessages([]);
     this.emitSessionLoaded();
     return { sessionId: sm.getSessionId() };
+  }
+
+  /**
+   * Cross-session fork: copy the root-to-`fromEntryId` path of the active
+   * session into a new session, then activate the new session. Parent stays
+   * untouched.
+   */
+  async forkSession(fromEntryId: string): Promise<{ sessionId: string }> {
+    const current = this.sessionManager;
+    if (!current) throw new Error('No active session to fork from');
+    await this.writeChain;
+    this.session.abort();
+    const forked = await current.fork(fromEntryId);
+    this.sessionManager = forked;
+    this.session.reset();
+    const ctx = forked.buildSessionContext();
+    this.session.restoreMessages(ctx.messages);
+    this.emitSessionLoaded();
+    return { sessionId: forked.getSessionId() };
+  }
+
+  /**
+   * In-session leaf navigation: ephemeral pointer move on the active session.
+   * Rebuilds the agent message window from the new branch so subsequent
+   * prompts continue from the chosen entry.
+   */
+  async navigateToLeaf(entryId: string): Promise<void> {
+    const sm = this.sessionManager;
+    if (!sm) throw new Error('No active session');
+    await this.writeChain;
+    this.session.abort();
+    sm.navigateToLeaf(entryId);
+    this.session.reset();
+    const ctx = sm.buildSessionContext();
+    this.session.restoreMessages(ctx.messages);
+    this.emitSessionLoaded();
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -291,12 +339,15 @@ export class WorkerAgentHost implements AgentSessionHost {
     const sink = this.hostEventSink;
     const sm = this.sessionManager;
     if (!sink || !sm) return;
+    const branch = sm.getBranch();
+    const messageEntryIds = branch.filter(e => e.type === 'message').map(e => e.id);
     sink({
       type: 'session_loaded',
       sessionId: sm.getSessionId(),
       header: sm.getHeader(),
       name: sm.getSessionName(),
       messages: sm.buildSessionContext().messages,
+      messageEntryIds,
     });
   }
 

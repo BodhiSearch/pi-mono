@@ -156,6 +156,82 @@ describe('SessionManager — load round-trip', () => {
   });
 });
 
+describe('SessionManager — fork', () => {
+  test('fork creates a child manager rooted in the source path', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    const u1 = await sm.appendMessage(userMessage('u1'));
+    const a1 = await sm.appendMessage(assistantMessage('a1'));
+    await sm.appendMessage(userMessage('u2-parent-only'));
+
+    const forked = await sm.fork(a1);
+    expect(forked.getSessionId()).not.toBe(sm.getSessionId());
+    expect(forked.getHeader()?.parentSession).toBe(sm.getSessionId());
+    const entries = forked.getEntries();
+    expect(entries.map(e => e.id)).toEqual([u1, a1]);
+    // Leaf is the forked-from entry; next append will continue from there.
+    expect(forked.getLeafId()).toBe(a1);
+  });
+
+  test('fork leaves the parent session untouched', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    await sm.appendMessage(userMessage('u1'));
+    const a1 = await sm.appendMessage(assistantMessage('a1'));
+
+    const before = sm.getEntries().length;
+    await sm.fork(a1);
+    expect(sm.getEntries().length).toBe(before);
+    expect(sm.getLeafId()).toBe(a1);
+    // Continue on the parent — should pick up from original leaf.
+    const newId = await sm.appendMessage(userMessage('continued'));
+    expect(sm.getEntry(newId)?.parentId).toBe(a1);
+  });
+
+  test('fork on unknown entry id throws', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    await expect(sm.fork('nope')).rejects.toThrow(/Entry not found/);
+  });
+});
+
+describe('SessionManager — navigateToLeaf', () => {
+  test('moves leaf pointer to the specified entry', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    const u1 = await sm.appendMessage(userMessage('u1'));
+    await sm.appendMessage(assistantMessage('a1'));
+    await sm.appendMessage(userMessage('u2'));
+
+    sm.navigateToLeaf(u1);
+    expect(sm.getLeafId()).toBe(u1);
+    const sibling = await sm.appendMessage(assistantMessage('sibling'));
+    expect(sm.getEntry(sibling)?.parentId).toBe(u1);
+
+    // Branch now has: u1 → (a1 old branch), u1 → (sibling new branch).
+    const branch = sm.getBranch();
+    expect(branch.map(e => e.id)).toEqual([u1, sibling]);
+  });
+
+  test('throws on unknown entry id', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    expect(() => sm.navigateToLeaf('nope')).toThrow(/Entry not found/);
+  });
+
+  test('persists nothing — reload restores leaf as the chronologically-latest entry', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    const u1 = await sm.appendMessage(userMessage('u1'));
+    const a1 = await sm.appendMessage(assistantMessage('a1'));
+    sm.navigateToLeaf(u1);
+    expect(sm.getLeafId()).toBe(u1);
+
+    const reloaded = await SessionManager.load(store, sm.getSessionId());
+    expect(reloaded.getLeafId()).toBe(a1);
+  });
+});
+
 describe('SessionManager — concurrent appends', () => {
   test('serial awaits preserve insertion order in the cached entries', async () => {
     const store = new MemorySessionStore();

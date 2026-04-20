@@ -57,6 +57,18 @@ export type CreateSessionOptions = {
   parentSession?: string;
 };
 
+/**
+ * Input to `SessionStore.forkSession`. Creates a new session whose entries are
+ * the root-to-`upToEntryId` path from `sourceSessionId`, with each copied
+ * entry's `id`, `parentId`, and `timestamp` preserved verbatim. `LabelEntry`
+ * rows are skipped so the child starts with an empty label set.
+ */
+export type ForkSessionOptions = {
+  sourceSessionId: string;
+  upToEntryId: string;
+  id?: string;
+};
+
 export type CompactionAppend = Omit<CompactionEntry, 'id' | 'parentId' | 'timestamp' | 'type'>;
 export type BranchSummaryAppend = Omit<
   BranchSummaryEntry,
@@ -70,6 +82,14 @@ export type CustomMessageAppend = Omit<
 export interface SessionStore {
   // -- Lifecycle ------------------------------------------------------------
   createSession(opts: CreateSessionOptions): Promise<SessionRow>;
+  /**
+   * Atomic: either every row lands (session + path entries) or none do.
+   * Preserves the source entries' `id`, `parentId`, and `timestamp` verbatim so
+   * the child's root-to-fork DAG slice is structurally identical to the
+   * parent's. The compound `[sessionId+id]` primary key keeps the shared ids
+   * from colliding across sessions.
+   */
+  forkSession(opts: ForkSessionOptions): Promise<SessionRow>;
   deleteSession(sessionId: string): Promise<void>;
   /**
    * Rename a session. Implementations update the denormalised `SessionRow.name`

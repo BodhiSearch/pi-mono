@@ -47,7 +47,9 @@ export type RpcCommand =
   | { id: string; type: 'new_session'; parentSession?: string }
   | { id: string; type: 'delete_session'; sessionId: string }
   | { id: string; type: 'set_session_name'; name: string }
-  | { id: string; type: 'get_session_meta' };
+  | { id: string; type: 'get_session_meta' }
+  | { id: string; type: 'fork_session'; fromEntryId: string }
+  | { id: string; type: 'navigate_to_leaf'; entryId: string };
 
 export type RpcCommandType = RpcCommand['type'];
 
@@ -118,6 +120,14 @@ export type RpcResponse =
   | {
       id: string;
       type: 'response';
+      command: 'fork_session';
+      success: true;
+      data: { sessionId: string };
+    }
+  | { id: string; type: 'response'; command: 'navigate_to_leaf'; success: true }
+  | {
+      id: string;
+      type: 'response';
       command: RpcCommandType;
       success: false;
       error: SerializedError;
@@ -166,6 +176,12 @@ export interface RpcSessionLoadedEvent {
   header: SessionHeader | null;
   name?: string;
   messages: AgentMessage[];
+  /**
+   * Entry ids of `messages` on the current branch, in matching order. Lets
+   * the UI wire per-message actions (Fork / Branch) without a separate
+   * lookup. Re-emitted after every append so the array stays aligned.
+   */
+  messageEntryIds: string[];
 }
 
 export type RpcEventEnvelope = RpcAgentEventEnvelope | RpcToolCallRequest | RpcSessionLoadedEvent;

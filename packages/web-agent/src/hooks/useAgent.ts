@@ -39,6 +39,8 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  /** Entry id per message (positionally aligned with `messages`). M6 fork/branch. */
+  const [messageEntryIds, setMessageEntryIds] = useState<string[]>([]);
   const sessionSummaries = useSessionsList();
 
   const isLoadingModelsRef = useRef(false);
@@ -106,6 +108,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   useEffect(() => {
     return rpcClient.onSessionLoaded(event => {
       setMessages(event.messages);
+      setMessageEntryIds(event.messageEntryIds);
       setStreamingMessage(undefined);
       setIsStreaming(false);
       setError(null);
@@ -261,6 +264,21 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     [rpcClient]
   );
 
+  const forkSession = useCallback(
+    async (entryId: string) => {
+      const { sessionId } = await rpcClient.forkSession(entryId);
+      return sessionId;
+    },
+    [rpcClient]
+  );
+
+  const navigateToLeaf = useCallback(
+    async (entryId: string) => {
+      await rpcClient.navigateToLeaf(entryId);
+    },
+    [rpcClient]
+  );
+
   return {
     messages: isAuthenticated ? messages : EMPTY_MESSAGES,
     streamingMessage: isAuthenticated ? streamingMessage : undefined,
@@ -283,6 +301,9 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
       newSession,
       delete: deleteSession,
       rename: renameSession,
+      fork: forkSession,
+      navigateToLeaf,
+      messageEntryIds,
     },
   };
 }

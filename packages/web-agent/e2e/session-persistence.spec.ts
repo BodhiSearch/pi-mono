@@ -101,5 +101,91 @@ test.describe('Session persistence — M5', () => {
       await expect(sessions.listItem(secondSessionId)).toHaveCount(0);
       await page.keyboard.press('Escape');
     });
+
+    // ------------------------------------------------------------------
+    // M6 — fork + in-session branch navigation
+    // ------------------------------------------------------------------
+
+    let forkParentEntryId: string | null = null;
+    await test.step('M6: capture the assistant entry id to fork from', async () => {
+      // The renamed first session has at least one user+assistant pair from
+      // earlier in this spec. Wait until the entry ids are wired through
+      // session_loaded events, then grab the assistant bubble's entry id.
+      await expect
+        .poll(async () => (await sessions.messageEntryIds()).length, { timeout: 10_000 })
+        .toBeGreaterThanOrEqual(2);
+      const assistantBubble = page
+        .locator('[data-testid^="chat-message-turn-"][data-messagetype="assistant"]')
+        .first();
+      forkParentEntryId = await assistantBubble.getAttribute('data-entry-id');
+      expect(forkParentEntryId).toBeTruthy();
+    });
+
+    let forkedSessionId: string | null = null;
+    await test.step('M6: fork from the assistant message creates a new active session', async () => {
+      if (!forkParentEntryId) throw new Error('forkParentEntryId not captured');
+      await sessions.forkFromEntry(forkParentEntryId);
+      // Worker swaps to the forked session and emits session_loaded; the
+      // picker root data attribute updates to the new id.
+      await expect
+        .poll(async () => sessions.currentSessionId(), { timeout: 10_000 })
+        .not.toBe(firstSessionId);
+      forkedSessionId = await sessions.currentSessionId();
+      expect(forkedSessionId).toBeTruthy();
+      // Forked session inherits the parent's messages (linear copy).
+      const firstBubble = page
+        .locator('[data-testid="chat-message-turn-0"][data-messagetype="user"]')
+        .first();
+      await expect(firstBubble).toContainText('hello');
+    });
+
+    await test.step('M6: picker shows the fork indicator + parent breadcrumb', async () => {
+      await sessions.open();
+      if (!forkedSessionId) throw new Error('no forkedSessionId');
+      const forkedRow = sessions.listItem(forkedSessionId);
+      await expect(forkedRow).toBeVisible();
+      await expect(forkedRow).toHaveAttribute('data-parent-session', firstSessionId);
+      await expect(forkedRow.locator('[data-testid="session-fork-indicator"]')).toBeVisible();
+      // Parent row stays at depth 0; forked row is at depth 1.
+      await expect(forkedRow).toHaveAttribute('data-depth', '1');
+      await page.keyboard.press('Escape');
+      await expect(sessions.list).not.toBeVisible();
+    });
+
+    await test.step('M6: switch back to parent — original messages intact', async () => {
+      await sessions.switchTo(firstSessionId);
+      await expect
+        .poll(async () => sessions.currentSessionId(), { timeout: 10_000 })
+        .toBe(firstSessionId);
+      const firstBubble = page
+        .locator('[data-testid="chat-message-turn-0"][data-messagetype="user"]')
+        .first();
+      await expect(firstBubble).toContainText('hello');
+    });
+
+    await test.step('M6: branch from an earlier message — leaf moves, no new session', async () => {
+      // Pick the user message entry id and "branch from here".
+      const userBubble = page
+        .locator('[data-testid="chat-message-turn-0"][data-messagetype="user"]')
+        .first();
+      const userEntryId = await userBubble.getAttribute('data-entry-id');
+      expect(userEntryId).toBeTruthy();
+
+      const beforeId = await sessions.currentSessionId();
+      await sessions.branchFromEntry(userEntryId!);
+      // navigateToLeaf is in-session — the active session id does NOT change.
+      await expect.poll(async () => sessions.currentSessionId(), { timeout: 5_000 }).toBe(beforeId);
+    });
+
+    await test.step('M6: forked session is deletable; parent stays', async () => {
+      if (!forkedSessionId) throw new Error('no forkedSessionId');
+      await sessions.deleteSession(forkedSessionId);
+      await page.keyboard.press('Escape');
+      await sessions.open();
+      await expect(sessions.listItem(forkedSessionId)).toHaveCount(0);
+      // Parent (the renamed chat) is still in the list.
+      await expect(sessions.listItem(firstSessionId)).toBeVisible();
+      await page.keyboard.press('Escape');
+    });
   });
 });

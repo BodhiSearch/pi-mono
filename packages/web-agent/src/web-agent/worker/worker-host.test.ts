@@ -23,22 +23,29 @@ type FakeSession = {
   emit: (event: AgentEvent) => void;
   getMessages: () => AgentMessage[];
   restoredCalls: AgentMessage[][];
+  abortCount: { current: number };
+  resetCount: { current: number };
 };
 
 function makeFakeAgentSession(): FakeSession {
   const messages: AgentMessage[] = [];
   const restoredCalls: AgentMessage[][] = [];
   const listeners = new Set<(e: AgentEvent) => void | Promise<void>>();
+  const abortCount = { current: 0 };
+  const resetCount = { current: 0 };
   const fake = {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     prompt: async (_m: string) => {},
-    abort: () => {},
+    abort: () => {
+      abortCount.current++;
+    },
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setModel: (_m: unknown) => {},
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setSystemPrompt: (_p: string) => {},
     reset: () => {
       messages.length = 0;
+      resetCount.current++;
     },
     getState: () => ({
       isStreaming: false,
@@ -73,6 +80,8 @@ function makeFakeAgentSession(): FakeSession {
     },
     getMessages: () => messages,
     restoredCalls,
+    abortCount,
+    resetCount,
   };
 }
 
@@ -207,5 +216,142 @@ describe('WorkerAgentHost session persistence', () => {
     await new Promise(r => setTimeout(r, 0));
     const summaries = await host.listSessions();
     expect(summaries.length).toBe(1);
+  });
+});
+
+// ============================================================================
+// M6 — fork + navigateToLeaf + abort-before-reset on loadSession
+// ============================================================================
+
+describe('WorkerAgentHost — fork', () => {
+  test('forkSession copies the path into a child session and activates it', async () => {
+    const store = new MemorySessionStore();
+    const { host, fake } = makeHost(store);
+    const { sessionId: parentId } = await host.newSession();
+    fake.emit({ type: 'message_end', message: userMessage('q1') });
+    fake.emit({ type: 'message_end', message: assistantMessage('a1') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    // Pick the assistant entry id to fork from.
+    const parentEntries = await store.getEntries(parentId);
+    const forkFromId = parentEntries[1].id;
+
+    const events: RpcEventEnvelope[] = [];
+    host.setHostEventSink(e => events.push(e));
+
+    const { sessionId: forkedId } = await host.forkSession(forkFromId);
+    expect(forkedId).not.toBe(parentId);
+
+    // Child has both parent entries copied, with parentSession pointer set.
+    const childEntries = await store.getEntries(forkedId);
+    expect(childEntries.map(e => e.id)).toEqual(parentEntries.map(e => e.id));
+    const childRow = await store.getSession(forkedId);
+    expect(childRow?.parentSession).toBe(parentId);
+
+    // Active session swapped + session_loaded emitted.
+    expect((await host.getSessionMeta())?.id).toBe(forkedId);
+    const loaded = events.find(e => e.type === 'session_loaded');
+    expect(loaded?.type).toBe('session_loaded');
+    if (loaded?.type === 'session_loaded') {
+      expect(loaded.sessionId).toBe(forkedId);
+      expect(loaded.messages).toHaveLength(2);
+    }
+  });
+
+  test('forkSession aborts an in-flight turn before swapping state', async () => {
+    const { host, fake } = makeHost();
+    const { sessionId } = await host.newSession();
+    fake.emit({ type: 'message_end', message: userMessage('u') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const before = fake.abortCount.current;
+    const entries = await host.listSessions();
+    expect(entries.find(s => s.id === sessionId)).toBeDefined();
+    // Use the last appended entry as the fork point.
+    const sourceEntries = await (
+      host as unknown as {
+        store: MemorySessionStore;
+      }
+    ).store.getEntries(sessionId);
+    await host.forkSession(sourceEntries[sourceEntries.length - 1].id);
+    expect(fake.abortCount.current).toBeGreaterThan(before);
+  });
+
+  test('forkSession with no active session throws', async () => {
+    const { host } = makeHost();
+    await expect(host.forkSession('nope')).rejects.toThrow(/No active session/);
+  });
+});
+
+describe('WorkerAgentHost — navigateToLeaf', () => {
+  test('moves leaf in the active session and re-restores agent context', async () => {
+    const store = new MemorySessionStore();
+    const { host, fake } = makeHost(store);
+    const { sessionId } = await host.newSession();
+    fake.emit({ type: 'message_end', message: userMessage('u1') });
+    fake.emit({ type: 'message_end', message: assistantMessage('a1') });
+    fake.emit({ type: 'message_end', message: userMessage('u2') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const entries = await store.getEntries(sessionId);
+    expect(entries).toHaveLength(3);
+    const targetId = entries[1].id; // assistant message — branch point
+
+    const restoresBefore = fake.restoredCalls.length;
+    await host.navigateToLeaf(targetId);
+    // restoreMessages was called again, with the truncated branch.
+    expect(fake.restoredCalls.length).toBeGreaterThan(restoresBefore);
+    const lastRestore = fake.restoredCalls.at(-1)!;
+    expect(lastRestore).toHaveLength(2); // u1 + a1, NOT u2
+  });
+
+  test('aborts in-flight turn before restoring', async () => {
+    const store = new MemorySessionStore();
+    const { host, fake } = makeHost(store);
+    const { sessionId } = await host.newSession();
+    fake.emit({ type: 'message_end', message: userMessage('u1') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const entries = await store.getEntries(sessionId);
+    const before = fake.abortCount.current;
+    await host.navigateToLeaf(entries[0].id);
+    expect(fake.abortCount.current).toBeGreaterThan(before);
+  });
+
+  test('navigateToLeaf with no active session throws', async () => {
+    const { host } = makeHost();
+    await expect(host.navigateToLeaf('nope')).rejects.toThrow(/No active session/);
+  });
+
+  test('navigateToLeaf with unknown entry throws', async () => {
+    const { host } = makeHost();
+    await host.newSession();
+    await expect(host.navigateToLeaf('missing-entry')).rejects.toThrow(/Entry not found/);
+  });
+});
+
+describe('WorkerAgentHost — loadSession aborts before reset', () => {
+  test('loadSession drains writeChain and aborts the agent before swapping', async () => {
+    const store = new MemorySessionStore();
+    const { host: host1, fake: fake1 } = makeHost(store);
+    const { sessionId: a } = await host1.newSession();
+    fake1.emit({ type: 'message_end', message: userMessage('u') });
+    fake1.emit({ type: 'message_end', message: assistantMessage('a') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const { host: host2, fake: fake2 } = makeHost(store);
+    await host2.newSession(); // arms the host with an active session
+    const before = fake2.abortCount.current;
+
+    await host2.loadSession(a);
+    expect(fake2.abortCount.current).toBeGreaterThan(before);
+    // restoreMessages was called with the persisted history.
+    expect(fake2.restoredCalls.at(-1)?.length).toBe(2);
   });
 });

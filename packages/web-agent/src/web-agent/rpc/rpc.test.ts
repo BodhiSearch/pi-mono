@@ -170,6 +170,7 @@ describe('RPC round-trip', () => {
 interface FakeSessionRecord {
   id: string;
   name?: string;
+  parentSession?: string;
   messages: AgentMessage[];
 }
 
@@ -179,6 +180,7 @@ function createSessionedHost(): AgentSessionHost {
   let activeId: string | null = null;
   let idCounter = 0;
   let sink: HostEventSink | null = null;
+  let leafId: string | null = null;
 
   const summary = (r: FakeSessionRecord): SessionSummary => ({
     id: r.id,
@@ -207,6 +209,7 @@ function createSessionedHost(): AgentSessionHost {
       },
       name: rec.name,
       messages: [...rec.messages],
+      messageEntryIds: rec.messages.map((_, i) => `entry-${rec.id}-${i}`),
     });
   };
 
@@ -246,7 +249,34 @@ function createSessionedHost(): AgentSessionHost {
       if (!activeId) return null;
       const rec = sessions.get(activeId);
       if (!rec) return null;
-      return { id: rec.id, path: rec.id, name: rec.name, cwd: '/vault' };
+      return {
+        id: rec.id,
+        path: rec.id,
+        name: rec.name,
+        cwd: '/vault',
+        parentSession: rec.parentSession,
+      };
+    },
+    async forkSession(fromEntryId: string): Promise<{ sessionId: string }> {
+      if (!activeId) throw new Error('No active session');
+      const source = sessions.get(activeId);
+      if (!source) throw new Error('Active session missing');
+      const id = `sess-${++idCounter}`;
+      sessions.set(id, {
+        id,
+        parentSession: source.id,
+        messages: [...source.messages],
+      });
+      activeId = id;
+      leafId = fromEntryId;
+      emitLoaded();
+      return { sessionId: id };
+    },
+    async navigateToLeaf(entryId: string): Promise<void> {
+      leafId = entryId;
+      // Reference leafId so closure tracks current value if extended later.
+      void leafId;
+      emitLoaded();
     },
   };
 }
@@ -296,5 +326,37 @@ describe('RPC round-trip — session commands', () => {
     await client.deleteSession(sessionId);
     const list = await client.listSessions();
     expect(list.map(s => s.id)).not.toContain(sessionId);
+  });
+
+  // M6 — fork + navigate
+
+  test('forkSession returns a new session id and fires session_loaded with parent linkage', async () => {
+    const { client } = bootSessionedPair();
+    const { sessionId: parentId } = await client.newSession();
+
+    const loaded: Array<{ id: string }> = [];
+    client.onSessionLoaded(e => loaded.push({ id: e.sessionId }));
+
+    const { sessionId: forkedId } = await client.forkSession('entry-1');
+    expect(forkedId).not.toBe(parentId);
+    expect(loaded.map(l => l.id)).toContain(forkedId);
+
+    const meta = await client.getSessionMeta();
+    expect(meta?.id).toBe(forkedId);
+    expect(meta?.parentSession).toBe(parentId);
+  });
+
+  test('forkSession with no active session rejects through the error envelope', async () => {
+    const { client } = bootSessionedPair();
+    await expect(client.forkSession('entry-1')).rejects.toThrow(/No active session/);
+  });
+
+  test('navigateToLeaf resolves and triggers a session_loaded event', async () => {
+    const { client } = bootSessionedPair();
+    await client.newSession();
+    const events: string[] = [];
+    client.onSessionLoaded(() => events.push('loaded'));
+    await expect(client.navigateToLeaf('entry-1')).resolves.toBeUndefined();
+    expect(events.length).toBeGreaterThan(0);
   });
 });
