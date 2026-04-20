@@ -105,6 +105,82 @@ describe('SessionManager — tree state', () => {
   });
 });
 
+describe('SessionManager — buildSessionContext with compaction', () => {
+  test('replaces the pre-cut prefix with a summary user message, keeps the suffix', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    const u1 = await sm.appendMessage(userMessage('u1'));
+    await sm.appendMessage(assistantMessage('a1'));
+    const u2 = await sm.appendMessage(userMessage('u2'));
+    await sm.appendMessage(assistantMessage('a2'));
+
+    await sm.appendCompaction('the summary', u2, 123, {
+      readFiles: [],
+      modifiedFiles: [],
+    });
+    await sm.appendMessage(userMessage('u3'));
+
+    const ctx = sm.buildSessionContext();
+    // [summary, u2, a2, u3]
+    expect(ctx.messages).toHaveLength(4);
+    const first = ctx.messages[0] as { role: string; content: unknown };
+    expect(first.role).toBe('user');
+    const firstText = (first.content as Array<{ text?: string }>)[0]?.text ?? '';
+    expect(firstText).toContain('the summary');
+    expect(ctx.messages.find(m => (m as { content?: unknown }).content === 'u1')).toBeUndefined();
+    expect(u1).not.toBe(u2);
+  });
+
+  test('no compaction → messages path is unchanged', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    await sm.appendMessage(userMessage('u1'));
+    await sm.appendMessage(assistantMessage('a1'));
+    const ctx = sm.buildSessionContext();
+    expect(ctx.messages).toHaveLength(2);
+  });
+});
+
+describe('SessionManager — buildSessionContext messageMeta', () => {
+  test('messageMeta length matches messages and carries entryIds for plain messages', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    const u1 = await sm.appendMessage(userMessage('u1'));
+    const a1 = await sm.appendMessage(assistantMessage('a1'));
+    const ctx = sm.buildSessionContext();
+    expect(ctx.messageMeta).toHaveLength(ctx.messages.length);
+    expect(ctx.messageMeta[0].entryId).toBe(u1);
+    expect(ctx.messageMeta[1].entryId).toBe(a1);
+    expect(ctx.messageMeta[0].kind).toBeUndefined();
+  });
+
+  test('compaction-summary slot carries kind, tokensBefore, and firstKeptEntryId', async () => {
+    const store = new MemorySessionStore();
+    const sm = await SessionManager.create(store, { cwd: '/vault' });
+    await sm.appendMessage(userMessage('u1'));
+    await sm.appendMessage(assistantMessage('a1'));
+    const u2 = await sm.appendMessage(userMessage('u2'));
+    await sm.appendMessage(assistantMessage('a2'));
+    await sm.appendCompaction('summary text', u2, 500, {
+      readFiles: [],
+      modifiedFiles: [],
+    });
+    await sm.appendMessage(userMessage('u3'));
+
+    const ctx = sm.buildSessionContext();
+    // [summary, u2, a2, u3]
+    expect(ctx.messageMeta).toHaveLength(4);
+    expect(ctx.messageMeta[0].kind).toBe('compaction-summary');
+    expect(ctx.messageMeta[0].tokensBefore).toBe(500);
+    expect(ctx.messageMeta[0].firstKeptEntryId).toBe(u2);
+    // Remaining slots are plain message entries
+    expect(ctx.messageMeta[1].kind).toBeUndefined();
+    expect(ctx.messageMeta[1].entryId).toBeDefined();
+    expect(ctx.messageMeta[2].entryId).toBeDefined();
+    expect(ctx.messageMeta[3].entryId).toBeDefined();
+  });
+});
+
 describe('SessionManager — session info + labels', () => {
   test('appendSessionInfo + getSessionName round-trips via entries', async () => {
     const store = new MemorySessionStore();

@@ -17,6 +17,8 @@ export class ChatPage {
     modelSearchInput: '[data-testid="model-search-input"]',
     refreshModels: '[data-testid="btn-refresh-models"]',
     chatProcessing: '[data-testid="chat-processing"]',
+    compactButton: '[data-testid="chat-compact-button"]',
+    compactionSummary: '[data-testid="chat-compaction-summary"]',
     message: (turn: number, role: string) =>
       `[data-testid="chat-message-turn-${turn}"][data-messagetype="${role}"]`,
   };
@@ -124,6 +126,43 @@ export class ChatPage {
 
   async getAssistantText(turn: number): Promise<string> {
     return (await this.page.locator(this.selectors.message(turn, 'assistant')).textContent()) ?? '';
+  }
+
+  /** Wait for streaming to start and then finish (turn-agnostic). */
+  async waitForStreamingDone(): Promise<void> {
+    const processing = this.page.locator(this.selectors.chatProcessing);
+    await processing.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+    await processing.waitFor({ state: 'hidden' });
+  }
+
+  /** Text of the assistant reply that follows the last user message. */
+  async lastAssistantText(): Promise<string> {
+    const bubbles = this.page.locator('[data-testid^="chat-message-turn-"]');
+    const count = await bubbles.count();
+    let lastUserIdx = -1;
+    for (let i = count - 1; i >= 0; i--) {
+      if ((await bubbles.nth(i).getAttribute('data-messagetype')) === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx < 0) return '';
+    for (let i = lastUserIdx + 1; i < count; i++) {
+      if ((await bubbles.nth(i).getAttribute('data-messagetype')) === 'assistant') {
+        return (await bubbles.nth(i).textContent()) ?? '';
+      }
+    }
+    return '';
+  }
+
+  async compactNow(): Promise<void> {
+    const btn = this.page.locator(this.selectors.compactButton);
+    await btn.click();
+    await expect(btn).toHaveAttribute('data-test-state', 'idle', { timeout: 60_000 });
+  }
+
+  compactionSummary() {
+    return this.page.locator(this.selectors.compactionSummary);
   }
 
   toolCall(name: string) {

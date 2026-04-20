@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
-import { Plus, RefreshCw, ArrowUp } from 'lucide-react';
+import { Plus, RefreshCw, ArrowUp, Minimize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ModelCombobox from './ModelCombobox';
@@ -25,6 +25,9 @@ interface ChatInputProps {
   getCheckboxState: (mcpId: string) => 'checked' | 'unchecked' | 'indeterminate';
   enabledToolCount: number;
   isMcpsLoading: boolean;
+  isCompacting?: boolean;
+  isStreaming?: boolean;
+  onCompactNow?: () => void;
 }
 
 export default function ChatInput({
@@ -43,6 +46,9 @@ export default function ChatInput({
   getCheckboxState,
   enabledToolCount,
   isMcpsLoading,
+  isCompacting = false,
+  isStreaming = false,
+  onCompactNow,
 }: ChatInputProps) {
   const { isReady, isAuthenticated } = useBodhi();
   const [message, setMessage] = useState('');
@@ -71,16 +77,30 @@ export default function ChatInput({
     <div className="w-full px-4 py-4">
       <div className="max-w-4xl mx-auto">
         <div className="grid grid-cols-[auto_1fr_auto] grid-rows-[1fr_auto] gap-2 p-3 bg-white border border-gray-200 rounded-3xl shadow-sm">
-          <Button
-            onClick={handleNewChat}
-            variant="ghost"
-            size="icon"
-            title="New chat"
-            disabled={isDisabled}
-            className="row-span-2 self-center"
-          >
-            <Plus />
-          </Button>
+          <div className="row-span-2 flex flex-col items-center justify-center gap-1">
+            <Button
+              onClick={handleNewChat}
+              variant="ghost"
+              size="icon"
+              title="New chat"
+              disabled={isDisabled}
+            >
+              <Plus />
+            </Button>
+            {onCompactNow && (
+              <Button
+                data-testid="chat-compact-button"
+                data-test-state={isCompacting ? 'compacting' : 'idle'}
+                onClick={onCompactNow}
+                variant="ghost"
+                size="icon"
+                title="Compact conversation"
+                disabled={isCompacting || isStreaming}
+              >
+                <Minimize2 className={isCompacting ? 'animate-spin' : ''} size={18} />
+              </Button>
+            )}
+          </div>
 
           <Input
             data-testid="chat-input"

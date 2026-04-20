@@ -12,6 +12,13 @@ import { WebAccess } from '@zenfs/dom';
 import type { AgentEvent, AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { AgentSession } from '../core/agent-session';
+import {
+  compactSummarize,
+  DEFAULT_COMPACTION_SETTINGS,
+  prepareCompaction,
+  shouldCompact,
+  type CompactionSettings,
+} from '../core/compaction';
 import { SessionManager } from '../core/session/session-manager';
 import type { SessionStore } from '../core/session/store';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
@@ -25,6 +32,18 @@ import type { InMemoryVaultSeed } from './init-protocol';
 export interface WorkerAgentHostOptions {
   /** ZenFS mount path for the vault. Defaults to `VAULT_MOUNT` (`/vault`). */
   vaultMount?: string;
+  /**
+   * Override the default compaction settings. Tests pass a smaller
+   * `contextWindow` + `keepRecentTokens` to exercise the auto path on
+   * short transcripts; production takes the defaults.
+   */
+  compactionSettings?: Partial<CompactionSettings>;
+  /**
+   * Placeholder `apiKey` passed to the summarisation LLM call. Real auth
+   * is the Bearer header captured via `session.getAuthToken()`. Defaults
+   * to `'web-agent-compaction'`.
+   */
+  compactionApiKey?: string;
 }
 
 // ZenFS's `Channel` type union includes WebSocket which makes structural
@@ -58,6 +77,12 @@ export class WorkerAgentHost implements AgentSessionHost {
   private readonly vfsPort: MessagePort;
   private readonly store: SessionStore;
   private readonly vaultMount: string;
+  private readonly compactionSettings: CompactionSettings;
+  private readonly compactionApiKey: string;
+  /** Re-entrancy guard for the compaction pipeline. */
+  private compactionInFlight = false;
+  /** Cancels an in-flight summarisation LLM call on session swaps. */
+  private compactionAbort: AbortController | null = null;
 
   constructor(
     session: AgentSession,
@@ -69,6 +94,8 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.vfsPort = vfsPort;
     this.store = store;
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
+    this.compactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, ...options.compactionSettings };
+    this.compactionApiKey = options.compactionApiKey ?? 'web-agent-compaction';
     // Persist user/assistant/toolResult messages on turn boundaries. After
     // each successful append, re-emit `session_loaded` so the main thread's
     // message↔entryId mapping stays aligned (used by per-message Fork /
@@ -83,6 +110,11 @@ export class WorkerAgentHost implements AgentSessionHost {
         .then(async () => {
           await sm.appendMessage(event.message);
           this.emitSessionLoaded();
+          // Auto-compaction runs inside the same serialised chain so a
+          // follow-up `message_end` can't race a partial summary append.
+          await this.maybeCompact().catch(err => {
+            console.error('[WorkerAgentHost] maybeCompact failed:', err);
+          });
         })
         .catch(err => {
           console.error('[WorkerAgentHost] appendMessage failed:', err);
@@ -234,15 +266,8 @@ export class WorkerAgentHost implements AgentSessionHost {
     return this.store.listSessions();
   }
 
-  /**
-   * Swap the active session to `sessionId`. Drains pending appends, aborts any
-   * in-flight turn (so the streaming buffer doesn't get orphaned mid-write),
-   * rebuilds the in-memory tree from the store, resets the agent's message
-   * buffer, then rehydrates it from the persisted entries. Emits a synthetic
-   * `session_loaded` event so the main thread can refresh its UI from one
-   * envelope.
-   */
   async loadSession(sessionId: string): Promise<void> {
+    this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
     const sm = await SessionManager.load(this.store, sessionId);
@@ -254,6 +279,7 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   async newSession(parentSession?: string): Promise<{ sessionId: string }> {
+    this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
     const sm = await SessionManager.create(this.store, {
@@ -267,14 +293,10 @@ export class WorkerAgentHost implements AgentSessionHost {
     return { sessionId: sm.getSessionId() };
   }
 
-  /**
-   * Cross-session fork: copy the root-to-`fromEntryId` path of the active
-   * session into a new session, then activate the new session. Parent stays
-   * untouched.
-   */
   async forkSession(fromEntryId: string): Promise<{ sessionId: string }> {
     const current = this.sessionManager;
     if (!current) throw new Error('No active session to fork from');
+    this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
     const forked = await current.fork(fromEntryId);
@@ -286,14 +308,10 @@ export class WorkerAgentHost implements AgentSessionHost {
     return { sessionId: forked.getSessionId() };
   }
 
-  /**
-   * In-session leaf navigation: ephemeral pointer move on the active session.
-   * Rebuilds the agent message window from the new branch so subsequent
-   * prompts continue from the chosen entry.
-   */
   async navigateToLeaf(entryId: string): Promise<void> {
     const sm = this.sessionManager;
     if (!sm) throw new Error('No active session');
+    this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
     sm.navigateToLeaf(entryId);
@@ -341,6 +359,88 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   // ==========================================================================
+  // M7 — compaction
+  // ==========================================================================
+
+  async compactNow(): Promise<void> {
+    await this.runCompaction({ force: true });
+  }
+
+  /** Auto-compaction: runs after every append if above the token threshold. */
+  private async maybeCompact(): Promise<void> {
+    if (this.compactionInFlight) return;
+    const sm = this.sessionManager;
+    if (!sm) return;
+    const model = this.session.getModel();
+    const contextWindow = this.compactionSettings.contextWindow ?? model?.contextWindow ?? 128_000;
+    const messages = sm.buildSessionContext().messages;
+    if (!shouldCompact(messages, contextWindow, this.compactionSettings)) return;
+    await this.runCompaction({ force: false });
+  }
+
+  private async runCompaction(opts: { force: boolean }): Promise<void> {
+    const sm = this.sessionManager;
+    if (!sm) return;
+    if (this.compactionInFlight) return;
+
+    const path = sm.getBranch();
+    if (path.length < this.compactionSettings.minEntriesToCompact && !opts.force) return;
+
+    const preparation = prepareCompaction(path, this.compactionSettings, {
+      force: opts.force,
+    });
+    if (!preparation) return;
+
+    this.compactionInFlight = true;
+    const abort = new AbortController();
+    this.compactionAbort = abort;
+
+    this.hostEventSink?.({ type: 'compaction_start' });
+
+    try {
+      const model = this.session.getModel();
+      if (!model) throw new Error('No model set — cannot summarize');
+
+      const result = await compactSummarize(preparation, model, {
+        apiKey: this.compactionApiKey,
+        authToken: this.session.getAuthToken(),
+        signal: abort.signal,
+      });
+
+      if (abort.signal.aborted) return;
+
+      await sm.appendCompaction(
+        result.summary,
+        result.firstKeptEntryId,
+        result.tokensBefore,
+        result.details
+      );
+
+      const ctx = sm.buildSessionContext();
+      this.session.restoreMessages(ctx.messages);
+      this.emitSessionLoaded();
+
+      this.hostEventSink?.({
+        type: 'compaction_end',
+        success: true,
+        tokensBefore: result.tokensBefore,
+      });
+    } catch (err) {
+      if (abort.signal.aborted) return;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[WorkerAgentHost] compaction failed:', message);
+      this.hostEventSink?.({
+        type: 'compaction_end',
+        success: false,
+        errorMessage: message,
+      });
+    } finally {
+      this.compactionInFlight = false;
+      this.compactionAbort = null;
+    }
+  }
+
+  // ==========================================================================
   // Internals
   // ==========================================================================
 
@@ -348,15 +448,14 @@ export class WorkerAgentHost implements AgentSessionHost {
     const sink = this.hostEventSink;
     const sm = this.sessionManager;
     if (!sink || !sm) return;
-    const branch = sm.getBranch();
-    const messageEntryIds = branch.filter(e => e.type === 'message').map(e => e.id);
+    const ctx = sm.buildSessionContext();
     sink({
       type: 'session_loaded',
       sessionId: sm.getSessionId(),
       header: sm.getHeader(),
       name: sm.getSessionName(),
-      messages: sm.buildSessionContext().messages,
-      messageEntryIds,
+      messages: ctx.messages,
+      messageMeta: ctx.messageMeta,
     });
   }
 

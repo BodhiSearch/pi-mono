@@ -128,8 +128,16 @@ export interface SessionTreeNode {
   labelTimestamp?: string;
 }
 
+export interface UiMessageMeta {
+  entryId?: string;
+  kind?: 'compaction-summary';
+  tokensBefore?: number;
+  firstKeptEntryId?: string;
+}
+
 export interface SessionContext {
   messages: AgentMessage[];
+  messageMeta: UiMessageMeta[];
   thinkingLevel: string;
   model: { provider: string; modelId: string } | null;
 }

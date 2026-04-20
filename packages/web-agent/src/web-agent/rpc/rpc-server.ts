@@ -57,6 +57,8 @@ export interface AgentSessionHost {
   // M6 — session tree (fork + in-session leaf navigation).
   forkSession?(fromEntryId: string): Promise<{ sessionId: string }>;
   navigateToLeaf?(entryId: string): Promise<void>;
+  // M7 — manual compaction trigger.
+  compactNow?(): Promise<void>;
   /**
    * Register a sink for synthetic Worker-originated events (e.g.
    * `session_loaded`). Optional because test fakes and the jsdom
@@ -261,6 +263,10 @@ export class RpcServer {
           await (this.session.navigateToLeaf?.(raw.entryId) ?? Promise.resolve());
           this.transport.send(ok(id, 'navigate_to_leaf'));
           return;
+        case 'compact_now':
+          await (this.session.compactNow?.() ?? Promise.resolve());
+          this.transport.send(ok(id, 'compact_now'));
+          return;
       }
     } catch (err) {
       this.transport.send({
@@ -332,6 +338,7 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   get_session_meta: true,
   fork_session: true,
   navigate_to_leaf: true,
+  compact_now: true,
 };
 
 function isKnownCommandType(value: string): value is RpcCommandType {

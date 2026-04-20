@@ -209,7 +209,7 @@ function createSessionedHost(): AgentSessionHost {
       },
       name: rec.name,
       messages: [...rec.messages],
-      messageEntryIds: rec.messages.map((_, i) => `entry-${rec.id}-${i}`),
+      messageMeta: rec.messages.map((_, i) => ({ entryId: `entry-${rec.id}-${i}` })),
     });
   };
 

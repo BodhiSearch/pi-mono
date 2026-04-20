@@ -1,10 +1,11 @@
-import { GitBranch, GitFork } from 'lucide-react';
+import { GitBranch, GitFork, Layers } from 'lucide-react';
 import { extractTextFromAgentMessage, getToolCalls, type AgentMessage } from '@/types/chat';
+import type { UiMessageMeta } from '@/web-agent/core/session/types';
 
 interface MessageBubbleProps {
   message: AgentMessage;
   turn: number;
-  entryId?: string;
+  meta?: UiMessageMeta;
   onFork?: (entryId: string) => void;
   onBranchHere?: (entryId: string) => void;
 }
@@ -12,17 +13,39 @@ interface MessageBubbleProps {
 export default function MessageBubble({
   message,
   turn,
-  entryId,
+  meta,
   onFork,
   onBranchHere,
 }: MessageBubbleProps) {
+  const entryId = meta?.entryId;
+  const isCompactionSummary = meta?.kind === 'compaction-summary';
+
+  if (isCompactionSummary) {
+    return (
+      <div className="flex justify-center mb-4">
+        <div
+          data-testid="chat-compaction-summary"
+          data-kind="compaction-summary"
+          data-tokens-before={meta?.tokensBefore}
+          data-first-kept-entry-id={meta?.firstKeptEntryId}
+          data-entry-id={entryId}
+          className="max-w-[85%] rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-500"
+        >
+          <div className="mb-1 flex items-center gap-1.5 font-medium text-gray-600">
+            <Layers className="h-3.5 w-3.5" />
+            Compacted conversation
+          </div>
+          <div className="whitespace-pre-wrap break-words">
+            {extractTextFromAgentMessage(message)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isUser = message.role === 'user';
   const text = extractTextFromAgentMessage(message);
   const hasToolCalls = getToolCalls(message).length > 0;
-  // Actions only on assistant replies. Branching from a user message would
-  // produce orphan sibling-user-messages (no semantic); forking from an
-  // assistant message captures the full path up to and including that
-  // reply, which is the natural "diverge from here" point.
   const showActions = !isUser && !!entryId && (onFork || onBranchHere);
 
   return (
@@ -42,10 +65,6 @@ export default function MessageBubble({
           <div
             data-testid="chat-message-actions"
             data-entry-id={entryId}
-            // Absolute overlay anchored to the bubble's bottom-right ("end of
-            // message"). pointer-events-none keeps the bubble clickable when
-            // hidden; group-hover:pointer-events-auto re-enables when shown.
-            // No layout space reserved — height stays stable on hover.
             className={`pointer-events-none absolute -bottom-3 right-2 flex items-center gap-1 rounded-md border border-gray-200 bg-white px-1 py-0.5 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100`}
           >
             {onFork ? (

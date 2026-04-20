@@ -9,7 +9,12 @@
 
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
-import type { SessionHeader, SessionMeta, SessionSummary } from '../core/session/types';
+import type {
+  SessionHeader,
+  SessionMeta,
+  SessionSummary,
+  UiMessageMeta,
+} from '../core/session/types';
 import type { SerializedError } from './error';
 
 // ============================================================================
@@ -49,7 +54,8 @@ export type RpcCommand =
   | { id: string; type: 'set_session_name'; name: string }
   | { id: string; type: 'get_session_meta' }
   | { id: string; type: 'fork_session'; fromEntryId: string }
-  | { id: string; type: 'navigate_to_leaf'; entryId: string };
+  | { id: string; type: 'navigate_to_leaf'; entryId: string }
+  | { id: string; type: 'compact_now' };
 
 export type RpcCommandType = RpcCommand['type'];
 
@@ -125,6 +131,7 @@ export type RpcResponse =
       data: { sessionId: string };
     }
   | { id: string; type: 'response'; command: 'navigate_to_leaf'; success: true }
+  | { id: string; type: 'response'; command: 'compact_now'; success: true }
   | {
       id: string;
       type: 'response';
@@ -176,18 +183,35 @@ export interface RpcSessionLoadedEvent {
   header: SessionHeader | null;
   name?: string;
   messages: AgentMessage[];
-  /**
-   * Entry ids of `messages` on the current branch, in matching order. Lets
-   * the UI wire per-message actions (Fork / Branch) without a separate
-   * lookup. Re-emitted after every append so the array stays aligned.
-   */
-  messageEntryIds: string[];
+  /** Per-message metadata aligned with `messages` (entry ids + compaction info). */
+  messageMeta: UiMessageMeta[];
 }
 
-export type RpcEventEnvelope = RpcAgentEventEnvelope | RpcToolCallRequest | RpcSessionLoadedEvent;
+/**
+ * Worker → Main synthetic event: a compaction pipeline has started or
+ * finished. Drives the UI's "compacting…" indicator without per-turn
+ * polling; the accompanying `messages` refresh happens via the
+ * `session_loaded` re-emission the Worker runs on success.
+ */
+export interface RpcCompactionEvent {
+  type: 'compaction_start' | 'compaction_end';
+  /** Whether the pipeline finished with a persisted CompactionEntry. */
+  success?: boolean;
+  /** Error message populated when `success === false`. */
+  errorMessage?: string;
+  /** Tokens-before snapshot, carried on `compaction_end.success=true` for telemetry. */
+  tokensBefore?: number;
+}
+
+export type RpcEventEnvelope =
+  | RpcAgentEventEnvelope
+  | RpcToolCallRequest
+  | RpcSessionLoadedEvent
+  | RpcCompactionEvent;
 
 // ============================================================================
 // Wire envelope
 // ============================================================================
 
 export type RpcMessage = RpcCommand | RpcResponse | RpcEventEnvelope;
+export type { UiMessageMeta } from '../core/session/types';

@@ -4,18 +4,14 @@ import type { ToolResultMessage } from '@mariozechner/pi-ai';
 import MessageBubble from './MessageBubble';
 import ToolCallMessage from './ToolCallMessage';
 import { extractTextFromAgentMessage, getToolCalls, type AgentMessage } from '@/types/chat';
+import type { UiMessageMeta } from '@/web-agent/core/session/types';
 
 interface ChatMessagesProps {
   messages: AgentMessage[];
   streamingMessage?: AgentMessage;
   isStreaming: boolean;
   error?: string | null;
-  /**
-   * Entry ids positionally aligned with `messages`. Empty entries (or shorter
-   * array) hide per-message actions for those rows. Streaming + uncommitted
-   * messages naturally have no entry id.
-   */
-  messageEntryIds?: string[];
+  messageMeta?: UiMessageMeta[];
   onForkFromEntry?: (entryId: string) => void;
   onBranchFromEntry?: (entryId: string) => void;
 }
@@ -25,7 +21,7 @@ export default function ChatMessages({
   streamingMessage,
   isStreaming,
   error,
-  messageEntryIds,
+  messageMeta,
   onForkFromEntry,
   onBranchFromEntry,
 }: ChatMessagesProps) {
@@ -124,7 +120,7 @@ export default function ChatMessages({
                 const turn = turnByIndex[index];
                 // Streaming message lives at the tail with no entry id yet.
                 const isStreamingTail = streamingMessage && index === renderList.length - 1;
-                const entryId = isStreamingTail ? undefined : messageEntryIds?.[index];
+                const meta = isStreamingTail ? undefined : messageMeta?.[index];
 
                 if (msg.role === 'assistant' && getToolCalls(msg).length > 0) {
                   const hasText = !!extractTextFromAgentMessage(msg);
@@ -134,7 +130,7 @@ export default function ChatMessages({
                         <MessageBubble
                           message={msg}
                           turn={turn}
-                          entryId={entryId}
+                          meta={meta}
                           onFork={onForkFromEntry}
                           onBranchHere={onBranchFromEntry}
                         />
@@ -149,7 +145,7 @@ export default function ChatMessages({
                     key={index}
                     message={msg}
                     turn={turn}
-                    entryId={entryId}
+                    meta={meta}
                     onFork={onForkFromEntry}
                     onBranchHere={onBranchFromEntry}
                   />

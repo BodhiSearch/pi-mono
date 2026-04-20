@@ -129,6 +129,7 @@ describe('WorkerAgentHost session persistence', () => {
     if (loaded.type === 'session_loaded') {
       expect(loaded.sessionId).toBe(sessionId);
       expect(loaded.messages).toEqual([]);
+      expect(loaded.messageMeta).toEqual([]);
       expect(loaded.header?.id).toBe(sessionId);
     }
     const meta = await host.getSessionMeta();
@@ -152,8 +153,7 @@ describe('WorkerAgentHost session persistence', () => {
     expect(s!.firstMessage).toBe('hello');
   });
 
-  test('loadSession rehydrates messages and emits session_loaded', async () => {
-    // First host persists a session into a shared store.
+  test('loadSession rehydrates messages and emits session_loaded with messageMeta', async () => {
     const store = new MemorySessionStore();
     const { host: host1, fake: fake1 } = makeHost(store);
     const { sessionId } = await host1.newSession();
@@ -162,7 +162,6 @@ describe('WorkerAgentHost session persistence', () => {
     await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
 
-    // Second host simulates a fresh page load against the same store.
     const { host: host2, fake: fake2 } = makeHost(store);
     const events: RpcEventEnvelope[] = [];
     host2.setHostEventSink(e => events.push(e));
@@ -172,7 +171,13 @@ describe('WorkerAgentHost session persistence', () => {
     expect(fake2.restoredCalls.length).toBeGreaterThan(0);
     const lastRestore = fake2.restoredCalls.at(-1)!;
     expect(lastRestore).toHaveLength(2);
-    expect(events.some(e => e.type === 'session_loaded')).toBe(true);
+    const loaded = events.find(e => e.type === 'session_loaded');
+    expect(loaded).toBeDefined();
+    if (loaded?.type === 'session_loaded') {
+      expect(loaded.messageMeta).toHaveLength(2);
+      expect(loaded.messageMeta[0].entryId).toBeDefined();
+      expect(loaded.messageMeta[1].entryId).toBeDefined();
+    }
   });
 
   test('deleteSession removes the session and swaps to a fresh one when active', async () => {

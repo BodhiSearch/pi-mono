@@ -21,6 +21,7 @@
 
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { ImageContent, TextContent } from '@mariozechner/pi-ai';
+import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from '../compaction/prompts';
 import type { SessionStore } from './store';
 import {
   CURRENT_SESSION_VERSION,
@@ -39,6 +40,7 @@ import {
   type SessionMessageEntry,
   type SessionTreeNode,
   type ThinkingLevelChangeEntry,
+  type UiMessageMeta,
 } from './types';
 
 interface SessionManagerArgs {
@@ -245,19 +247,71 @@ export class SessionManager implements ReadonlySessionManager {
   buildSessionContext(): SessionContext {
     const path = this.getBranch();
     const messages: AgentMessage[] = [];
+    const messageMeta: UiMessageMeta[] = [];
     let thinkingLevel = 'off';
     let model: { provider: string; modelId: string } | null = null;
-    for (const entry of path) {
+
+    let lastCompactionIdx = -1;
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (path[i].type === 'compaction') {
+        lastCompactionIdx = i;
+        break;
+      }
+    }
+    const compaction = lastCompactionIdx >= 0 ? (path[lastCompactionIdx] as CompactionEntry) : null;
+    const firstKeptIdx = compaction
+      ? path.findIndex(e => e.id === compaction.firstKeptEntryId)
+      : -1;
+
+    const pushMessageEntry = (entry: SessionEntry): void => {
       if (entry.type === 'message') {
         messages.push((entry as SessionMessageEntry).message);
+        messageMeta.push({ entryId: entry.id });
       } else if (entry.type === 'model_change') {
         const m = entry as ModelChangeEntry;
         model = { provider: m.provider, modelId: m.modelId };
       } else if (entry.type === 'thinking_level_change') {
         thinkingLevel = (entry as ThinkingLevelChangeEntry).thinkingLevel;
       }
+    };
+
+    if (compaction) {
+      for (let i = 0; i < (firstKeptIdx >= 0 ? firstKeptIdx : lastCompactionIdx); i++) {
+        const entry = path[i];
+        if (entry.type === 'model_change') {
+          model = { provider: entry.provider, modelId: entry.modelId };
+        } else if (entry.type === 'thinking_level_change') {
+          thinkingLevel = entry.thinkingLevel;
+        }
+      }
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: COMPACTION_SUMMARY_PREFIX + compaction.summary + COMPACTION_SUMMARY_SUFFIX,
+          },
+        ],
+        timestamp: new Date(compaction.timestamp).getTime(),
+      } as AgentMessage);
+      messageMeta.push({
+        entryId: compaction.id,
+        kind: 'compaction-summary',
+        tokensBefore: compaction.tokensBefore,
+        firstKeptEntryId: compaction.firstKeptEntryId,
+      });
+      const keepStart = firstKeptIdx >= 0 ? firstKeptIdx : lastCompactionIdx;
+      for (let i = keepStart; i < lastCompactionIdx; i++) {
+        pushMessageEntry(path[i]);
+      }
+      for (let i = lastCompactionIdx + 1; i < path.length; i++) {
+        pushMessageEntry(path[i]);
+      }
+    } else {
+      for (const entry of path) pushMessageEntry(entry);
     }
-    return { messages, thinkingLevel, model };
+
+    return { messages, messageMeta, thinkingLevel, model };
   }
 
   // ==========================================================================

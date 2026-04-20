@@ -6,6 +6,7 @@ import type {
   McpToolDescriptor,
   RpcAgentEventEnvelope,
   RpcCommand,
+  RpcCompactionEvent,
   RpcEventEnvelope,
   RpcResponse,
   RpcSessionLoadedEvent,
@@ -43,6 +44,7 @@ export class RpcClient {
   private readonly pending = new Map<string, Pending>();
   private readonly listeners = new Set<(envelope: RpcAgentEventEnvelope) => void>();
   private readonly sessionLoadedListeners = new Set<(event: RpcSessionLoadedEvent) => void>();
+  private readonly compactionListeners = new Set<(event: RpcCompactionEvent) => void>();
   private readonly transport: Transport;
   private readonly unsubscribe: () => void;
   private idCounter = 0;
@@ -163,6 +165,20 @@ export class RpcClient {
     return this.send({ type: 'navigate_to_leaf', entryId }) as Promise<void>;
   }
 
+  // --------------------------------------------------------------------------
+  // Compaction commands (M7)
+  // --------------------------------------------------------------------------
+
+  compactNow(): Promise<void> {
+    return this.send({ type: 'compact_now' }) as Promise<void>;
+  }
+
+  /** Compaction lifecycle events are a separate stream from agent envelopes. */
+  onCompactionEvent(listener: (event: RpcCompactionEvent) => void): () => void {
+    this.compactionListeners.add(listener);
+    return () => this.compactionListeners.delete(listener);
+  }
+
   dispose(): void {
     this.unsubscribe();
     for (const p of this.pending.values()) {
@@ -171,6 +187,7 @@ export class RpcClient {
     this.pending.clear();
     this.listeners.clear();
     this.sessionLoadedListeners.clear();
+    this.compactionListeners.clear();
     this.toolCallHandler = null;
   }
 
@@ -194,6 +211,10 @@ export class RpcClient {
     }
     if (raw.type === 'session_loaded') {
       for (const listener of this.sessionLoadedListeners) listener(raw);
+      return;
+    }
+    if (raw.type === 'compaction_start' || raw.type === 'compaction_end') {
+      for (const listener of this.compactionListeners) listener(raw);
       return;
     }
     if (raw.type === 'response') {
@@ -241,5 +262,12 @@ export class RpcClient {
 function isEnvelope(value: unknown): value is RpcResponse | RpcEventEnvelope {
   if (typeof value !== 'object' || value === null) return false;
   const t = (value as { type?: unknown }).type;
-  return t === 'response' || t === 'event' || t === 'tool_call_request' || t === 'session_loaded';
+  return (
+    t === 'response' ||
+    t === 'event' ||
+    t === 'tool_call_request' ||
+    t === 'session_loaded' ||
+    t === 'compaction_start' ||
+    t === 'compaction_end'
+  );
 }

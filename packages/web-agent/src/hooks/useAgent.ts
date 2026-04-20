@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { getErrorMessage } from '@/lib/utils';
@@ -8,6 +8,7 @@ import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { useWebAgent } from '@/providers/web-agent-context';
 import { useSessionsList } from '@/hooks/useSessionsList';
 import type { McpToolDescriptor, ToolCallHandler } from '@/web-agent';
+import type { UiMessageMeta } from '@/web-agent/core/session/types';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'web-agent.activeSessionId';
 
@@ -39,8 +40,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
-  /** Entry id per message (positionally aligned with `messages`). M6 fork/branch. */
-  const [messageEntryIds, setMessageEntryIds] = useState<string[]>([]);
+  const [messageMeta, setMessageMeta] = useState<UiMessageMeta[]>([]);
   const sessionSummaries = useSessionsList();
 
   const isLoadingModelsRef = useRef(false);
@@ -99,6 +99,26 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     return unsubscribe;
   }, [rpcClient]);
 
+  // --------------------------------------------------------------------------
+  // M7 — compaction lifecycle
+  // --------------------------------------------------------------------------
+  const [isCompacting, setIsCompacting] = useState(false);
+  const [compactionError, setCompactionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return rpcClient.onCompactionEvent(event => {
+      if (event.type === 'compaction_start') {
+        setIsCompacting(true);
+        setCompactionError(null);
+      } else if (event.type === 'compaction_end') {
+        setIsCompacting(false);
+        if (event.success === false && event.errorMessage) {
+          setCompactionError(event.errorMessage);
+        }
+      }
+    });
+  }, [rpcClient]);
+
   // Session-loaded envelopes are the authoritative signal that the Worker
   // has swapped sessions. Replace the local message buffer, surface the
   // new active-session meta, and persist the id so a reload restores it.
@@ -108,7 +128,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   useEffect(() => {
     return rpcClient.onSessionLoaded(event => {
       setMessages(event.messages);
-      setMessageEntryIds(event.messageEntryIds);
+      setMessageMeta(event.messageMeta);
       setStreamingMessage(undefined);
       setIsStreaming(false);
       setError(null);
@@ -279,6 +299,13 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     [rpcClient]
   );
 
+  const compactNow = useCallback(async () => {
+    setCompactionError(null);
+    await rpcClient.compactNow();
+  }, [rpcClient]);
+
+  const messageEntryIds = useMemo(() => messageMeta.map(m => m?.entryId ?? ''), [messageMeta]);
+
   return {
     messages: isAuthenticated ? messages : EMPTY_MESSAGES,
     streamingMessage: isAuthenticated ? streamingMessage : undefined,
@@ -294,6 +321,8 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     models: isAuthenticated ? models : EMPTY_MODELS,
     isLoadingModels: isAuthenticated ? isLoadingModels : false,
     loadModels,
+    isCompacting,
+    compactionError,
     sessions: {
       current: activeSession,
       list: sessionSummaries,
@@ -303,6 +332,8 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
       rename: renameSession,
       fork: forkSession,
       navigateToLeaf,
+      compactNow,
+      messageMeta,
       messageEntryIds,
     },
   };

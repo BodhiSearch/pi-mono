@@ -23,6 +23,7 @@ export default function ChatDemo() {
     messages,
     streamingMessage,
     isStreaming,
+    isCompacting,
     selectedModel,
     setSelectedModel,
     sendMessage,
@@ -64,7 +65,7 @@ export default function ChatDemo() {
         streamingMessage={streamingMessage}
         isStreaming={isStreaming}
         error={chatError}
-        messageEntryIds={sessions.messageEntryIds}
+        messageMeta={sessions.messageMeta}
         onForkFromEntry={entryId => {
           void sessions.fork(entryId);
         }}
@@ -88,6 +89,9 @@ export default function ChatDemo() {
         getCheckboxState={getCheckboxState}
         enabledToolCount={getEnabledToolCount()}
         isMcpsLoading={isMcpsLoading}
+        isCompacting={isCompacting}
+        isStreaming={isStreaming}
+        onCompactNow={() => void sessions.compactNow()}
       />
     </>
   );

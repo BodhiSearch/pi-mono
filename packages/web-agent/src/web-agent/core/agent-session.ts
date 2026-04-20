@@ -21,6 +21,7 @@ export interface AgentSessionOptions {
 export class AgentSession {
   private readonly agent: Agent;
   private authToken: string | null = null;
+  private currentModel: Model<Api> | undefined;
 
   constructor(options: AgentSessionOptions = {}) {
     this.agent = new Agent({
@@ -71,7 +72,19 @@ export class AgentSession {
   }
 
   setModel(model: Model<Api> | undefined): void {
-    if (model) this.agent.state.model = model;
+    if (model) {
+      this.agent.state.model = model;
+      this.currentModel = model;
+    }
+  }
+
+  /**
+   * Returns the Model set via the most recent `setModel` call, or
+   * `undefined` if no model has been selected yet. Compaction reads this
+   * for its `contextWindow` and for the `completeSimple` call.
+   */
+  getModel(): Model<Api> | undefined {
+    return this.currentModel;
   }
 
   reset(): void {
