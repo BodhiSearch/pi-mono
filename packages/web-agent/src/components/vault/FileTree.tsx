@@ -2,69 +2,28 @@
  * FileTree — collapsible tree of vault directories/files.
  *
  * Pattern copied from bodhiapps/zenfs-browser. Directories render as
- * collapsible rows with chevron + folder icons; files render as leaf rows
- * with `data-testid="vault-file-entry"` + `data-path` so the Playwright
- * black-box tests can target individual entries regardless of tree depth.
- *
- * Directories default to expanded on first mount so pre-existing e2e
- * assertions that poll for nested paths (e.g. `/vault/src/hello.ts`) still
- * see them without requiring expansion clicks.
+ * collapsible rows with chevron + folder icons and default to collapsed;
+ * files render as leaf rows with `data-testid="vault-file-entry"` +
+ * `data-path` so Playwright can target individual entries regardless of
+ * depth. Directory rows expose `data-testid="vault-dir-entry"` +
+ * `data-teststate="expanded"|"collapsed"` so the e2e helper can walk the
+ * ancestor chain and click-expand before asserting on nested files.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { VaultTreeNode } from '@/hooks/useVaultTree';
 
 interface FileTreeProps {
   nodes: readonly VaultTreeNode[];
-  allDirectoryPaths: readonly string[];
   selected: string | null;
   onSelect: (path: string) => void;
   isEmpty: boolean;
 }
 
-export default function FileTree({
-  nodes,
-  allDirectoryPaths,
-  selected,
-  onSelect,
-  isEmpty,
-}: FileTreeProps) {
+export default function FileTree({ nodes, selected, onSelect, isEmpty }: FileTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const seenDirsRef = useRef<Set<string>>(new Set());
-
-  // Auto-expand newly-seen directories so e2e assertions that target nested
-  // paths (e.g. /vault/src/hello.ts) see them without requiring an expansion
-  // click. Directories the user has manually collapsed stay collapsed —
-  // we only auto-expand the first time a path appears.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      await Promise.resolve();
-      if (cancelled) return;
-      if (allDirectoryPaths.length === 0) {
-        seenDirsRef.current = new Set();
-        return;
-      }
-      const toExpand: string[] = [];
-      for (const p of allDirectoryPaths) {
-        if (!seenDirsRef.current.has(p)) {
-          seenDirsRef.current.add(p);
-          toExpand.push(p);
-        }
-      }
-      if (toExpand.length === 0) return;
-      setExpanded(prev => {
-        const next = new Set(prev);
-        for (const p of toExpand) next.add(p);
-        return next;
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [allDirectoryPaths]);
 
   if (isEmpty) {
     return (

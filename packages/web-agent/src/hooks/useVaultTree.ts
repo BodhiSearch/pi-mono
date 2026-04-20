@@ -81,18 +81,6 @@ function treesEqual(a: readonly VaultTreeNode[], b: readonly VaultTreeNode[]): b
 
 export interface UseVaultTreeResult {
   nodes: readonly VaultTreeNode[];
-  /** All directory paths seen so far — consumers use this as the default expanded set. */
-  allDirectoryPaths: readonly string[];
-}
-
-function collectDirectoryPaths(nodes: readonly VaultTreeNode[], acc: string[] = []): string[] {
-  for (const n of nodes) {
-    if (n.kind === 'directory') {
-      acc.push(n.path);
-      collectDirectoryPaths(n.children, acc);
-    }
-  }
-  return acc;
 }
 
 export function useVaultTree(status: VaultMountStatus): UseVaultTreeResult {
@@ -128,5 +116,5 @@ export function useVaultTree(status: VaultMountStatus): UseVaultTreeResult {
     };
   }, [status]);
 
-  return { nodes, allDirectoryPaths: collectDirectoryPaths(nodes) };
+  return { nodes };
 }

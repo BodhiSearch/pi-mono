@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { BodhiProvider, useBodhi, BodhiBadge } from '@bodhiapp/bodhi-js-react';
+import { BodhiProvider, useBodhi } from '@bodhiapp/bodhi-js-react';
 import { Toaster } from '@/components/ui/sonner';
 import { AUTH_CLIENT_ID, AUTH_SERVER_URL } from './env';
 import Layout from './components/Layout';
@@ -38,9 +38,6 @@ function App() {
       basePath={BASE_PATH}
     >
       <AppContent />
-      <div className="fixed bottom-4 right-6 z-50">
-        <BodhiBadge size="md" variant="light" />
-      </div>
     </BodhiProvider>
   );
 }

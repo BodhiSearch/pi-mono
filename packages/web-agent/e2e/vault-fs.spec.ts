@@ -35,7 +35,10 @@ test.describe('Vault mount — M2', () => {
 
     await test.step('opening a seeded file shows its contents in the viewer', async () => {
       await vault.openFile('/vault/README.md');
-      expect((await vault.currentFileContent()).trim()).toBe('# Sample vault');
+      // README.md renders through Milkdown — `# Sample vault` in source
+      // becomes a rendered <h1>Sample vault</h1>, so the visible text is
+      // just the heading without the `#` prefix.
+      expect((await vault.currentFileContent()).trim()).toBe('Sample vault');
     });
   });
 });
