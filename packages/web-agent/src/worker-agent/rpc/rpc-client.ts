@@ -1,5 +1,6 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { LlmAuthCredential } from '../llm/types';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { deserializeError, serializeError } from './error';
 import type {
@@ -103,8 +104,12 @@ export class RpcClient {
     return this.send({ type: 'reset' }) as Promise<void>;
   }
 
-  setAuthToken(token: string | null): Promise<void> {
-    return this.send({ type: 'set_auth_token', token }) as Promise<void>;
+  /**
+   * Rotate the worker-side LLM auth credential. Pass `null` to clear
+   * the credential (e.g. on logout).
+   */
+  setAuthToken(credential: LlmAuthCredential | null): Promise<void> {
+    return this.send({ type: 'set_auth_token', credential }) as Promise<void>;
   }
 
   mountVault(handle: FileSystemDirectoryHandle): Promise<void> {

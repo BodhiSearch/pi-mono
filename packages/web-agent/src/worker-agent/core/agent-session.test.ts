@@ -24,15 +24,6 @@ describe('AgentSession', () => {
     expect(session.getState().isStreaming).toBe(false);
   });
 
-  test('setAuthToken + getAuthToken round-trip', () => {
-    const session = new AgentSession();
-    expect(session.getAuthToken()).toBeNull();
-    session.setAuthToken('abc');
-    expect(session.getAuthToken()).toBe('abc');
-    session.setAuthToken(null);
-    expect(session.getAuthToken()).toBeNull();
-  });
-
   test('setTools accepts an empty array and tool list (smoke)', () => {
     const session = new AgentSession();
     // The inner Agent only reads `state.tools` at prompt time; setting it

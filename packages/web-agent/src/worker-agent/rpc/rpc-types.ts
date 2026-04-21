@@ -9,6 +9,7 @@
 
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { LlmAuthCredential } from '../llm/types';
 import type {
   SessionHeader,
   SessionMeta,
@@ -38,7 +39,13 @@ export type RpcCommand =
   | { id: string; type: 'set_available_models'; models: Model<Api>[] }
   | { id: string; type: 'set_system_prompt'; prompt: string }
   | { id: string; type: 'reset' }
-  | { id: string; type: 'set_auth_token'; token: string | null }
+  /**
+   * Rotate the worker-side LLM auth credential. The payload carries a
+   * `provider` tag so future non-Bodhi auth providers can coexist; the
+   * worker's `LlmAuthProvider` inspects the tag and accepts or ignores
+   * the credential accordingly.
+   */
+  | { id: string; type: 'set_auth_token'; credential: LlmAuthCredential | null }
   | { id: string; type: 'mount_vault'; handle: FileSystemDirectoryHandle }
   | { id: string; type: 'unmount_vault' }
   | { id: string; type: 'set_mcp_tools'; tools: McpToolDescriptor[] }

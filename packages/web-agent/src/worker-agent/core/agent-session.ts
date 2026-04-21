@@ -14,13 +14,17 @@ export interface AgentSessionOptions {
  * Responsibilities:
  * - owns the session Agent instance
  * - exposes the exact surface the RPC server needs (plain-data in/out)
- * - holds non-serializable state (tools, streamFn, auth token) that can't
- *   cross RPC via direct setters — the M4 Worker host calls these directly
- *   inside the Worker context where the closures live
+ * - holds non-serializable state (tools, streamFn) that can't cross RPC
+ *   via direct setters — the M4 Worker host calls these directly inside
+ *   the Worker context where the closures live
+ *
+ * Auth is NOT owned here. The Worker boots with an `LlmAuthProvider`
+ * concrete implementation (see `worker-bodhi/`) and wires it into the
+ * session's `streamFn` + compaction summariser. Token rotation lives on
+ * the provider.
  */
 export class AgentSession {
   private readonly agent: Agent;
-  private authToken: string | null = null;
   private currentModel: Model<Api> | undefined;
 
   constructor(options: AgentSessionOptions = {}) {
@@ -115,18 +119,6 @@ export class AgentSession {
 
   setStreamFn(fn: StreamFn): void {
     this.agent.streamFn = fn;
-  }
-
-  /**
-   * Stash the current auth token for use by the streamFn. Push-on-rotation
-   * (vs upcall-on-stream) keeps the streaming hot path single-process.
-   */
-  setAuthToken(token: string | null): void {
-    this.authToken = token;
-  }
-
-  getAuthToken(): string | null {
-    return this.authToken;
   }
 
   subscribe(handler: (event: AgentEvent) => void | Promise<void>): () => void {

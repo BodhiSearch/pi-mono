@@ -13,6 +13,7 @@ import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import { describe, expect, test } from 'vitest';
 import type { AgentSession } from '../core/agent-session';
+import type { LlmAuthCredential, LlmAuthProvider } from '../llm/types';
 import { MemorySessionStore } from '../core/session/memory-store';
 import type { SessionStore } from '../core/session/store';
 import type { HostEventSink } from '../rpc/rpc-server';
@@ -66,9 +67,6 @@ function makeFakeAgentSession(): FakeSession {
     setTools: (_t: unknown) => {},
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setStreamFn: (_f: unknown) => {},
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    setAuthToken: (_t: string | null) => {},
-    getAuthToken: () => null,
     restoreMessages: (msgs: AgentMessage[]) => {
       messages.splice(0, messages.length, ...msgs);
       restoredCalls.push([...msgs]);
@@ -110,15 +108,51 @@ function userMessage(text: string): AgentMessage {
   return { role: 'user', content: text } as unknown as AgentMessage;
 }
 
+type FakeAuthProvider = LlmAuthProvider & {
+  credentials: (LlmAuthCredential | null)[];
+  nextAuth: { apiKey: string; headers?: Record<string, string> };
+};
+
+function makeFakeAuthProvider(): FakeAuthProvider {
+  const credentials: (LlmAuthCredential | null)[] = [];
+  const nextAuth = { apiKey: 'fake-key' };
+  return {
+    credentials,
+    nextAuth,
+    async getApiKeyAndHeaders() {
+      return nextAuth;
+    },
+    setAuthToken(credential) {
+      credentials.push(credential);
+    },
+  };
+}
+
 function makeHost(store: SessionStore = new MemorySessionStore()): {
   host: WorkerAgentHost;
   fake: FakeSession;
   store: SessionStore;
+  authProvider: FakeAuthProvider;
 } {
   const fake = makeFakeAgentSession();
-  const host = new WorkerAgentHost(fake.session, makeFakePort(), store);
-  return { host, fake, store };
+  const authProvider = makeFakeAuthProvider();
+  const host = new WorkerAgentHost(fake.session, makeFakePort(), store, authProvider);
+  return { host, fake, store, authProvider };
 }
+
+describe('WorkerAgentHost auth delegation', () => {
+  test('setAuthToken forwards credentials to the injected LlmAuthProvider', () => {
+    const { host, authProvider } = makeHost();
+    const credential: LlmAuthCredential = {
+      provider: 'bodhi',
+      baseUrl: 'https://example.test',
+      token: 'tok-1',
+    };
+    host.setAuthToken(credential);
+    host.setAuthToken(null);
+    expect(authProvider.credentials).toEqual([credential, null]);
+  });
+});
 
 describe('WorkerAgentHost session persistence', () => {
   test('newSession creates a session and emits session_loaded', async () => {

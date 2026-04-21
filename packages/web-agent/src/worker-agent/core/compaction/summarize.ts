@@ -1,9 +1,14 @@
 /**
  * LLM summarization: turns a `CompactionPreparation` into a `CompactionResult`.
- * Auth is Bearer header injected on the model; `apiKey` is a placeholder.
+ *
+ * Auth resolution is delegated to an injected `LlmAuthProvider` — the same
+ * interface that drives the live streamFn. pi-ai's built-in per-format
+ * provider code handles the correct auth header from the resolved
+ * `apiKey`, so there is no provider-specific header patching here.
  */
 
 import { completeSimple, type Api, type Model } from '@mariozechner/pi-ai';
+import type { LlmAuthProvider } from '../../llm/types';
 import { formatFileOperations } from './file-ops';
 import {
   SUMMARIZATION_PROMPT,
@@ -14,10 +19,8 @@ import { serializeConversation } from './serialize';
 import type { CompactionPreparation, CompactionResult } from './types';
 
 export interface CompactSummarizeOptions {
-  /** Placeholder `apiKey` forwarded to the provider. Real auth is Bearer header. */
-  apiKey: string;
-  /** Optional Bearer token — merged into model headers before the request. */
-  authToken?: string | null;
+  /** Resolves per-request `{ apiKey, headers }` for the summarisation model. */
+  authProvider: LlmAuthProvider;
   signal?: AbortSignal;
 }
 
@@ -34,20 +37,11 @@ export async function compactSummarize(
     ? `<conversation>\n${conversation}\n</conversation>\n\n<previous-summary>\n${previousSummary}\n</previous-summary>\n\n${basePrompt}`
     : `<conversation>\n${conversation}\n</conversation>\n\n${basePrompt}`;
 
-  const patchedModel = options.authToken
-    ? {
-        ...model,
-        headers: {
-          ...model.headers,
-          Authorization: `Bearer ${options.authToken}`,
-          'x-api-key': options.authToken,
-        },
-      }
-    : model;
+  const auth = await options.authProvider.getApiKeyAndHeaders(model);
 
   const maxTokens = Math.floor(0.8 * (model.maxTokens ?? 4096));
   const response = await completeSimple(
-    patchedModel,
+    model,
     {
       systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
       messages: [
@@ -58,7 +52,12 @@ export async function compactSummarize(
         },
       ],
     },
-    { maxTokens, signal: options.signal, apiKey: options.apiKey }
+    {
+      maxTokens,
+      signal: options.signal,
+      apiKey: auth.apiKey,
+      headers: auth.headers,
+    }
   );
 
   if (response.stopReason === 'error') {

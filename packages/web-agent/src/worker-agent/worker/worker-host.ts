@@ -19,6 +19,7 @@ import {
   shouldCompact,
   type CompactionSettings,
 } from '../core/compaction';
+import type { LlmAuthCredential, LlmAuthProvider } from '../llm/types';
 import { SessionManager } from '../core/session/session-manager';
 import type { SessionStore } from '../core/session/store';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
@@ -38,12 +39,6 @@ export interface WorkerAgentHostOptions {
    * short transcripts; production takes the defaults.
    */
   compactionSettings?: Partial<CompactionSettings>;
-  /**
-   * Placeholder `apiKey` passed to the summarisation LLM call. Real auth
-   * is the Bearer header captured via `session.getAuthToken()`. Defaults
-   * to `'web-agent-compaction'`.
-   */
-  compactionApiKey?: string;
 }
 
 // ZenFS's `Channel` type union includes WebSocket which makes structural
@@ -76,15 +71,15 @@ export class WorkerAgentHost implements AgentSessionHost {
   private readonly session: AgentSession;
   private readonly vfsPort: MessagePort;
   private readonly store: SessionStore;
+  private readonly authProvider: LlmAuthProvider;
   private readonly vaultMount: string;
   private readonly compactionSettings: CompactionSettings;
-  private readonly compactionApiKey: string;
   /**
    * Model registry seeded from the main thread via `setAvailableModels`.
    * Coding-agent's node Worker owns its `ModelRegistry` via config-file
    * seed at boot; web-agent's Worker gets the catalog pushed from the
-   * main thread (only it has the `bodhiClient`). Resolution is the same:
-   * match by `(provider, id)`.
+   * main thread (only it has the catalog fetcher). Resolution is the
+   * same: match by `(provider, id)`.
    */
   private availableModels: Model<Api>[] = [];
   /** Re-entrancy guard for the compaction pipeline. */
@@ -96,14 +91,15 @@ export class WorkerAgentHost implements AgentSessionHost {
     session: AgentSession,
     vfsPort: MessagePort,
     store: SessionStore,
+    authProvider: LlmAuthProvider,
     options: WorkerAgentHostOptions = {}
   ) {
     this.session = session;
     this.vfsPort = vfsPort;
     this.store = store;
+    this.authProvider = authProvider;
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
     this.compactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, ...options.compactionSettings };
-    this.compactionApiKey = options.compactionApiKey ?? 'web-agent-compaction';
     // Persist user/assistant/toolResult messages on turn boundaries. After
     // each successful append, re-emit `session_loaded` so the main thread's
     // message↔entryId mapping stays aligned (used by per-message Fork /
@@ -248,8 +244,13 @@ export class WorkerAgentHost implements AgentSessionHost {
   // M4 additions
   // ==========================================================================
 
-  setAuthToken(token: string | null): void {
-    this.session.setAuthToken(token);
+  /**
+   * Rotate the credential on the injected `LlmAuthProvider`. The
+   * provider inspects the `provider` tag and decides whether to accept
+   * or ignore the payload — so multi-provider hosts remain possible.
+   */
+  setAuthToken(credential: LlmAuthCredential | null): void {
+    this.authProvider.setAuthToken?.(credential);
   }
 
   /**
@@ -491,8 +492,7 @@ export class WorkerAgentHost implements AgentSessionHost {
       if (!model) throw new Error('No model set — cannot summarize');
 
       const result = await compactSummarize(preparation, model, {
-        apiKey: this.compactionApiKey,
-        authToken: this.session.getAuthToken(),
+        authProvider: this.authProvider,
         signal: abort.signal,
       });
 

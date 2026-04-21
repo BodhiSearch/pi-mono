@@ -9,6 +9,11 @@
 export { AgentSession } from './core/agent-session';
 export type { AgentSessionOptions } from './core/agent-session';
 
+// LLM auth abstraction — interface worker-agent consumes; concrete
+// implementations live outside this folder (e.g. `src/worker-bodhi/`).
+export type { LlmAuthCredential, LlmAuthProvider } from './llm/types';
+export { createStreamFn } from './llm/stream';
+
 export { RpcServer } from './rpc/rpc-server';
 export type { AgentSessionHost, ToolUpcallInvoker } from './rpc/rpc-server';
 export { RpcClient } from './rpc/rpc-client';

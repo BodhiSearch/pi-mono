@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBodhi } from '@bodhiapp/bodhi-js-react';
+import { isDirectState, useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { getErrorMessage } from '@/lib/utils';
 import { apiFormatToProvider, buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
@@ -7,6 +7,7 @@ import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { useWebAgent } from '@/providers/web-agent-context';
 import { useSessionsList } from '@/hooks/useSessionsList';
+import { BODHI_PROVIDER_TAG } from '@/worker-bodhi';
 import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 import type { UiMessageMeta } from '@/worker-agent/core/session/types';
 
@@ -86,11 +87,19 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     []
   );
 
-  // Push the auth token to the Worker on every change. The Worker's
-  // streamFn closure reads this synchronously per request.
+  // Push the auth credential envelope to the Worker on every change.
+  // The Worker's BodhiAuthProvider captures the token; the next
+  // streamFn / compaction call reads it synchronously via
+  // `getApiKeyAndHeaders(model)`.
   useEffect(() => {
-    void rpcClient.setAuthToken(auth.accessToken ?? null);
-  }, [auth.accessToken, rpcClient]);
+    const state = bodhiClient.getState();
+    const baseUrl = isDirectState(state) && state.url ? state.url : undefined;
+    void rpcClient.setAuthToken({
+      provider: BODHI_PROVIDER_TAG,
+      baseUrl,
+      token: auth.accessToken ?? null,
+    });
+  }, [auth.accessToken, bodhiClient, rpcClient]);
 
   // Register the handler that services Worker-side MCP tool upcalls.
   // Must be set before any prompt that could invoke an MCP tool.

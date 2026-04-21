@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { LlmAuthCredential } from '../llm/types';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { deserializeError, serializeError } from './error';
 import type {
@@ -51,7 +52,7 @@ export interface AgentSessionHost {
   getErrorMessage(): string | undefined;
   subscribe(handler: (event: AgentEvent) => void | Promise<void>): () => void;
   // M4 additions — present in the real session, optional on test fakes.
-  setAuthToken?(token: string | null): void;
+  setAuthToken?(credential: LlmAuthCredential | null): void;
   mountVault?(handle: FileSystemDirectoryHandle): Promise<void>;
   unmountVault?(): Promise<void>;
   setMcpTools?(tools: McpToolDescriptor[], invoker: ToolUpcallInvoker): void;
@@ -202,7 +203,7 @@ export class RpcServer {
           this.transport.send(ok(id, 'reset'));
           return;
         case 'set_auth_token':
-          this.session.setAuthToken?.(raw.token);
+          this.session.setAuthToken?.(raw.credential);
           this.transport.send(ok(id, 'set_auth_token'));
           return;
         case 'mount_vault':

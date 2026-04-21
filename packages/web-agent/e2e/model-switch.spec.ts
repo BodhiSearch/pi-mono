@@ -28,8 +28,9 @@ test.describe('Model switching — fork + provider swap', () => {
       await chat.send('who trained you? answer in one short sentence');
       await chat.waitForAssistantTurn(1);
       // LLM phrasing is non-deterministic; match provider name loosely.
-      const reply = await chat.getAssistantText(1);
-      expect(reply).toMatch(/openai/i);
+      // `toContainText` auto-retries until streaming completes, avoiding the
+      // race between `chat-processing` hiding and the final token landing.
+      await expect(page.locator(chat.selectors.message(1, 'assistant'))).toContainText(/openai/i);
     });
 
     const parentSessionId = await test.step('record the active session id', async () => {
@@ -75,8 +76,9 @@ test.describe('Model switching — fork + provider swap', () => {
       await chat.send('who trained you? answer in one short sentence');
       // Turn count on the fork: turn 0 inherited, turn 1 is the new Q.
       await chat.waitForAssistantTurn(1);
-      const reply = await chat.getAssistantText(1);
-      expect(reply).toMatch(/google|gemini/i);
+      await expect(page.locator(chat.selectors.message(1, 'assistant'))).toContainText(
+        /google|gemini/i
+      );
     });
 
     await test.step('reload — fork is still active and Gemini is still the selected model', async () => {

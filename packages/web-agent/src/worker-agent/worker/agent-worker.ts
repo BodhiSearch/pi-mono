@@ -5,32 +5,29 @@
  *
  * Boot sequence:
  *   1. Wait for the init message on the global self port.
- *   2. Construct an AgentSession + SessionStore + WorkerAgentHost.
+ *   2. Construct an LlmAuthProvider (currently Bodhi), an AgentSession,
+ *      a SessionStore, and a WorkerAgentHost; wire the provider-agnostic
+ *      streamFn that delegates auth to the provider.
  *   3. Bind the agent RPC server to the agent port.
  *   4. If a dev seed was provided, mount the InMemory ZenFS backend
  *      immediately. Otherwise, the host waits for `mount_vault(handle)`
  *      from the main thread.
  *   5. Best-effort delete the legacy ZenFS-backed IDB DB (`web-agent-sessions`).
+ *
+ * The Bodhi concrete `LlmAuthProvider` is the only Bodhi-coupled import
+ * in this file. Swapping providers is a one-line change here — nothing
+ * inside `worker-agent/` knows about Bodhi.
  */
 
-import { streamSimple } from '@mariozechner/pi-ai';
-import type { StreamFn } from '@mariozechner/pi-agent-core';
 import { AgentSession } from '../core/agent-session';
+import { createStreamFn } from '../llm/stream';
 import { DexieSessionStore, WebAgentDB } from '../core/session/dexie-store';
 import { RpcServer } from '../rpc/rpc-server';
+import { BodhiAuthProvider } from '../../worker-bodhi';
 import { isAgentWorkerInit, type InMemoryVaultSeed, type WebAgentOptions } from './init-protocol';
 import { WorkerAgentHost } from './worker-host';
 
 const LEGACY_SESSIONS_DB = 'web-agent-sessions';
-
-/**
- * Placeholder API key. The OpenAI-family providers in `pi-ai` treat a
- * missing `apiKey` as a precondition failure before the HTTP request is
- * built, even though our real authentication is a Bearer token patched
- * into the request headers by `makeStreamFn` below. Any non-empty string
- * satisfies the precondition; the server never sees this value.
- */
-const API_KEY_PRESENCE_PLACEHOLDER = 'web-agent-auth-via-bearer-header';
 
 self.addEventListener('message', event => {
   const data = event.data;
@@ -46,12 +43,14 @@ async function boot(
   devSeed: InMemoryVaultSeed | undefined,
   options: WebAgentOptions | undefined
 ): Promise<void> {
-  const session = new AgentSession({
-    getApiKey: () => API_KEY_PRESENCE_PLACEHOLDER,
-  });
-  // Build the streamFn here — closes over session.getAuthToken() so token
-  // rotation pushed via set_auth_token takes effect on the next request.
-  session.setStreamFn(makeStreamFn(session));
+  const authProvider = new BodhiAuthProvider();
+  const session = new AgentSession();
+  // The streamFn closes over the auth provider — every request calls
+  // `authProvider.getApiKeyAndHeaders(model)` and forwards the resolved
+  // `apiKey` + `headers` to pi-ai. pi-ai's per-format provider code
+  // handles the actual auth header (OpenAI → `Authorization: Bearer`,
+  // Anthropic → `x-api-key`, Gemini → key param).
+  session.setStreamFn(createStreamFn(authProvider));
 
   // Both ports were transferred via postMessage; addEventListener-based
   // listeners require an explicit start() before delivery begins.
@@ -60,7 +59,7 @@ async function boot(
   const store = new DexieSessionStore(
     options?.sessionsDbName ? new WebAgentDB(options.sessionsDbName) : new WebAgentDB()
   );
-  const host = new WorkerAgentHost(session, vfsPort, store, {
+  const host = new WorkerAgentHost(session, vfsPort, store, authProvider, {
     vaultMount: options?.vaultMount,
   });
 
@@ -98,15 +97,4 @@ async function boot(
   } catch {
     // best-effort
   }
-}
-
-function makeStreamFn(session: AgentSession): StreamFn {
-  return (model, context, options) => {
-    const token = session.getAuthToken();
-    const headers = token
-      ? { ...model.headers, Authorization: `Bearer ${token}`, 'x-api-key': token }
-      : model.headers;
-    const patched = headers !== model.headers ? { ...model, headers } : model;
-    return streamSimple(patched, context, options);
-  };
 }
