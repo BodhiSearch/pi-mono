@@ -33,7 +33,15 @@ export type HostEventSink = (event: RpcEventEnvelope) => void;
 export interface AgentSessionHost {
   prompt(message: string): Promise<void>;
   abort(): void;
-  setModel(model: Model<Api> | undefined): void;
+  /**
+   * Set the active model by `(provider, modelId)`. Mirrors
+   * coding-agent's `set_model` shape — the Worker-side registry
+   * resolves identifiers to a concrete `Model<Api>`. Returns the
+   * resolved model so callers can echo it back to the client.
+   */
+  setModel(provider: string, modelId: string): Promise<Model<Api>>;
+  setAvailableModels(models: Model<Api>[]): void;
+  getAvailableModels(): Model<Api>[];
   setSystemPrompt(prompt: string): void;
   reset(): void;
   getState(): RpcSessionState;
@@ -159,9 +167,31 @@ export class RpcServer {
             data: this.session.getMessages(),
           } satisfies RpcResponse);
           return;
-        case 'set_model':
-          this.session.setModel(raw.model);
-          this.transport.send(ok(id, 'set_model'));
+        case 'set_model': {
+          const resolved = await this.session.setModel(raw.provider, raw.modelId);
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'set_model',
+            success: true,
+            data: resolved,
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'get_available_models': {
+          const models = this.session.getAvailableModels();
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'get_available_models',
+            success: true,
+            data: { models },
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'set_available_models':
+          this.session.setAvailableModels(raw.models);
+          this.transport.send(ok(id, 'set_available_models'));
           return;
         case 'set_system_prompt':
           this.session.setSystemPrompt(raw.prompt);
@@ -304,10 +334,12 @@ export class RpcServer {
   }
 }
 
-function ok<C extends Exclude<RpcCommandType, 'get_state' | 'get_messages'>>(
-  id: string,
-  command: C
-): RpcResponse {
+function ok<
+  C extends Exclude<
+    RpcCommandType,
+    'get_state' | 'get_messages' | 'set_model' | 'get_available_models'
+  >,
+>(id: string, command: C): RpcResponse {
   return { id, type: 'response', command, success: true } as RpcResponse;
 }
 
@@ -323,6 +355,8 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   get_state: true,
   get_messages: true,
   set_model: true,
+  get_available_models: true,
+  set_available_models: true,
   set_system_prompt: true,
   reset: true,
   set_auth_token: true,

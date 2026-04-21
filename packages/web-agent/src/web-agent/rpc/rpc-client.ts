@@ -71,8 +71,28 @@ export class RpcClient {
     return this.send({ type: 'get_messages' }) as Promise<AgentMessage[]>;
   }
 
-  setModel(model: Model<Api> | undefined): Promise<void> {
-    return this.send({ type: 'set_model', model }) as Promise<void>;
+  /**
+   * Set the active model by `(provider, modelId)`. Shape mirrors
+   * coding-agent `rpc-client.ts::setModel`. Returns the fully-resolved
+   * `Model<Api>` from the Worker-side registry.
+   */
+  setModel(provider: string, modelId: string): Promise<Model<Api>> {
+    return this.send({ type: 'set_model', provider, modelId }) as Promise<Model<Api>>;
+  }
+
+  getAvailableModels(): Promise<Model<Api>[]> {
+    return this.send({ type: 'get_available_models' }).then(
+      data => (data as { models: Model<Api>[] }).models
+    );
+  }
+
+  /**
+   * Seed / refresh the Worker-side model registry. Must be called before
+   * any `setModel` so the Worker can resolve `(provider, modelId)` to a
+   * concrete `Model<Api>`.
+   */
+  setAvailableModels(models: Model<Api>[]): Promise<void> {
+    return this.send({ type: 'set_available_models', models }) as Promise<void>;
   }
 
   setSystemPrompt(prompt: string): Promise<void> {

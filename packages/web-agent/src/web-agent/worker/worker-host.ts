@@ -79,6 +79,14 @@ export class WorkerAgentHost implements AgentSessionHost {
   private readonly vaultMount: string;
   private readonly compactionSettings: CompactionSettings;
   private readonly compactionApiKey: string;
+  /**
+   * Model registry seeded from the main thread via `setAvailableModels`.
+   * Coding-agent's node Worker owns its `ModelRegistry` via config-file
+   * seed at boot; web-agent's Worker gets the catalog pushed from the
+   * main thread (only it has the `bodhiClient`). Resolution is the same:
+   * match by `(provider, id)`.
+   */
+  private availableModels: Model<Api>[] = [];
   /** Re-entrancy guard for the compaction pipeline. */
   private compactionInFlight = false;
   /** Cancels an in-flight summarisation LLM call on session swaps. */
@@ -132,8 +140,84 @@ export class WorkerAgentHost implements AgentSessionHost {
   abort(): void {
     this.session.abort();
   }
-  setModel(model: Model<Api> | undefined): void {
-    this.session.setModel(model);
+  /**
+   * Set the active model by `(provider, modelId)`. Mirrors coding-agent
+   * `AgentSession.setModel` (agent-session.ts:1394-1409): resolve via
+   * the Worker's registry, update in-memory state, then persist a
+   * `model_change` entry **iff** the identity actually changed along
+   * the current branch. The dedupe makes the main-thread's
+   * `onSessionLoaded → setModel` re-apply idempotent.
+   */
+  async setModel(provider: string, modelId: string): Promise<Model<Api>> {
+    const resolved = this.findModel(provider, modelId);
+    if (!resolved) {
+      throw new Error(
+        `Model not registered: ${provider}/${modelId}. Seed the registry via setAvailableModels first.`
+      );
+    }
+    this.session.setModel(resolved);
+    const sm = this.sessionManager;
+    if (sm) {
+      const current = sm.buildSessionContext().model;
+      const unchanged =
+        current !== null && current.provider === provider && current.modelId === modelId;
+      if (!unchanged) {
+        // Serialise on writeChain so appendModelChange can't race with
+        // appendMessage and produce a dangling parentId. Do NOT emit
+        // session_loaded here — a model_change entry doesn't shift any
+        // message entry ids, and emitting mid-stream would reset the
+        // main thread's streamingMessage/isStreaming state. Await the
+        // chain so callers observe the persisted state before the next
+        // prompt fires (mirrors coding-agent's synchronous
+        // `appendModelChange` inside `AgentSession.setModel`).
+        this.writeChain = this.writeChain
+          .then(async () => {
+            await sm.appendModelChange(provider, modelId);
+          })
+          .catch(err => {
+            console.error('[WorkerAgentHost] appendModelChange failed:', err);
+          });
+        await this.writeChain;
+      }
+    }
+    return resolved;
+  }
+  setAvailableModels(models: Model<Api>[]): void {
+    this.availableModels = [...models];
+    // Boot-race recovery: a session may have loaded before the catalog
+    // was seeded, in which case `restoreModelFromContext` couldn't
+    // resolve its persisted `model_change` and left the session model
+    // undefined. Re-run the restore + re-emit so the main thread's
+    // `onSessionLoaded → getState` sync picks up the now-resolvable
+    // identifier. Idempotent when resolution already succeeded.
+    const sm = this.sessionManager;
+    if (sm) {
+      const ctx = sm.buildSessionContext();
+      this.restoreModelFromContext(ctx.model);
+      this.emitSessionLoaded();
+    }
+  }
+  getAvailableModels(): Model<Api>[] {
+    return [...this.availableModels];
+  }
+  private findModel(provider: string, modelId: string): Model<Api> | undefined {
+    return this.availableModels.find(m => m.provider === provider && m.id === modelId);
+  }
+  /**
+   * Restore the in-memory model from a persisted branch. No side effect
+   * on the session's JSONL transcript — the caller has already read
+   * `ctx.model` from `buildSessionContext`, so there is nothing to append.
+   * If the registry can't resolve the identifier (pre-seed or stale
+   * entry), leaves the session's model undefined and lets the main
+   * thread's first-available fallback take over.
+   */
+  private restoreModelFromContext(ctxModel: { provider: string; modelId: string } | null): void {
+    if (!ctxModel) {
+      this.session.setModel(undefined);
+      return;
+    }
+    const resolved = this.findModel(ctxModel.provider, ctxModel.modelId);
+    this.session.setModel(resolved);
   }
   setSystemPrompt(prompt: string): void {
     this.session.setSystemPrompt(prompt);
@@ -275,6 +359,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     const ctx = sm.buildSessionContext();
     this.session.restoreMessages(ctx.messages);
+    this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
   }
 
@@ -289,6 +374,8 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.sessionManager = sm;
     this.session.reset();
     this.session.restoreMessages([]);
+    const ctx = sm.buildSessionContext();
+    this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
     return { sessionId: sm.getSessionId() };
   }
@@ -304,6 +391,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     const ctx = forked.buildSessionContext();
     this.session.restoreMessages(ctx.messages);
+    this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
     return { sessionId: forked.getSessionId() };
   }
@@ -318,6 +406,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     const ctx = sm.buildSessionContext();
     this.session.restoreMessages(ctx.messages);
+    this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
   }
 

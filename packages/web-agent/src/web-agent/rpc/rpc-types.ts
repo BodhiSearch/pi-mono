@@ -26,7 +26,16 @@ export type RpcCommand =
   | { id: string; type: 'abort' }
   | { id: string; type: 'get_state' }
   | { id: string; type: 'get_messages' }
-  | { id: string; type: 'set_model'; model: Model<Api> | undefined }
+  | { id: string; type: 'set_model'; provider: string; modelId: string }
+  | { id: string; type: 'get_available_models' }
+  /**
+   * Seed the Worker-side model registry. Wire shape mirrors the
+   * `get_available_models` response — it's the same `Model<Api>[]` payload,
+   * just flowing in the opposite direction. Coding-agent's node Worker
+   * owns its registry via config-file seed; web-agent's Worker can't reach
+   * the Bodhi catalog on its own, so the main thread pushes it here.
+   */
+  | { id: string; type: 'set_available_models'; models: Model<Api>[] }
   | { id: string; type: 'set_system_prompt'; prompt: string }
   | { id: string; type: 'reset' }
   | { id: string; type: 'set_auth_token'; token: string | null }
@@ -78,7 +87,11 @@ export interface McpToolDescriptor {
 export interface RpcSessionState {
   isStreaming: boolean;
   messageCount: number;
-  hasModel: boolean;
+  /**
+   * The currently selected model, or `undefined` when none has been set.
+   * Shape mirrors `coding-agent/src/modes/rpc/rpc-types.ts::RpcSessionState.model`.
+   */
+  model?: Model<Api>;
   errorMessage?: string;
 }
 
@@ -91,7 +104,21 @@ export type RpcResponse =
   | { id: string; type: 'response'; command: 'abort'; success: true }
   | { id: string; type: 'response'; command: 'get_state'; success: true; data: RpcSessionState }
   | { id: string; type: 'response'; command: 'get_messages'; success: true; data: AgentMessage[] }
-  | { id: string; type: 'response'; command: 'set_model'; success: true }
+  | {
+      id: string;
+      type: 'response';
+      command: 'set_model';
+      success: true;
+      data: Model<Api>;
+    }
+  | {
+      id: string;
+      type: 'response';
+      command: 'get_available_models';
+      success: true;
+      data: { models: Model<Api>[] };
+    }
+  | { id: string; type: 'response'; command: 'set_available_models'; success: true }
   | { id: string; type: 'response'; command: 'set_system_prompt'; success: true }
   | { id: string; type: 'response'; command: 'reset'; success: true }
   | { id: string; type: 'response'; command: 'set_auth_token'; success: true }

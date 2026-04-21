@@ -46,7 +46,7 @@ export class AgentSession {
     return {
       isStreaming: this.agent.state.isStreaming,
       messageCount: this.agent.state.messages.length,
-      hasModel: this.agent.state.model.id !== 'unknown',
+      model: this.currentModel,
       errorMessage: this.agent.state.errorMessage,
     };
   }

@@ -36,6 +36,10 @@ export const API_MODEL_PREFIX = 'oai/';
 export const API_MODEL_NAME = 'gpt-4.1-nano';
 export const FULL_MODEL_ID = `${API_MODEL_PREFIX}${API_MODEL_NAME}`;
 
+export const GEMINI_API_MODEL_PREFIX = 'google/';
+export const GEMINI_API_MODEL_NAME = 'gemini-2.0-flash-lite';
+export const SECOND_FULL_MODEL_ID = `${GEMINI_API_MODEL_PREFIX}${GEMINI_API_MODEL_NAME}`;
+
 function isPortInUse(port: number): Promise<boolean> {
   return new Promise(resolve => {
     const socket = createConnection({ port, host: 'localhost' });
@@ -73,6 +77,7 @@ const REQUIRED_ENV_VARS = [
   'BODHIAPP_AUTH_URL',
   'BODHIAPP_AUTH_REALM',
   'OPENAI_API_KEY',
+  'GEMINI_API_KEY',
 ];
 
 function getEnv(key: string): string {
@@ -156,6 +161,12 @@ async function globalSetup(_: FullConfig) {
       getEnv('OPENAI_API_KEY'),
       API_MODEL_PREFIX,
       API_MODEL_NAME
+    );
+    await apiModelsPage.configureApiModel(
+      getEnv('GEMINI_API_KEY'),
+      GEMINI_API_MODEL_PREFIX,
+      GEMINI_API_MODEL_NAME,
+      'gemini'
     );
   } catch (err) {
     setupFailed = true;

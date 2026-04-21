@@ -12,7 +12,7 @@ describe('AgentSession', () => {
     const state = session.getState();
     expect(state.isStreaming).toBe(false);
     expect(state.messageCount).toBe(0);
-    expect(state.hasModel).toBe(false);
+    expect(state.model).toBeUndefined();
   });
 
   test('construction accepts a custom streamFn + getApiKey', () => {

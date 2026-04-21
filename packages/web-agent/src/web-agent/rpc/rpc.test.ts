@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
+import type { Api, Model } from '@mariozechner/pi-ai';
 import { describe, expect, test } from 'vitest';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { RpcClient } from './rpc-client';
@@ -13,8 +14,9 @@ function createFakeSession(): AgentSessionHost {
     isStreaming: boolean;
     streamingMessage: AgentMessage | undefined;
     errorMessage: string | undefined;
-    model: unknown;
+    model: Model<Api> | undefined;
     systemPrompt: string;
+    availableModels: Model<Api>[];
   } = {
     messages: [],
     isStreaming: false,
@@ -22,6 +24,7 @@ function createFakeSession(): AgentSessionHost {
     errorMessage: undefined,
     model: undefined,
     systemPrompt: '',
+    availableModels: [],
   };
 
   async function emit(event: AgentEvent): Promise<void> {
@@ -61,8 +64,17 @@ function createFakeSession(): AgentSessionHost {
     abort() {
       state.isStreaming = false;
     },
-    setModel(model) {
-      state.model = model;
+    async setModel(provider: string, modelId: string): Promise<Model<Api>> {
+      const resolved = state.availableModels.find(m => m.provider === provider && m.id === modelId);
+      if (!resolved) throw new Error(`Model not registered: ${provider}/${modelId}`);
+      state.model = resolved;
+      return resolved;
+    },
+    setAvailableModels(models: Model<Api>[]): void {
+      state.availableModels = [...models];
+    },
+    getAvailableModels(): Model<Api>[] {
+      return [...state.availableModels];
     },
     setSystemPrompt(prompt) {
       state.systemPrompt = prompt;
@@ -76,7 +88,7 @@ function createFakeSession(): AgentSessionHost {
       return {
         isStreaming: state.isStreaming,
         messageCount: state.messages.length,
-        hasModel: state.model !== undefined,
+        model: state.model,
         errorMessage: state.errorMessage,
       };
     },
@@ -126,18 +138,20 @@ describe('RPC round-trip', () => {
     expect(initial).toEqual({
       isStreaming: false,
       messageCount: 0,
-      hasModel: false,
     });
 
-    await client.setModel({
+    const fakeModel = {
       id: 'test',
       api: 'openai-completions',
       provider: 'fake',
       baseUrl: '',
-    } as never);
+    } as unknown as Model<Api>;
+    await client.setAvailableModels([fakeModel]);
+    await client.setModel('fake', 'test');
 
     const afterModel = await client.getState();
-    expect(afterModel.hasModel).toBe(true);
+    expect(afterModel.model?.id).toBe('test');
+    expect(afterModel.model?.provider).toBe('fake');
   });
 
   test('abort and reset succeed without throwing', async () => {

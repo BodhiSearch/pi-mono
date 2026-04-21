@@ -10,6 +10,7 @@
  */
 
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
+import type { Api, Model } from '@mariozechner/pi-ai';
 import { describe, expect, test } from 'vitest';
 import type { AgentSession } from '../core/agent-session';
 import { MemorySessionStore } from '../core/session/memory-store';
@@ -25,6 +26,7 @@ type FakeSession = {
   restoredCalls: AgentMessage[][];
   abortCount: { current: number };
   resetCount: { current: number };
+  getCurrentModel: () => Model<Api> | undefined;
 };
 
 function makeFakeAgentSession(): FakeSession {
@@ -33,14 +35,17 @@ function makeFakeAgentSession(): FakeSession {
   const listeners = new Set<(e: AgentEvent) => void | Promise<void>>();
   const abortCount = { current: 0 };
   const resetCount = { current: 0 };
+  let currentModel: Model<Api> | undefined;
   const fake = {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     prompt: async (_m: string) => {},
     abort: () => {
       abortCount.current++;
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    setModel: (_m: unknown) => {},
+    setModel: (m: Model<Api> | undefined) => {
+      currentModel = m;
+    },
+    getModel: () => currentModel,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setSystemPrompt: (_p: string) => {},
     reset: () => {
@@ -50,7 +55,7 @@ function makeFakeAgentSession(): FakeSession {
     getState: () => ({
       isStreaming: false,
       messageCount: messages.length,
-      hasModel: false,
+      model: currentModel,
       errorMessage: undefined,
     }),
     getMessages: () => [...messages],
@@ -82,6 +87,7 @@ function makeFakeAgentSession(): FakeSession {
     restoredCalls,
     abortCount,
     resetCount,
+    getCurrentModel: () => currentModel,
   };
 }
 
@@ -386,6 +392,166 @@ describe('WorkerAgentHost — deleteSession parent fallback', () => {
     expect(meta?.id).toBeDefined();
     expect(meta?.id).not.toBe(parentId);
     expect(meta?.id).not.toBe(forkId);
+  });
+});
+
+// ============================================================================
+// Model registry + persistence + restore
+// ============================================================================
+
+function fakeModel(provider: string, id: string): Model<Api> {
+  return {
+    id,
+    provider,
+    api: 'openai-completions',
+    baseUrl: '',
+  } as unknown as Model<Api>;
+}
+
+describe('WorkerAgentHost — model registry + persistence', () => {
+  test('setModel resolves via the registry and updates the session', async () => {
+    const { host, fake } = makeHost();
+    const oai = fakeModel('openai', 'gpt-4.1-nano');
+    host.setAvailableModels([oai]);
+    await host.newSession();
+
+    const resolved = await host.setModel('openai', 'gpt-4.1-nano');
+    expect(resolved).toBe(oai);
+    expect(fake.getCurrentModel()).toBe(oai);
+  });
+
+  test('setModel throws when the identifier is not in the registry', async () => {
+    const { host } = makeHost();
+    await host.newSession();
+    await expect(host.setModel('openai', 'unknown-model')).rejects.toThrow(/Model not registered/);
+  });
+
+  test('setModel persists a model_change entry; repeated setModel dedupes', async () => {
+    const store = new MemorySessionStore();
+    const { host } = makeHost(store);
+    const oai = fakeModel('openai', 'gpt-4.1-nano');
+    host.setAvailableModels([oai]);
+    const { sessionId } = await host.newSession();
+
+    await host.setModel('openai', 'gpt-4.1-nano');
+    // Let the appendModelChange chain settle.
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    const firstEntries = await store.getEntries(sessionId);
+    expect(firstEntries.filter(e => e.type === 'model_change')).toHaveLength(1);
+
+    await host.setModel('openai', 'gpt-4.1-nano');
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    const secondEntries = await store.getEntries(sessionId);
+    expect(secondEntries.filter(e => e.type === 'model_change')).toHaveLength(1);
+  });
+
+  test('setModel to a different identity appends a second model_change entry', async () => {
+    const store = new MemorySessionStore();
+    const { host } = makeHost(store);
+    const oai = fakeModel('openai', 'gpt-4.1-nano');
+    const gem = fakeModel('google', 'gemini-2.0-flash-lite');
+    host.setAvailableModels([oai, gem]);
+    const { sessionId } = await host.newSession();
+
+    await host.setModel('openai', 'gpt-4.1-nano');
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    await host.setModel('google', 'gemini-2.0-flash-lite');
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const entries = await store.getEntries(sessionId);
+    const modelChanges = entries.filter(
+      (e): e is typeof e & { type: 'model_change'; provider: string; modelId: string } =>
+        e.type === 'model_change'
+    );
+    expect(modelChanges).toHaveLength(2);
+    expect(modelChanges[0].modelId).toBe('gpt-4.1-nano');
+    expect(modelChanges[1].modelId).toBe('gemini-2.0-flash-lite');
+  });
+
+  test('loadSession restores the last model_change into the session', async () => {
+    const store = new MemorySessionStore();
+    const gem = fakeModel('google', 'gemini-2.0-flash-lite');
+
+    // Host 1: record a model_change on a session.
+    const { host: host1 } = makeHost(store);
+    host1.setAvailableModels([gem]);
+    const { sessionId } = await host1.newSession();
+    await host1.setModel('google', 'gemini-2.0-flash-lite');
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    // Host 2: load it fresh, registry seeded — restore should apply.
+    const { host: host2, fake: fake2 } = makeHost(store);
+    host2.setAvailableModels([gem]);
+    await host2.loadSession(sessionId);
+
+    expect(fake2.getCurrentModel()?.id).toBe('gemini-2.0-flash-lite');
+    expect(fake2.getCurrentModel()?.provider).toBe('google');
+  });
+
+  test('loadSession with empty registry leaves model undefined; late setAvailableModels retroactively applies', async () => {
+    const store = new MemorySessionStore();
+    const gem = fakeModel('google', 'gemini-2.0-flash-lite');
+
+    const { host: host1 } = makeHost(store);
+    host1.setAvailableModels([gem]);
+    const { sessionId } = await host1.newSession();
+    await host1.setModel('google', 'gemini-2.0-flash-lite');
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    // Host 2: load WITHOUT seeding the registry first.
+    const { host: host2, fake: fake2 } = makeHost(store);
+    await host2.loadSession(sessionId);
+    expect(fake2.getCurrentModel()).toBeUndefined();
+
+    // Now seed — the boot-race recovery path re-applies.
+    host2.setAvailableModels([gem]);
+    expect(fake2.getCurrentModel()?.id).toBe('gemini-2.0-flash-lite');
+  });
+
+  test('fork inherits the branch model; subsequent setModel on the fork does not affect the parent', async () => {
+    const store = new MemorySessionStore();
+    const oai = fakeModel('openai', 'gpt-4.1-nano');
+    const gem = fakeModel('google', 'gemini-2.0-flash-lite');
+    const { host, fake } = makeHost(store);
+    host.setAvailableModels([oai, gem]);
+
+    const { sessionId: parentId } = await host.newSession();
+    await host.setModel('openai', 'gpt-4.1-nano');
+    fake.emit({ type: 'message_end', message: userMessage('q1') });
+    fake.emit({ type: 'message_end', message: assistantMessage('a1') });
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    const parentEntries = await store.getEntries(parentId);
+    const assistantEntry = parentEntries.find(
+      e => e.type === 'message' && (e as { message: AgentMessage }).message.role === 'assistant'
+    );
+    if (!assistantEntry) throw new Error('no assistant entry to fork from');
+
+    const { sessionId: forkId } = await host.forkSession(assistantEntry.id);
+    // Fork inherits parent's last model_change.
+    expect(fake.getCurrentModel()?.id).toBe('gpt-4.1-nano');
+
+    await host.setModel('google', 'gemini-2.0-flash-lite');
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+
+    // The fork's latest model_change is Gemini.
+    const forkEntries = await store.getEntries(forkId);
+    const forkModelChanges = forkEntries.filter(e => e.type === 'model_change');
+    expect(
+      forkModelChanges[forkModelChanges.length - 1] as unknown as { modelId: string }
+    ).toMatchObject({ modelId: 'gemini-2.0-flash-lite' });
+
+    // Parent is untouched.
+    await host.loadSession(parentId);
+    expect(fake.getCurrentModel()?.id).toBe('gpt-4.1-nano');
   });
 });
 
