@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { readDevSeed } from '@/fs/in-memory-vault';
-import { disposeAgentWorker, getAgentWorker } from '@/web-agent';
+import { disposeAgentWorker, getAgentWorker } from '@/worker-agent';
 import { WebAgentContext } from '@/providers/web-agent-context';
 import type { WebAgentContextValue } from '@/providers/web-agent-context';
 

@@ -18,7 +18,7 @@
  *     root. Shouldn't happen with UUIDv7 + atomic forks but cheap insurance.
  */
 
-import type { SessionSummary } from '@/web-agent';
+import type { SessionSummary } from '@/worker-agent';
 
 export interface ForestNode {
   summary: SessionSummary;

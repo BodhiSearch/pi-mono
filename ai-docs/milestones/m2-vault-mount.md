@@ -6,7 +6,7 @@
 
 **Scope preview (historical).**
 - Add `@zenfs/core`, `@zenfs/dom`, `idb-keyval` as `packages/web-agent` deps.
-- `src/web-agent/fs/zenfs-provider.ts` — pure `mountVault(handle)` / `unmountVault()`, no React.
+- `src/worker-agent/fs/zenfs-provider.ts` — pure `mountVault(handle)` / `unmountVault()`, no React.
 - `src/hooks/useDirectoryHandle.ts` — pick folder, persist handle in IndexedDB, re-grant permission on reload.
 - `src/hooks/useDevSeedBoot.ts` — dev-mode-only seam reading `window.__zenfsSeed`, mounting InMemory ZenFS before React renders. Tree-shakes in production.
 - `e2e/helpers/install-vault.ts` — Node-side helper walking `e2e/data/<name>/` and injecting via `page.addInitScript`.
@@ -21,8 +21,8 @@
 What landed:
 
 - `@zenfs/core ~2.5.6`, `@zenfs/dom ~1.2.9`, `idb-keyval ^6.2.2` added as dependencies; `fake-indexeddb` added dev-side for vitest.
-- `src/web-agent/fs/zenfs-provider.ts` — `mountVault(handle)`, `unmountVault()`, `isVaultMounted()`, `setMountedForSeed()`; pattern copied from `bodhiapps/zenfs-browser`.
-- `src/web-agent/fs/path-utils.ts` — `resolveVaultPath()` + `VaultPathError`, with 12 unit tests covering relative/absolute/escape cases.
+- `src/worker-agent/fs/zenfs-provider.ts` — `mountVault(handle)`, `unmountVault()`, `isVaultMounted()`, `setMountedForSeed()`; pattern copied from `bodhiapps/zenfs-browser`.
+- `src/worker-agent/fs/path-utils.ts` — `resolveVaultPath()` + `VaultPathError`, with 12 unit tests covering relative/absolute/escape cases.
 - `src/hooks/useDirectoryHandle.ts` — three-state (`empty`/`prompt`/`ready`) with idb-keyval persistence and `requestPermission` re-grant.
 - `src/hooks/useDevSeedBoot.ts` — dev-only, reads `window.__zenfsSeed`, lazy-imports InMemory vault adapter. Tree-shakes in production.
 - `src/fs/in-memory-vault.ts` — InMemory ZenFS adapter used exclusively by the dev-seed path. Module-level mount guard makes it idempotent (two React subtrees both call `useVaultMount` and we must not reconfigure the VFS mid-session).

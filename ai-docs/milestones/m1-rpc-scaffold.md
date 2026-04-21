@@ -1,10 +1,10 @@
 # M1 — RPC-shaped scaffold
 
-**Status:** ✅ done (`06d02b81`). Test seam: 4 vitest round-trip tests in `src/web-agent/rpc/rpc.test.ts`.
+**Status:** ✅ done (`06d02b81`). Test seam: 4 vitest round-trip tests in `src/worker-agent/rpc/rpc.test.ts`.
 
 What landed:
 
-- `packages/web-agent/src/web-agent/` tree established.
+- `packages/web-agent/src/worker-agent/` tree established.
 - `core/agent-session.ts` — thin wrapper over `pi-agent-core`'s `Agent` with a plain-data surface.
 - `core/extensions/{types,registry}.ts` — minimal stubs, M8 extends.
 - `core/tools/index.ts` — empty stub, M3 populates.

@@ -6,7 +6,7 @@ Supersedes [D12](m5-session-persistence.md#d12-sessions-on-indexeddb-with-per-se
 
 ## D13. `SessionStore` interface makes session storage swappable
 
-**Decision:** session persistence is defined by a `SessionStore` interface (`packages/web-agent/src/web-agent/core/session/store.ts`). Production wires `DexieSessionStore` (Dexie on IndexedDB); tests and the jsdom in-process fallback wire `MemorySessionStore`. `WorkerAgentHost`, `SessionManager`, and the main-thread hooks take a store via constructor or module singleton; no component imports a concrete backend directly.
+**Decision:** session persistence is defined by a `SessionStore` interface (`packages/web-agent/src/worker-agent/core/session/store.ts`). Production wires `DexieSessionStore` (Dexie on IndexedDB); tests and the jsdom in-process fallback wire `MemorySessionStore`. `WorkerAgentHost`, `SessionManager`, and the main-thread hooks take a store via constructor or module singleton; no component imports a concrete backend directly.
 
 **Why.**
 

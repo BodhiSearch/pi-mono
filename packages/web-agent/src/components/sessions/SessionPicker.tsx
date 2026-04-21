@@ -21,7 +21,7 @@ import { ChevronDown, GitFork, History, MessageSquarePlus, Pencil, Trash2 } from
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import type { SessionSummary } from '@/web-agent';
+import type { SessionSummary } from '@/worker-agent';
 import { buildSessionForest } from './session-forest';
 
 interface ActiveSession {

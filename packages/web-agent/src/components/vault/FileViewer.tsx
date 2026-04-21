@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { fs } from '@/web-agent';
+import { fs } from '@/worker-agent';
 import { MarkdownEditor } from './MarkdownEditor';
 import type { MarkdownSaveState } from './MarkdownEditor';
 

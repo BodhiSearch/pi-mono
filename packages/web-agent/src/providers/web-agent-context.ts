@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { RpcClient } from '@/web-agent';
+import type { RpcClient } from '@/worker-agent';
 
 export interface WebAgentContextValue {
   rpcClient: RpcClient;

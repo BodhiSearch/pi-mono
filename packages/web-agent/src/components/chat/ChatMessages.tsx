@@ -4,7 +4,7 @@ import type { ToolResultMessage } from '@mariozechner/pi-ai';
 import MessageBubble from './MessageBubble';
 import ToolCallMessage from './ToolCallMessage';
 import { extractTextFromAgentMessage, getToolCalls, type AgentMessage } from '@/types/chat';
-import type { UiMessageMeta } from '@/web-agent/core/session/types';
+import type { UiMessageMeta } from '@/worker-agent/core/session/types';
 
 interface ChatMessagesProps {
   messages: AgentMessage[];

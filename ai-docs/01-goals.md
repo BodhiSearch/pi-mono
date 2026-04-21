@@ -87,7 +87,7 @@ Skills are validated *as* extensions — there is no separate skill loader. This
 
 | # | Requirement | Verification |
 |---|---|---|
-| P1 | Entire agent code lives under `packages/web-agent/src/web-agent/` and imports only inward | architectural lint rule (Phase 6) |
+| P1 | Entire agent code lives under `packages/web-agent/src/worker-agent/` and imports only inward | architectural lint rule (Phase 6) |
 | P2 | `peerDependencies` in the extracted package are limited to `react`, `@mariozechner/pi-ai`, `@mariozechner/pi-agent-core` | `package.json` review at Phase 6 |
 | P3 | Consumer can wire up a working chat in ≤ 50 lines | reference implementation in `packages/web-agent/src/App.tsx` |
 | P4 | Playwright e2e runs against the consumer wiring, not against private internals | `e2e/*.spec.ts` — no `page.evaluate` hacks |

@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project focus
 
-Active initiative: **web-agent** at `packages/web-agent/` — a browser-native coding-agent harness, destined for extraction as `@bodhiapp/web-agent`.
+Active initiative: **web-agent** at `packages/web-agent/` — a browser-native coding-agent harness. The worker-side runtime lives at `packages/web-agent/src/worker-agent/` and is the extraction target for the forthcoming `@bodhiapp/bodhi-web-agent` library; the enclosing `packages/web-agent/` folder is the reference app that consumes it.
 
 Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `pods`) are upstream libraries we consume and occasionally patch. Do not extend them unless explicitly asked.
 
 ## Hard constraint
 
-**`packages/web-agent/` must not depend on `packages/coding-agent`.** No imports, no workspace entry, nothing. web-agent is heavily influenced by coding-agent — we study its session shape, RPC schema, extension hooks, and tool "operations" pattern, and we port those patterns for the browser runtime. But coding-agent pulls node-only deps (`fs`, `child_process`, jiti, `pi-tui`) that break browser bundling and would block the Phase 6 extraction into `@bodhiapp/web-agent`. Copy the source, trim the node bits, accept the short-term duplication. `grep -r "pi-coding-agent\|packages/coding-agent" packages/web-agent/src/` must return zero.
+**`packages/web-agent/` must not depend on `packages/coding-agent`.** No imports, no workspace entry, nothing. web-agent is heavily influenced by coding-agent — we study its session shape, RPC schema, extension hooks, and tool "operations" pattern, and we port those patterns for the browser runtime. But coding-agent pulls node-only deps (`fs`, `child_process`, jiti, `pi-tui`) that break browser bundling and would block the Phase 6 extraction into `@bodhiapp/bodhi-web-agent`. Copy the source, trim the node bits, accept the short-term duplication. `grep -r "pi-coding-agent\|packages/coding-agent" packages/web-agent/src/worker-agent/` must return zero.
 
 ## Steering docs (load on demand)
 

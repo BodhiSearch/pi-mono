@@ -32,14 +32,14 @@ Nothing on npm bundles those primitives into a drop-in agent harness with the er
 
 ## What "done" looks like
 
-1. A separately versioned npm package — working name `@bodhiapp/web-agent` — built from `packages/web-agent/src/web-agent/`.
+1. A separately versioned npm package — working name `@bodhiapp/bodhi-web-agent` — built from `packages/web-agent/src/worker-agent/`.
 2. Its public API consists of:
    - `<WebAgentProvider>` React component wiring the transport, session, and vault hooks.
    - `useAgent()` hook returning messages, streaming state, `sendMessage`, `abort`, `fork`, etc.
    - Headless `AgentSession` + `RpcServer` + `RpcClient` classes for non-React consumers.
 3. `peerDependencies` are narrow: `react`, `@mariozechner/pi-ai`, `@mariozechner/pi-agent-core`. Everything else is either an internal implementation detail or a `dependencies` entry.
 4. A consumer can, in under 50 lines of wiring, get a folder picker, a chat UI, streaming replies with tool calls, and a downloadable extension that adds a new capability.
-5. The Phase 6 extraction is mechanical — `src/web-agent/` is already self-contained under our own conventions, so graduating to a separate package is a build-config change, not a rewrite.
+5. The Phase 6 extraction is mechanical — `src/worker-agent/` is already self-contained under our own conventions, so graduating to a separate package is a build-config change, not a rewrite.
 
 ## Explicit non-goals
 

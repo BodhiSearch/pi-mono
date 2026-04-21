@@ -11,7 +11,7 @@
  */
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { DexieSessionStore, type SessionSummary } from '@/web-agent';
+import { DexieSessionStore, type SessionSummary } from '@/worker-agent';
 
 const EMPTY: SessionSummary[] = [];
 

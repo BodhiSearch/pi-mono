@@ -138,15 +138,15 @@ Actually used. `pi-ai` gives us model adapters and the stream abstraction; `pi-a
 
 ## Phase-6 extraction shape
 
-At the end of the roadmap, `packages/web-agent/src/web-agent/` gets lifted to its own package:
+At the end of the roadmap, `packages/web-agent/src/worker-agent/` gets lifted to its own package:
 
 - Its only local dependencies are `@mariozechner/pi-ai` and `@mariozechner/pi-agent-core` (both already separately published).
 - `react` becomes a `peerDependency`.
 - ZenFS, `@zenfs/dom`, `idb-keyval`, `dexie` (if used) move to `dependencies`.
-- The current `packages/web-agent/src/` (non-`web-agent/`) becomes a reference app consuming the extracted package.
+- The current `packages/web-agent/src/` (non-`worker-agent/`) becomes a reference app consuming the extracted package.
 - Tests split: package-local unit tests stay with the package; Playwright e2e stays with the reference app.
 
-This only works if Principle "`src/web-agent/` imports inward only" (see `04-principles.md`) holds through every phase. Every Phase 2–5 review must check this.
+This only works if Principle "`src/worker-agent/` imports inward only" (see `04-principles.md`) holds through every phase. Every Phase 2–5 review must check this.
 
 ### Dependency classification (audit, Post-M5)
 
@@ -154,7 +154,7 @@ The current `packages/web-agent/package.json` mixes library-grade and app-grade
 dependencies; Phase 6 re-classifies. This audit locks in which is which so the
 extraction commit is mechanical.
 
-**Library-grade (will ship with `@bodhiapp/web-agent`):**
+**Library-grade (will ship with `@bodhiapp/bodhi-web-agent`):**
 
 | Dependency | Where it enters | Phase-6 classification |
 | --- | --- | --- |
@@ -173,9 +173,9 @@ extraction commit is mechanical.
 `@bodhiapp/bodhi-js-react`, `@milkdown/*`, `@modelcontextprotocol/sdk`,
 `@radix-ui/*`, `radix-ui`, `class-variance-authority`, `clsx`, `lucide-react`,
 `next-themes`, `sonner`, `tailwind-merge`, `idb-keyval` (used by
-`src/hooks/useDirectoryHandle.ts` on the outer app side, not by `src/web-agent/`),
+`src/hooks/useDirectoryHandle.ts` on the outer app side, not by `src/worker-agent/`),
 `react-dom`. All of these are imported only from `packages/web-agent/src/`
-outside `src/web-agent/**` — grep-verified, Post-M5.
+outside `src/worker-agent/**` — grep-verified, Post-M5.
 
 Phase 6 re-classifies in one `package.json` edit. Until then, the monorepo
 keeps them all in `dependencies` — simpler for local dev, no functional
@@ -186,6 +186,6 @@ impact.
 - **Phase 4:** which thread holds the ZenFS mount? Handle mounted on main thread + proxy over port, or mounted in Worker directly? Needs benchmarking and an FSA-handle-transferability check before committing.
 - **Phase 5:** extension manifest schema — JSON Schema? TypeBox? Zod? Needs to be cloneable and runtime-checkable, should match how `pi-agent-core` tools already declare schemas (TypeBox).
 - **Phase 5:** network allow-list format for extensions — glob-on-origin, or full URL patterns?
-- **Phase 6:** final package name and scope. `@bodhiapp/web-agent` is a working placeholder.
+- **Phase 6:** final package name and scope. `@bodhiapp/bodhi-web-agent` is a working placeholder.
 
 Each of these lands as a decision in `decisions/` when we actually need the answer.

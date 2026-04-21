@@ -3,7 +3,7 @@
 **Status:** planned. Test seam: existing tests stay green under consumer wiring.
 
 **Scope preview.**
-- Move `packages/web-agent/src/web-agent/` into its own npm-publishable package (working name `@bodhiapp/web-agent`).
+- Move `packages/web-agent/src/worker-agent/` into its own npm-publishable package (working name `@bodhiapp/bodhi-web-agent`).
 - Reshape current `packages/web-agent/` into a reference app consuming the extracted package.
 - Add architectural lint rule enforcing the "imports inward only" invariant (principle #3).
 - Peer deps: `react`, `@mariozechner/pi-ai`, `@mariozechner/pi-agent-core`.

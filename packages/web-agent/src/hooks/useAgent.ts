@@ -7,8 +7,8 @@ import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { useWebAgent } from '@/providers/web-agent-context';
 import { useSessionsList } from '@/hooks/useSessionsList';
-import type { McpToolDescriptor, ToolCallHandler } from '@/web-agent';
-import type { UiMessageMeta } from '@/web-agent/core/session/types';
+import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
+import type { UiMessageMeta } from '@/worker-agent/core/session/types';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'web-agent.activeSessionId';
 

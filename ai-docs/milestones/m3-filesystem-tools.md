@@ -16,11 +16,11 @@
 
 What landed:
 
-- `src/web-agent/fs/zenfs-operations.ts` — per-tool operations adapters and a `createZenfsVaultOperations()` factory.
-- `src/web-agent/core/tools/file-mutation-queue.ts` — per-path serialisation (pattern copied from coding-agent; `realpathSync` step dropped because ZenFS backends don't expose symlinks).
-- `src/web-agent/core/tools/truncation.ts` — dual (lines + bytes) truncation helper.
-- `src/web-agent/core/tools/{read,write,edit,ls,glob,grep}.ts` — schemas + `create*Tool({ operations, cwd })` factories. Schemas ported verbatim where possible; `grep` and `glob` re-implemented in pure JS (no ripgrep / fd subprocess available in browser) via minimatch + tree walk.
-- `src/web-agent/core/tools/index.ts` — `createVaultTools(ops)` one-call factory returning `AgentTool[]`.
+- `src/worker-agent/fs/zenfs-operations.ts` — per-tool operations adapters and a `createZenfsVaultOperations()` factory.
+- `src/worker-agent/core/tools/file-mutation-queue.ts` — per-path serialisation (pattern copied from coding-agent; `realpathSync` step dropped because ZenFS backends don't expose symlinks).
+- `src/worker-agent/core/tools/truncation.ts` — dual (lines + bytes) truncation helper.
+- `src/worker-agent/core/tools/{read,write,edit,ls,glob,grep}.ts` — schemas + `create*Tool({ operations, cwd })` factories. Schemas ported verbatim where possible; `grep` and `glob` re-implemented in pure JS (no ripgrep / fd subprocess available in browser) via minimatch + tree walk.
+- `src/worker-agent/core/tools/index.ts` — `createVaultTools(ops)` one-call factory returning `AgentTool[]`.
 - `src/hooks/useVaultTools.ts` — returns the six tools when the vault is mounted, empty array otherwise.
 - `src/components/chat/ChatDemo.tsx` — merges vault tools with MCP tools before passing to `useAgent`.
 - `src/components/chat/ToolCallMessage.tsx` — added `data-testid="tool-call"` + `data-tool` + `data-teststate` for black-box assertions.

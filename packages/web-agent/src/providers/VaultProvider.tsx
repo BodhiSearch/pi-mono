@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useDevSeedBoot } from '@/hooks/useDevSeedBoot';
 import { useDirectoryHandle } from '@/hooks/useDirectoryHandle';
-import { isVaultMounted, mountVaultPort, unmountVault } from '@/web-agent';
+import { isVaultMounted, mountVaultPort, unmountVault } from '@/worker-agent';
 import { VaultContext } from '@/providers/vault-context';
 import type { VaultContextValue, VaultMountStatus } from '@/providers/vault-context';
 import { useWebAgent } from '@/providers/web-agent-context';

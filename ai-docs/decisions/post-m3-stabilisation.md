@@ -6,7 +6,7 @@ Date: 2026-04-20
 
 **Decision:** the mount side-effect (read directory handle / dev seed → call `mountVault` → track `status` and `name`) lives in exactly one place: `src/providers/VaultProvider.tsx`. `useVaultMount` is now a thin context consumer (`return useVaultContext()`). All readers of vault state must go through the provider; the provider must wrap the app once near the root.
 
-In addition, `mountVault` and `unmountVault` (in `src/web-agent/fs/zenfs-provider.ts`) keep an in-flight promise guard so overlapping calls — React StrictMode effect re-runs, fast-refresh remounts, accidental duplicate provider mounts — serialise instead of racing on `configure`/`vfs.mount`.
+In addition, `mountVault` and `unmountVault` (in `src/worker-agent/fs/zenfs-provider.ts`) keep an in-flight promise guard so overlapping calls — React StrictMode effect re-runs, fast-refresh remounts, accidental duplicate provider mounts — serialise instead of racing on `configure`/`vfs.mount`.
 
 **Why:** the original M2 implementation called `useVaultMount` from three components (`Header`, `VaultPanel`, `ChatDemo`). Each subtree ran the mount effect on its own. The last racer "won" the actual VFS mount so the file tree rendered, but an earlier racer threw on a half-configured VFS and pinned the status badge to `"error"` after every reload. The module-level mount guard inside `in-memory-vault.ts` (added in `2c437c0f`) hid the symptom for the dev-seed path but did not protect the real WebAccess mount path. A single owner of the mount effect is the only durable fix; the in-flight guard inside the provider functions is defence-in-depth for StrictMode.
 
@@ -25,7 +25,7 @@ In addition, `mountVault` and `unmountVault` (in `src/web-agent/fs/zenfs-provide
 - The layout shape is what M5 (sessions panel), M6 (branch navigator), and M8 (extensions installer) will hang their UI off. Locking it in now means each downstream milestone slots its panel into an established frame instead of redesigning the shell.
 
 **Out of scope (still):**
-- Markdown editing is a *reference-app* feature, not a `@bodhiapp/web-agent` library feature. Phase 6 extraction does not pull Milkdown into the package — it ships a headless agent harness; consumers wire their own viewer.
+- Markdown editing is a *reference-app* feature, not a `@bodhiapp/bodhi-web-agent` library feature. Phase 6 extraction does not pull Milkdown into the package — it ships a headless agent harness; consumers wire their own viewer.
 - This decision does not promote markdown editing into `01-goals.md`. The goals doc is the library capability checklist; reference-app polish does not belong there.
 
 **Alternatives rejected:**

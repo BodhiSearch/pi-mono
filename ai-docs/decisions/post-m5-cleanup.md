@@ -19,7 +19,7 @@ Date: 2026-04-20
 
 ## D17. Extension scaffolding de-exported; M8 reintroduces
 
-**Decision:** `src/web-agent/core/extensions/registry.ts` is deleted. The M8 event / tool / manifest *types* in `types.ts` stay as forward-compat scaffolding but are no longer re-exported from `index.ts`. M8 lands the real registry and re-exposes whatever shape it finalises at that time.
+**Decision:** `src/worker-agent/core/extensions/registry.ts` is deleted. The M8 event / tool / manifest *types* in `types.ts` stay as forward-compat scaffolding but are no longer re-exported from `index.ts`. M8 lands the real registry and re-exposes whatever shape it finalises at that time.
 
 **Why.**
 

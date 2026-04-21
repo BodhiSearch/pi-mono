@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import type { SessionSummary } from '@/web-agent';
+import type { SessionSummary } from '@/worker-agent';
 import { buildSessionForest } from './session-forest';
 
 function summary(

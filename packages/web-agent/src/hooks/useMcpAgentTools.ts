@@ -9,7 +9,7 @@ import {
   type Mcp,
   type McpTool,
 } from '@/lib/mcp-tools';
-import type { McpToolDescriptor, ToolCallHandler } from '@/web-agent';
+import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 
 interface UseMcpAgentToolsInput {
   enabledMcpTools: Record<string, string[]>;

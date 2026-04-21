@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { fs, VAULT_MOUNT } from '@/web-agent';
+import { fs, VAULT_MOUNT } from '@/worker-agent';
 import type { VaultMountStatus } from '@/hooks/useVaultMount';
 
 const POLL_INTERVAL_MS = 500;

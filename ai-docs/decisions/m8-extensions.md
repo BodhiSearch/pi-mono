@@ -6,7 +6,7 @@ Date: 2026-04-20
 
 ## D20. Extensions load via Dexie bytes + Blob URL + per-extension nested Worker
 
-**Decision:** every installed extension is stored as UTF-8 ESM source in Dexie (`ExtensionBundleRow.bytes` + a separate `ExtensionEnabledRow` flag). At load time the agent Worker spawns a nested dedicated Worker (`web-agent-extension-host`) running `src/web-agent/core/extensions/host/host-worker.ts`, hands it the manifest and the bundle text, and the host Worker rebuilds the ESM into a `Blob URL` and dynamic-`import()`s that URL. The Blob URL is revoked immediately after import resolves. Registered tools, `before_agent_start` system-prompt mutations, and `tool_result` content mutations flow back over a small RPC (`HostCommand` / `HostMessage`) between the supervisor (inside the agent Worker) and the extension host Worker.
+**Decision:** every installed extension is stored as UTF-8 ESM source in Dexie (`ExtensionBundleRow.bytes` + a separate `ExtensionEnabledRow` flag). At load time the agent Worker spawns a nested dedicated Worker (`web-agent-extension-host`) running `src/worker-agent/core/extensions/host/host-worker.ts`, hands it the manifest and the bundle text, and the host Worker rebuilds the ESM into a `Blob URL` and dynamic-`import()`s that URL. The Blob URL is revoked immediately after import resolves. Registered tools, `before_agent_start` system-prompt mutations, and `tool_result` content mutations flow back over a small RPC (`HostCommand` / `HostMessage`) between the supervisor (inside the agent Worker) and the extension host Worker.
 
 **Why.**
 

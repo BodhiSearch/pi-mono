@@ -1,6 +1,6 @@
 import { GitBranch, GitFork, Layers } from 'lucide-react';
 import { extractTextFromAgentMessage, getToolCalls, type AgentMessage } from '@/types/chat';
-import type { UiMessageMeta } from '@/web-agent/core/session/types';
+import type { UiMessageMeta } from '@/worker-agent/core/session/types';
 
 interface MessageBubbleProps {
   message: AgentMessage;

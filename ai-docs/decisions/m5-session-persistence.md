@@ -20,7 +20,7 @@ See also [m5-storage-swap.md](m5-storage-swap.md) for the Dexie swap that supers
 
 ## D11. Port the full `SessionEntry` union + `ReadonlySessionManager` interface in M5, even though only three variants are written
 
-**Decision:** `src/web-agent/core/session/types.ts` defines all nine entry variants from coding-agent (`SessionMessageEntry`, `ThinkingLevelChangeEntry`, `ModelChangeEntry`, `CompactionEntry`, `BranchSummaryEntry`, `CustomEntry`, `CustomMessageEntry`, `LabelEntry`, `SessionInfoEntry`) plus `SessionHeader`, `SessionTreeNode`, `SessionContext`. The exported `ReadonlySessionManager` interface matches the shape of coding-agent's `ExtensionContext.sessionManager` Pick (getCwd / getSessionDir / getSessionId / getSessionFile / getHeader / getEntries / getEntry / getLeafId / getLeafEntry / getLabel / getBranch / getTree / getSessionName).
+**Decision:** `src/worker-agent/core/session/types.ts` defines all nine entry variants from coding-agent (`SessionMessageEntry`, `ThinkingLevelChangeEntry`, `ModelChangeEntry`, `CompactionEntry`, `BranchSummaryEntry`, `CustomEntry`, `CustomMessageEntry`, `LabelEntry`, `SessionInfoEntry`) plus `SessionHeader`, `SessionTreeNode`, `SessionContext`. The exported `ReadonlySessionManager` interface matches the shape of coding-agent's `ExtensionContext.sessionManager` Pick (getCwd / getSessionDir / getSessionId / getSessionFile / getHeader / getEntries / getEntry / getLeafId / getLeafEntry / getLabel / getBranch / getTree / getSessionName).
 
 M5 only writes `SessionMessageEntry` + `ModelChangeEntry` + `SessionInfoEntry` to disk. The remaining variants are scaffolded but not emitted yet.
 

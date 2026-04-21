@@ -23,7 +23,7 @@ Consolidated roadmap for porting `packages/coding-agent`'s feature set into `pac
 | M8  | Extensions: dynamic, toggleable behaviour layer over the agent              | 🧪 spike | latest     | [m8-extensions.md](m8-extensions.md) |
 | M9  | Resources: slash commands, prompt templates, themes through extensions      | planned | —          | [m9-resources.md](m9-resources.md) |
 | M10 | Polish: HTML export, diagnostics, logging, debug traces                     | planned | —          | [m10-polish.md](m10-polish.md) |
-| M11 | Library extraction: `@bodhiapp/web-agent` publishable package               | planned | —          | [m11-library-extraction.md](m11-library-extraction.md) |
+| M11 | Library extraction: `@bodhiapp/bodhi-web-agent` publishable package               | planned | —          | [m11-library-extraction.md](m11-library-extraction.md) |
 
 ## Progressive-disclosure hooks
 
@@ -32,7 +32,7 @@ Load the file only if its hook matches what you're about to do.
 ### Done — outcome summaries (load when debugging regressions or mining lessons)
 
 - **[m0-workspace.md](m0-workspace.md)** — TS/workspace deps aligned, Vite warnings silenced, `tsc -b` gotcha; load if workspace tooling misbehaves.
-- **[m1-rpc-scaffold.md](m1-rpc-scaffold.md)** — `src/web-agent/` tree established; RPC types/server/client + 4 round-trip vitests; `DistributiveOmit` gotcha.
+- **[m1-rpc-scaffold.md](m1-rpc-scaffold.md)** — `src/worker-agent/` tree established; RPC types/server/client + 4 round-trip vitests; `DistributiveOmit` gotcha.
 - **[m2-vault-mount.md](m2-vault-mount.md)** — ZenFS provider, `useDirectoryHandle`, `useDevSeedBoot`, VaultStatus UI, double-mount race.
 - **[m3-filesystem-tools.md](m3-filesystem-tools.md)** — 6 vault tools (read/write/edit/ls/glob/grep) + file-mutation queue + BOM quirk; load if touching tool schemas.
 - **[post-m3-stabilisation.md](post-m3-stabilisation.md)** — VaultProvider hoisted state, 3-column layout, Milkdown editor; load if vault UI state looks off.
@@ -46,7 +46,7 @@ Load the file only if its hook matches what you're about to do.
 ### Planned — previews (load when picking up that milestone)
 - **[m9-resources.md](m9-resources.md)** — slash commands, prompt templates, themes via extension registration.
 - **[m10-polish.md](m10-polish.md)** — HTML export, diagnostics, debug logging.
-- **[m11-library-extraction.md](m11-library-extraction.md)** — lift `src/web-agent/` into `@bodhiapp/web-agent`; reference app consumes it.
+- **[m11-library-extraction.md](m11-library-extraction.md)** — lift `src/worker-agent/` into `@bodhiapp/bodhi-web-agent`; reference app consumes it.
 
 ### Cross-cutting
 

@@ -8,7 +8,7 @@
  */
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { DexieSessionStore, type SessionEntry } from '@/web-agent';
+import { DexieSessionStore, type SessionEntry } from '@/worker-agent';
 
 const EMPTY: SessionEntry[] = [];
 

@@ -8,7 +8,7 @@
  * over a MessageChannel to the Worker's real backend.
  *
  * The Worker side handles the actual handle/seed lifecycle — see
- * `src/web-agent/worker/worker-host.ts`.
+ * `src/worker-agent/worker/worker-host.ts`.
  */
 
 import { configure, fs, Port, vfs } from '@zenfs/core';

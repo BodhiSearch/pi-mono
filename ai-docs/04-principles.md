@@ -10,9 +10,9 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 
 ## 1. Web-agent does not depend on `packages/coding-agent`
 
-**Why.** The Phase 6 extraction to `@bodhiapp/web-agent` requires a self-contained tree. `coding-agent` pulls node `fs`, `child_process`, jiti, `pi-tui` — all bundle-breaking in a browser target. Once an `import … from "@mariozechner/pi-coding-agent"` lands anywhere in `src/web-agent/`, extraction becomes a rewrite.
+**Why.** The Phase 6 extraction to `@bodhiapp/bodhi-web-agent` requires a self-contained tree. `coding-agent` pulls node `fs`, `child_process`, jiti, `pi-tui` — all bundle-breaking in a browser target. Once an `import … from "@mariozechner/pi-coding-agent"` lands anywhere in `src/worker-agent/`, extraction becomes a rewrite.
 
-**How to apply.** Copy the pattern. Types, schemas, hook shapes, RPC dialects — copy the source, trim node-only bits, live with the short-term duplication. `grep -r "pi-coding-agent" packages/web-agent/src/web-agent/` must always return zero. An architectural lint rule in Phase 6 will enforce this; until then, reviewers enforce it by eye.
+**How to apply.** Copy the pattern. Types, schemas, hook shapes, RPC dialects — copy the source, trim node-only bits, live with the short-term duplication. `grep -r "pi-coding-agent" packages/web-agent/src/worker-agent/` must always return zero. An architectural lint rule in Phase 6 will enforce this; until then, reviewers enforce it by eye.
 
 ## 2. Storage is IndexedDB — not OPFS
 
@@ -20,13 +20,13 @@ Each principle has a **why** (so edge cases can be judged) and a **how** (so you
 
 **How to apply.** All app-owned storage (`/extensions`, `/sessions`, any future app-owned mount) uses the `@zenfs/core` IndexedDB backend. `/vault` is the exception — it's the user's real disk via Chrome File System Access API, and concurrent-tab writes there are the user's problem, not ours. If a proposal reaches for OPFS, the answer is no unless a new entry in `decisions/` explains what changed about the concurrency story.
 
-## 3. `src/web-agent/` imports inward only
+## 3. `src/worker-agent/` imports inward only
 
-**Why.** Same reason as principle 1 — extraction. If `src/web-agent/…` imports from `@/lib/bodhi-models` (app code), the agent package can't ship without dragging the app along. The agent must take its dependencies as constructor arguments, not as side-imports.
+**Why.** Same reason as principle 1 — extraction. If `src/worker-agent/…` imports from `@/lib/bodhi-models` (app code), the agent package can't ship without dragging the app along. The agent must take its dependencies as constructor arguments, not as side-imports.
 
 **How to apply.**
 
-- Inside `src/web-agent/**`, no import may start with `@/` or cross into `packages/web-agent/src/` (app code), `packages/coding-agent`, or `packages/tui`.
+- Inside `src/worker-agent/**`, no import may start with `@/` or cross into `packages/web-agent/src/` (app code), `packages/coding-agent`, or `packages/tui`.
 - Allowed imports: `react`, `@mariozechner/pi-ai`, `@mariozechner/pi-agent-core`, `@zenfs/*`, `@sinclair/typebox`, `idb-keyval`, standard DOM.
 - Anything else the agent needs: expose as a constructor argument on `AgentSession` / `RpcServer` / factory function, let the app inject it.
 
