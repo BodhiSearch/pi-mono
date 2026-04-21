@@ -62,6 +62,7 @@ async function boot(
   );
   const host = new WorkerAgentHost(session, vfsPort, store, provider, {
     vaultMount: options?.vaultMount,
+    initialExtensionEnabledState: options?.initialExtensionEnabledState,
   });
 
   agentPort.start();

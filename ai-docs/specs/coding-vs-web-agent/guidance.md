@@ -15,12 +15,12 @@ For readers who know one side and are porting to the other, these are the name-l
 | Switch active session | `switch_session { sessionPath }` | `load_session { sessionId }` |
 | Compaction trigger | `compact { customInstructions? }` | `compact_now` |
 | Context replay on load | `buildSessionContext` | `buildSessionContext` (ported) |
-| Extension types | `core/extensions/types.ts` (wired via `ExtensionRunner`) | `core/extensions/types.ts` (scaffolding only) |
+| Extension runtime | `core/extensions/types.ts` (wired via `ExtensionRunner` + TUI) | `core/extensions/{types,loader,runner,wrapper}.ts` + `ExtensionsPanel` + `ExtensionStore` (Phase 1: `before_agent_start` / `tool_result` hooks, `registerTool`, `registerCommand`; no UI API yet) |
 | Tool operations | `ReadOperations` etc. (Node `fs`) | same interfaces (ZenFS) |
 | Slash-command registry | in-process property on `AgentSession` | `CommandRegistry` (`core/commands/registry.ts`) exposed via `list_commands` RPC |
 | Prompt template loader | `prompt-templates.ts` (user + project + CLI) | `prompt-templates.ts` (vault-only: `<vaultMount>/.pi/prompts/`) |
 | Skill loader | `skills.ts` + `skill.ts` (user + project + CLI) | `skills.ts` (vault-only: `<vaultMount>/.pi/skills/`) |
-| System prompt assembly | `system-prompt.ts` (cwd + skills + tool snippets + extensions) | `core/system-prompt.ts` (cwd + skills only; built by `WorkerAgentHost`, not the main thread) |
+| System prompt assembly | `system-prompt.ts` (cwd + skills + tool snippets + extensions) | `core/system-prompt.ts` (cwd + skills only; built by `WorkerAgentHost`; Phase 1 extensions additionally override `systemPrompt` per turn via `before_agent_start`) |
 | Skill script execution | `bash` tool → Node `child_process` | restricted `bash` shim → `SandboxHost` → sandbox iframe + Worker (`packages/web-agent/src/sandbox/`) |
 
 ## Practical guidance
@@ -48,7 +48,7 @@ Treat it as an independent upstream. The "hard rule" is one-directional (web-age
 
 ## Open questions / known gaps
 
-- **Extension runtime in web-agent.** Types are ported; the browser-side runtime, sandboxing, and UI surface are a separate future milestone. Vault-sourced slash commands (`/`), prompt templates (`.pi/prompts/`) and skills (`.pi/skills/`) **are** ported and wired through `CommandRegistry` — but *extension-registered* commands / widgets and the `extension_ui_request` / `extension_ui_response` channel still wait on the runtime milestone.
+- **Extension runtime in web-agent.** Phase 1 landed — `.pi/extensions/<name>/index.js` is discovered, Blob-URL imported inside the Worker, and the `before_agent_start` / `tool_result` hooks plus `registerTool` / `registerCommand` surface is live. Slash commands registered by extensions show up with `source: 'extension'`. **Deferred:** the `extension_ui_request` / `extension_ui_response` channel (widgets, notifications, editors), TypeScript sources, iframe-isolated execution, and the marketplace story. See [`../worker-agent/extensions.md`](../worker-agent/extensions.md).
 - **Branch-summary generation on navigate** is present in coding-agent but deferred in web-agent — the entry type is already on the wire so the upgrade won't break replay.
 - **Session stats**. Web-agent has no `get_session_stats` equivalent yet; the main-thread React app computes stats locally from messages + usage.
 - **Thinking level** is persisted through `ThinkingLevelChangeEntry` in the ported types but there is no RPC to set / cycle it. When adding, keep `cycle_thinking_level` naming.

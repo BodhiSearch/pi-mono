@@ -21,6 +21,7 @@ import {
   shouldCompact,
   type CompactionSettings,
 } from '../core/compaction';
+import type { ExtensionDescriptor } from '../core/extensions';
 import type { LlmAuthCredential, LlmProvider } from '../llm/types';
 import { SessionManager } from '../core/session/session-manager';
 import type { SessionStore } from '../core/session/store';
@@ -30,7 +31,8 @@ import { createVaultTools } from '../core/tools';
 import { createZenfsVaultOperations, type VaultOperations } from '../fs/zenfs-operations';
 import { VAULT_MOUNT } from '../fs/zenfs-provider';
 import type { AgentSessionHost, HostEventSink, ToolUpcallInvoker } from '../rpc/rpc-server';
-import type { McpToolDescriptor, RpcSessionState } from '../rpc/rpc-types';
+import type { McpToolDescriptor, RpcEventEnvelope, RpcSessionState } from '../rpc/rpc-types';
+import { ExtensionHostController } from './extension-host';
 import type { InMemoryVaultSeed } from './init-protocol';
 
 export interface WorkerAgentHostOptions {
@@ -42,6 +44,12 @@ export interface WorkerAgentHostOptions {
    * short transcripts; production takes the defaults.
    */
   compactionSettings?: Partial<CompactionSettings>;
+  /**
+   * Persisted extension enabled map, forwarded from the main thread's
+   * init message so the very first vault load honours the user's
+   * previous choices (no load-then-unload churn at boot).
+   */
+  initialExtensionEnabledState?: Record<string, boolean>;
 }
 
 // ZenFS's `Channel` type union includes WebSocket which makes structural
@@ -104,6 +112,11 @@ export class WorkerAgentHost implements AgentSessionHost {
    * second `createZenfsVaultOperations` call.
    */
   private vaultOps: VaultOperations | null = null;
+  /**
+   * All extension lifecycle lives here: discovery, hook dispatch,
+   * tool wrapping, enable-state reconciliation, error surfacing.
+   */
+  private readonly extensions: ExtensionHostController;
 
   constructor(
     session: AgentSession,
@@ -118,11 +131,32 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.provider = provider;
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
     this.compactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, ...options.compactionSettings };
+    this.extensions = new ExtensionHostController(
+      {
+        session: this.session,
+        commands: this.commands,
+        getVaultOps: () => this.vaultOps,
+        getVaultMount: () => this.vaultMount,
+        isVaultAttached: () => this.attachedFs !== null,
+        refreshTools: () => this.refreshTools(),
+        emitEvent: (event: RpcEventEnvelope) => this.hostEventSink?.(event),
+      },
+      options.initialExtensionEnabledState
+    );
     // Persist user/assistant/toolResult messages on turn boundaries. After
     // each successful append, re-emit `session_loaded` so the main thread's
     // message↔entryId mapping stays aligned (used by per-message Fork /
     // Branch actions).
     this.session.subscribe(event => {
+      if (event.type === 'agent_end') {
+        // Flush any enable-state changes the main thread pushed mid-run
+        // now that the agent is idle. Matches coding-agent's
+        // `pendingExtensionChanges` discipline.
+        void this.extensions.flushIfPending().catch(err => {
+          console.error('[WorkerAgentHost] extensions.flushIfPending failed:', err);
+        });
+        return;
+      }
       if (event.type !== 'message_end') return;
       const sm = this.sessionManager;
       if (!sm) return;
@@ -149,18 +183,33 @@ export class WorkerAgentHost implements AgentSessionHost {
   // ==========================================================================
 
   async prompt(message: string): Promise<void> {
-    // Expand `/skill:<name>` (async, re-reads SKILL.md via the mounted
-    // vault) and then prompt templates (sync string substitution)
-    // ahead of the agent call so the LLM sees the fully substituted
-    // user message. Mirrors coding-agent's `AgentSession.prompt`
-    // ordering where skill expansion precedes template expansion.
-    // Unknown `/foo` invocations fall through unchanged — they become
-    // literal user text, same as coding-agent's behaviour when no
-    // extension/template/skill matches.
+    // 1. Extension slash command? Dispatch directly — the LLM never
+    // sees the invocation. Mirrors coding-agent's extension-command
+    // interception in `AgentSession.prompt`.
+    if (await this.extensions.tryRunCommand(message)) return;
+
+    // 2. Expand `/skill:<name>` (async) then prompt templates (sync)
+    // so the LLM sees fully substituted user text. Unknown `/foo`
+    // invocations fall through unchanged, matching coding-agent.
     const expanded = this.vaultOps
       ? await this.commands.expandAsync(message, this.vaultOps.read)
       : this.commands.expand(message);
-    return this.session.prompt(expanded);
+
+    // 3. Let extensions shape the system prompt for this turn. Swap
+    // any override in before the call and restore the base prompt in
+    // a `finally` so the next turn starts clean.
+    const previousSystemPrompt = this.session.getSystemPrompt();
+    const override = await this.extensions.emitBeforeAgentStart(expanded, previousSystemPrompt);
+    if (typeof override === 'string') {
+      this.session.setSystemPrompt(override);
+    }
+    try {
+      await this.session.prompt(expanded);
+    } finally {
+      if (typeof override === 'string') {
+        this.session.setSystemPrompt(previousSystemPrompt);
+      }
+    }
   }
   abort(): void {
     this.session.abort();
@@ -306,10 +355,12 @@ export class WorkerAgentHost implements AgentSessionHost {
     const vaultOps = createZenfsVaultOperations();
     this.vaultOps = vaultOps;
     this.vaultTools = createVaultTools(vaultOps, { cwd: this.vaultMount });
-    this.refreshTools();
     await this.commands.loadPromptsFromVault(vaultOps, this.vaultMount);
     await this.commands.loadSkillsFromVault(vaultOps, this.vaultMount);
+    await this.extensions.loadFromVault();
+    this.refreshTools();
     this.rebuildSystemPrompt();
+    this.extensions.emitStates();
   }
 
   /**
@@ -355,19 +406,23 @@ export class WorkerAgentHost implements AgentSessionHost {
     const vaultOps = createZenfsVaultOperations();
     this.vaultOps = vaultOps;
     this.vaultTools = createVaultTools(vaultOps, { cwd: this.vaultMount });
-    this.refreshTools();
     await this.commands.loadPromptsFromVault(vaultOps, this.vaultMount);
     await this.commands.loadSkillsFromVault(vaultOps, this.vaultMount);
+    await this.extensions.loadFromVault();
+    this.refreshTools();
     this.rebuildSystemPrompt();
+    this.extensions.emitStates();
   }
 
   async unmountVault(): Promise<void> {
     this.detachVault();
     this.vaultTools = [];
     this.vaultOps = null;
-    this.refreshTools();
+    this.extensions.clear();
     this.commands.clearAll();
+    this.refreshTools();
     this.rebuildSystemPrompt();
+    this.extensions.emitStates();
   }
 
   /**
@@ -392,9 +447,24 @@ export class WorkerAgentHost implements AgentSessionHost {
       this.vaultOps = ops;
       await this.commands.loadPromptsFromVault(ops, this.vaultMount);
       await this.commands.loadSkillsFromVault(ops, this.vaultMount);
+      await this.extensions.loadFromVault();
+      this.refreshTools();
       this.rebuildSystemPrompt();
+      this.extensions.emitStates();
     }
     return this.commands.list();
+  }
+
+  // ==========================================================================
+  // M8 — extensions (delegated to ExtensionHostController)
+  // ==========================================================================
+
+  listExtensions(): ExtensionDescriptor[] {
+    return this.extensions.list();
+  }
+
+  setExtensionStates(states: Record<string, boolean>): Promise<ExtensionDescriptor[]> {
+    return this.extensions.setStates(states);
   }
 
   setMcpTools(descriptors: McpToolDescriptor[], invoker: ToolUpcallInvoker): void {
@@ -627,7 +697,8 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   private refreshTools(): void {
-    this.session.setTools([...this.vaultTools, ...this.mcpTools]);
+    const extTools = this.extensions.getWrappedTools();
+    this.session.setTools([...this.vaultTools, ...this.mcpTools, ...extTools]);
   }
 
   /**

@@ -28,11 +28,15 @@ export type {
 } from './rpc/transports/worker';
 export type { Transport } from './rpc/transport';
 export type {
+  ExtensionDescriptor,
+  ExtensionError,
   McpToolDescriptor,
   RpcAgentEventEnvelope,
   RpcCommand,
   RpcCommandType,
   RpcEventEnvelope,
+  RpcExtensionErrorEvent,
+  RpcExtensionStatesEvent,
   RpcMessage,
   RpcResponse,
   RpcSessionState,
@@ -103,6 +107,3 @@ export type {
 } from './fs/zenfs-operations';
 export { fs, isVaultMounted, mountVaultPort, unmountVault, VAULT_MOUNT } from './fs/zenfs-provider';
 export { resolveVaultPath, VaultPathError } from './fs/path-utils';
-
-// Extension types (M8 scaffolding) live internally at ./core/extensions/types
-// and will be re-exported from this barrel when the extension host ships.

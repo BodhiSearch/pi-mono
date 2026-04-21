@@ -208,3 +208,63 @@ Run the script.`;
     expect(registry.list().length).toBe(BUILTIN_SLASH_COMMANDS.length);
   });
 });
+
+// ============================================================================
+// Extension-contributed commands
+// ============================================================================
+
+describe('CommandRegistry extensions', () => {
+  const extensionCommand = (name: string) => ({
+    name,
+    description: `desc-${name}`,
+    argumentHint: '[hint]',
+    handler: async () => {},
+    extensionPath: `/vault/.pi/extensions/${name}`,
+  });
+
+  test('setExtensionCommands surfaces entries with source=extension', () => {
+    const registry = new CommandRegistry();
+    registry.setExtensionCommands([extensionCommand('foo')]);
+    const listed = registry.list();
+    const foo = listed.find(c => c.name === 'foo');
+    expect(foo).toMatchObject({
+      name: 'foo',
+      description: 'desc-foo',
+      argumentHint: '[hint]',
+      source: 'extension',
+    });
+  });
+
+  test('extension commands are listed after builtins, prompts, skills', () => {
+    const registry = new CommandRegistry();
+    registry.setExtensionCommands([extensionCommand('zzz-ext')]);
+    const listed = registry.list();
+    const builtinCount = BUILTIN_SLASH_COMMANDS.length;
+    expect(listed[builtinCount]).toMatchObject({ source: 'extension' });
+  });
+
+  test('findExtensionCommand locates by name', () => {
+    const registry = new CommandRegistry();
+    registry.setExtensionCommands([extensionCommand('alpha'), extensionCommand('beta')]);
+    expect(registry.findExtensionCommand('alpha')?.name).toBe('alpha');
+    expect(registry.findExtensionCommand('missing')).toBeNull();
+  });
+
+  test('clearExtensionCommands drops only extensions', async () => {
+    const registry = new CommandRegistry();
+    await registry.loadPromptsFromVault(opsWithTemplate('body'), '/vault');
+    registry.setExtensionCommands([extensionCommand('foo')]);
+    expect(registry.getExtensionCommands()).toHaveLength(1);
+    registry.clearExtensionCommands();
+    expect(registry.getExtensionCommands()).toHaveLength(0);
+    expect(registry.getPromptTemplates()).toHaveLength(1);
+  });
+
+  test('clearAll also clears extensions', () => {
+    const registry = new CommandRegistry();
+    registry.setExtensionCommands([extensionCommand('foo'), extensionCommand('bar')]);
+    registry.clearAll();
+    expect(registry.getExtensionCommands()).toHaveLength(0);
+    expect(registry.list().length).toBe(BUILTIN_SLASH_COMMANDS.length);
+  });
+});

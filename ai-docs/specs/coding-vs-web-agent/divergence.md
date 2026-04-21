@@ -48,6 +48,13 @@ These axes are intentional: each reflects a constraint one runtime imposes that 
 
 **Why:** the browser has no process model, so anything shell-shaped has to be synthesised. The iframe + Worker pattern gives us two isolation boundaries (null origin + separate thread) while keeping the skill author's mental model (`node script.js args`) intact. Capability requests round-trip Worker → iframe → host over structured-clone `postMessage`, and the host enforces path-traversal rejection + credential-header stripping (`authorization`, `cookie`) before any real fetch fires. See [`worker-agent/skills.md`](../worker-agent/skills.md) for the full capability table.
 
+## Extension hosting: `jiti` + TUI vs inline-worker Blob-URL imports
+
+- **coding-agent** loads extensions via `jiti` (runtime TS/JS transpiler), with the full `pi-tui` vocabulary available (widgets, editors, notifications, status bars). Extensions can import arbitrary modules from the extension's `node_modules`, talk to the user via `ctx.ui.*`, and run in the same Node process as the agent.
+- **web-agent** (M8 — Phase 1) runs extensions **inside the same Worker as the agent**. The loader reads `<vaultMount>/.pi/extensions/<name>/index.js` from ZenFS, wraps the string in a `Blob`, and dynamic-`import()`s the resulting URL. Only ESM `export default` entries are supported, bare-specifier imports are unavailable (there is no bundler in the Worker), and the surface is narrowed to `on('before_agent_start', …)`, `on('tool_result', …)`, `registerTool`, and `registerCommand`. There is no `ctx.ui.*` yet — UI primitives arrive in Phase 2 once the extension ↔ main-thread RPC channel lands; iframe-level isolation lands in Phase 3.
+
+**Why:** the Worker has no filesystem resolver for bare specifiers and no child-process story. The Blob-URL trick is the narrowest browser-native equivalent of "load this file as an ES module", and keeping extensions in-Worker (rather than in a dedicated iframe) means hook dispatch stays synchronous with the agent loop. See [`../worker-agent/extensions.md`](../worker-agent/extensions.md) for the full runtime model, the per-extension error-isolation rules, and the `list_extensions` / `set_extension_states` / `extension_states` / `extension_error` RPC surface.
+
 ## Interactive UX: pi-tui TUI vs React host
 
 - **coding-agent** ships three run modes — `InteractiveMode` (pi-tui TUI with model selector, theme picker, slash commands, extension widgets), `runPrintMode` (one-shot stdout), `runRpcMode` (embed-in-another-app). The TUI is the primary UX.

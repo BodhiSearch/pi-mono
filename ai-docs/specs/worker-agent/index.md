@@ -29,6 +29,7 @@ Start with **[overview](#overview)** below. Then drill into the module-level spe
 | [`vault-tools.md`](./vault-tools.md) | Filesystem tools, ZenFS operations, vault mounting (FSA + dev seed). |
 | [`mcp-proxy.md`](./mcp-proxy.md) | MCP tool descriptors + main-thread upcall protocol. |
 | [`skills.md`](./skills.md) | `.pi/skills/` loader, `/skill:<name>` expansion, sandboxed `bash` shim, worker-owned system prompt. |
+| [`extensions.md`](./extensions.md) | `.pi/extensions/` loader, `before_agent_start` / `tool_result` hooks, in-worker extension tools & slash commands, main-thread ExtensionsPanel. |
 
 ## Overview
 
@@ -47,7 +48,7 @@ Start with **[overview](#overview)** below. Then drill into the module-level spe
 11. RPC wire protocol — typed commands, responses, events (agent, session-loaded, compaction, tool upcall).
 12. Transport pairs — in-process (`MessageChannel`) and Worker (`MessagePort`).
 13. Worker boot protocol — tagged init message transferring `agentPort` and `vfsPort`.
-14. Extension type scaffolding — placeholder types for a future extension host.
+14. Extensions — `.pi/extensions/` discovery, Blob-URL dynamic `import()` inside the Worker, `before_agent_start` and `tool_result` hooks, LLM-callable tool registration, `source: 'extension'` slash commands, per-extension error isolation, and the `list_extensions` / `set_extension_states` RPC surface that drives the main-thread `ExtensionsPanel` (see [`extensions.md`](./extensions.md)).
 
 ### Scope out
 
@@ -75,7 +76,7 @@ packages/web-agent/src/worker-agent/
 │   ├── agent-session.ts
 │   ├── commands/             # frontmatter, prompt-templates, skills, registry, slash-commands
 │   ├── compaction/           # token-estimate, prepare, summarize, prompts, serialize, file-ops
-│   ├── extensions/           # type scaffolding (not wired yet)
+│   ├── extensions/           # Phase 1 runtime: types, loader, runner, wrapper
 │   ├── session/              # store, memory-store, dexie-store, session-manager, types, ids, tree
 │   ├── system-prompt.ts      # worker-owned prompt builder (skills + cwd + date)
 │   └── tools/                # read/write/edit/ls/glob/grep + truncation + file-mutation-queue
@@ -88,8 +89,14 @@ packages/web-agent/src/worker-agent/
 Two directories sit **outside** `worker-agent/` because they need
 DOM or React access: `src/sandbox/` (iframe-based skill sandbox,
 driven through the `bash` tool shim) and `src/hooks/` (React
-integration, including `useSkillSandbox`). They are documented in
-[`skills.md`](./skills.md) alongside the in-worker skill loader.
+integration, including `useSkillSandbox` and `useExtensionState`).
+They are documented in [`skills.md`](./skills.md) and
+[`extensions.md`](./extensions.md) alongside the in-worker loaders.
+The main-thread extension persistence / UI
+(`src/extension-store/ExtensionStore.ts`,
+`src/components/extensions/ExtensionsPanel.tsx`) live outside
+`worker-agent/` for the same reason and are documented in
+[`extensions.md`](./extensions.md).
 
 ### Public surface
 
@@ -117,7 +124,7 @@ Changes to the barrel are part of the extraction contract — a plan that adds o
 
 - Streaming protocol translation (handled by `pi-ai`).
 - Token refresh or revocation (concrete auth provider's responsibility).
-- Extension sandboxing — will arrive as a separate milestone with its own spec.
+- Per-extension isolation beyond try/catch — iframe / separate-Worker sandboxing of extension code is deferred to Phase 3 of M8. See [`extensions.md`](./extensions.md) for the current in-worker trust model.
 
 ## Change procedure
 

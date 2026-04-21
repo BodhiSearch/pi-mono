@@ -15,15 +15,24 @@ import type { RpcClient, SlashCommandInfo } from '@/worker-agent';
 import { useSlashCommands } from './useSlashCommands';
 
 function makeFakeClient(initial: SlashCommandInfo[]) {
-  const listeners = new Set<() => void>();
+  const sessionListeners = new Set<() => void>();
+  const extensionListeners = new Set<() => void>();
   let current = initial;
 
   const client = {
     listCommands: vi.fn(async () => current),
     reloadCommands: vi.fn(async () => current),
     onSessionLoaded: vi.fn((listener: () => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
+      sessionListeners.add(listener);
+      return () => sessionListeners.delete(listener);
+    }),
+    // M8 — `useSlashCommands` also listens for extension_states pushes so
+    // the palette refreshes whenever an extension registers or drops a
+    // command. The fake just records subscribers; tests that need to drive
+    // the channel call `emitExtensionStates`.
+    onExtensionStates: vi.fn((listener: () => void) => {
+      extensionListeners.add(listener);
+      return () => extensionListeners.delete(listener);
     }),
   } as unknown as RpcClient;
 
@@ -33,7 +42,10 @@ function makeFakeClient(initial: SlashCommandInfo[]) {
       current = next;
     },
     emitSessionLoaded() {
-      for (const l of listeners) l();
+      for (const l of sessionListeners) l();
+    },
+    emitExtensionStates() {
+      for (const l of extensionListeners) l();
     },
   };
 }
@@ -107,6 +119,26 @@ describe('useSlashCommands', () => {
     fake.setCommands([BUILTIN, TEMPLATE]);
     act(() => {
       fake.emitSessionLoaded();
+    });
+    await waitFor(() => expect(result.current.commands).toEqual([BUILTIN, TEMPLATE]));
+    expect(fake.client.listCommands).toHaveBeenCalledTimes(2);
+  });
+
+  test('re-fetches after extension_states events', async () => {
+    const fake = makeFakeClient([BUILTIN]);
+    const { result } = renderHook(() => useSlashCommands(), {
+      wrapper: wrapperFor(fake.client),
+    });
+    await waitFor(() => expect(result.current.commands).toEqual([BUILTIN]));
+    expect(fake.client.listCommands).toHaveBeenCalledTimes(1);
+
+    // Simulate the worker pushing a new extension_states snapshot — e.g.
+    // right after an initial scan that landed after session_loaded. The
+    // palette must pick up the newly registered extension command without
+    // waiting for another session transition.
+    fake.setCommands([BUILTIN, TEMPLATE]);
+    act(() => {
+      fake.emitExtensionStates();
     });
     await waitFor(() => expect(result.current.commands).toEqual([BUILTIN, TEMPLATE]));
     expect(fake.client.listCommands).toHaveBeenCalledTimes(2);

@@ -7,7 +7,7 @@
  * later phases.
  */
 
-export type SlashCommandSource = 'builtin' | 'prompt' | 'skill';
+export type SlashCommandSource = 'builtin' | 'prompt' | 'skill' | 'extension';
 
 /**
  * Plain-data descriptor emitted over RPC for the main-thread autocomplete.

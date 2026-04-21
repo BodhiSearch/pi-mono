@@ -5,11 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ModelCombobox from './ModelCombobox';
 import McpPopover from './McpPopover';
+import ExtensionsPanel from '@/components/extensions/ExtensionsPanel';
 import CommandPalette, { type CommandPaletteHandle } from './CommandPalette';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
 import type { Mcp, McpTool } from '@/lib/mcp-tools';
 import type { Api, Model } from '@mariozechner/pi-ai';
-import type { SlashCommandInfo } from '@/worker-agent';
+import type { ExtensionDescriptor, ExtensionError, SlashCommandInfo } from '@/worker-agent';
+import type { ExtensionEnabledMap } from '@/extension-store/ExtensionStore';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => Promise<void>;
@@ -30,6 +32,12 @@ interface ChatInputProps {
   isCompacting?: boolean;
   isStreaming?: boolean;
   onCompactNow?: () => void;
+  extensions: ExtensionDescriptor[];
+  extensionEnabledMap: ExtensionEnabledMap;
+  extensionErrors: ExtensionError[];
+  onToggleExtension: (name: string, enabled: boolean) => void | Promise<void>;
+  onDisableAllExtensions: () => void | Promise<void>;
+  onClearExtensionErrors: () => void;
 }
 
 /**
@@ -64,6 +72,12 @@ export default function ChatInput({
   isCompacting = false,
   isStreaming = false,
   onCompactNow,
+  extensions,
+  extensionEnabledMap,
+  extensionErrors,
+  onToggleExtension,
+  onDisableAllExtensions,
+  onClearExtensionErrors,
 }: ChatInputProps) {
   const { isReady, isAuthenticated } = useBodhi();
   const [message, setMessage] = useState('');
@@ -184,6 +198,19 @@ export default function ChatInput({
               getCheckboxState={getCheckboxState}
               enabledToolCount={enabledToolCount}
               isLoading={isMcpsLoading}
+            />
+
+            <ExtensionsPanel
+              extensions={extensions}
+              enabledMap={extensionEnabledMap}
+              errors={extensionErrors}
+              onToggle={(name, enabled) => {
+                void onToggleExtension(name, enabled);
+              }}
+              onDisableAll={() => {
+                void onDisableAllExtensions();
+              }}
+              onClearErrors={onClearExtensionErrors}
             />
 
             <ModelCombobox

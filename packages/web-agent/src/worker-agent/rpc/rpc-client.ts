@@ -4,11 +4,14 @@ import type { LlmAuthCredential } from '../llm/types';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { deserializeError, serializeError } from './error';
 import type {
+  ExtensionDescriptor,
   McpToolDescriptor,
   RpcAgentEventEnvelope,
   RpcCommand,
   RpcCompactionEvent,
   RpcEventEnvelope,
+  RpcExtensionErrorEvent,
+  RpcExtensionStatesEvent,
   RpcResponse,
   RpcSessionLoadedEvent,
   RpcSessionState,
@@ -47,6 +50,8 @@ export class RpcClient {
   private readonly listeners = new Set<(envelope: RpcAgentEventEnvelope) => void>();
   private readonly sessionLoadedListeners = new Set<(event: RpcSessionLoadedEvent) => void>();
   private readonly compactionListeners = new Set<(event: RpcCompactionEvent) => void>();
+  private readonly extensionStatesListeners = new Set<(event: RpcExtensionStatesEvent) => void>();
+  private readonly extensionErrorListeners = new Set<(event: RpcExtensionErrorEvent) => void>();
   private readonly transport: Transport;
   private readonly unsubscribe: () => void;
   private idCounter = 0;
@@ -222,6 +227,41 @@ export class RpcClient {
     return this.send({ type: 'reload_commands' }) as Promise<SlashCommandInfo[]>;
   }
 
+  // --------------------------------------------------------------------------
+  // Extensions (M8)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Return the current extension descriptor list (name, enabled,
+   * loaded, error). Feeds the main-thread ExtensionsPanel.
+   */
+  listExtensions(): Promise<ExtensionDescriptor[]> {
+    return this.send({ type: 'list_extensions' }) as Promise<ExtensionDescriptor[]>;
+  }
+
+  /**
+   * Push a new enabled-state map to the worker. The worker applies the
+   * change at the next `agent_end` boundary and emits a follow-up
+   * `extension_states` event when reconciliation completes. Returns
+   * the descriptor list that was current at dispatch time so the caller
+   * can render immediately; the subsequent event supersedes it.
+   */
+  setExtensionStates(states: Record<string, boolean>): Promise<ExtensionDescriptor[]> {
+    return this.send({ type: 'set_extension_states', states }) as Promise<ExtensionDescriptor[]>;
+  }
+
+  /** Extension-state change events are a separate stream from agent envelopes. */
+  onExtensionStates(listener: (event: RpcExtensionStatesEvent) => void): () => void {
+    this.extensionStatesListeners.add(listener);
+    return () => this.extensionStatesListeners.delete(listener);
+  }
+
+  /** Extension-error events carry hook/factory throw diagnostics. */
+  onExtensionError(listener: (event: RpcExtensionErrorEvent) => void): () => void {
+    this.extensionErrorListeners.add(listener);
+    return () => this.extensionErrorListeners.delete(listener);
+  }
+
   dispose(): void {
     this.unsubscribe();
     for (const p of this.pending.values()) {
@@ -231,6 +271,8 @@ export class RpcClient {
     this.listeners.clear();
     this.sessionLoadedListeners.clear();
     this.compactionListeners.clear();
+    this.extensionStatesListeners.clear();
+    this.extensionErrorListeners.clear();
     this.toolCallHandler = null;
   }
 
@@ -258,6 +300,14 @@ export class RpcClient {
     }
     if (raw.type === 'compaction_start' || raw.type === 'compaction_end') {
       for (const listener of this.compactionListeners) listener(raw);
+      return;
+    }
+    if (raw.type === 'extension_states') {
+      for (const listener of this.extensionStatesListeners) listener(raw);
+      return;
+    }
+    if (raw.type === 'extension_error') {
+      for (const listener of this.extensionErrorListeners) listener(raw);
       return;
     }
     if (raw.type === 'response') {
@@ -311,6 +361,8 @@ function isEnvelope(value: unknown): value is RpcResponse | RpcEventEnvelope {
     t === 'tool_call_request' ||
     t === 'session_loaded' ||
     t === 'compaction_start' ||
-    t === 'compaction_end'
+    t === 'compaction_end' ||
+    t === 'extension_states' ||
+    t === 'extension_error'
   );
 }

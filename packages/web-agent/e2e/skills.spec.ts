@@ -75,35 +75,69 @@ test.describe('Skills — sandboxed bash shim', () => {
     });
 
     // ----------------------------------------------------------------
-    // bash shim: model runs a script via the sandboxed bash tool
+    // bash shim: model runs a script via the sandboxed bash tool. We
+    // assert on the bash tool's own arguments + captured stdout rather
+    // than the assistant's echoed reply — gpt-4.1-nano frequently
+    // produces an empty string after a tool call, and the sandbox
+    // round-trip is the property this test actually guards.
     // ----------------------------------------------------------------
     await test.step('model invokes the bash shim to run hello-world', async () => {
+      // The preceding `/skill:hello-world Alice` step already asked the
+      // model to run the skill, so a first `bash` tool-call may already
+      // be on the page. We scope assertions to the *latest* bash widget
+      // (`.last()`) to avoid strict-mode violations and keep this step
+      // independent of whether the previous turn ran a tool.
       await chat.send(
         'Use the bash tool to run exactly this command: ' +
           '`node /vault/.pi/skills/hello-world/hello.js Alice` ' +
           'and then reply with just the stdout the tool returned, no extra words.'
       );
       await chat.waitForStreamingDone();
-      const bash = chat.toolCall('bash');
+      const bash = chat.toolCall('bash').last();
       await expect(bash).toBeVisible();
-      const reply = (await chat.lastAssistantText()).toUpperCase();
-      expect(reply).toContain('HELLO-ALICE');
+
+      // Expand the tool-call widget so its arguments + captured stdout
+      // render, then assert against them directly. This bypasses the
+      // model-instruction-following step entirely.
+      await bash.locator('[data-testid="tool-call-expand"]').click();
+      const content = bash.locator('[data-testid="tool-call-content"]');
+      await expect(content).toBeVisible();
+      await expect(content).toContainText('hello-world/hello.js');
+      await expect(content).toContainText('Alice');
+      await expect(content).toContainText(/HELLO-ALICE/i);
     });
 
     // ----------------------------------------------------------------
     // Vault round-trip: vault-writer writes a file via the capability
-    // bridge, and the file tree picks it up.
+    // bridge, and the file tree picks it up. The prompt is phrased
+    // imperatively so gpt-4.1-nano actually calls the tool instead of
+    // answering from the hello-world turn's context. We loop once if
+    // the vault file does not materialise after the first stream —
+    // the file existing is a sufficient witness that bash ran with
+    // the right arguments, so no intermediate tool-call assertion is
+    // needed.
     // ----------------------------------------------------------------
     await test.step('vault-writer persists /vault/skill-output.txt', async () => {
-      await chat.send(
-        'Use the bash tool to run exactly: ' +
-          '`node /vault/.pi/skills/vault-writer/write.js HELLOVAULT` ' +
-          'and then reply with just the word "done".'
-      );
+      const writerPrompt =
+        'You MUST call the bash tool right now. ' +
+        'Run this command verbatim and return only its stdout: ' +
+        '`node /vault/.pi/skills/vault-writer/write.js HELLOVAULT`';
+      await chat.send(writerPrompt);
       await chat.waitForStreamingDone();
-      await expect(chat.toolCall('bash')).toBeVisible();
 
-      await vault.waitForFile('/vault/skill-output.txt');
+      let created = false;
+      try {
+        await vault.waitForFile('/vault/skill-output.txt', 8_000);
+        created = true;
+      } catch {
+        // Small-model flake: prompt once more before declaring failure.
+        await chat.send(writerPrompt);
+        await chat.waitForStreamingDone();
+        await vault.waitForFile('/vault/skill-output.txt', 15_000);
+        created = true;
+      }
+      expect(created).toBe(true);
+
       await vault.openFile('/vault/skill-output.txt');
       expect((await vault.currentFileContent()).trim()).toBe('HELLOVAULT');
     });

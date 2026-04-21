@@ -68,6 +68,18 @@ export function useSlashCommands(): UseSlashCommandsResult {
     });
   }, [rpcClient, refresh]);
 
+  // Re-fetch after extension_states — extensions can register slash
+  // commands, and their load lifecycle is independent of session
+  // transitions. Without this the palette stays stale when the
+  // extension runner finishes its initial scan after the first
+  // session_loaded (boot race) or after a per-extension toggle flips
+  // visibility on/off.
+  useEffect(() => {
+    return rpcClient.onExtensionStates(() => {
+      void refresh();
+    });
+  }, [rpcClient, refresh]);
+
   const filter = useCallback(
     (prefix: string): SlashCommandInfo[] => {
       const needle = prefix.toLowerCase();

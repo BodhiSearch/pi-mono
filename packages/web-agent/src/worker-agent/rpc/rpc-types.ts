@@ -11,6 +11,7 @@ import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { LlmAuthCredential } from '../llm/types';
 import type { SlashCommandInfo } from '../core/commands/types';
+import type { ExtensionDescriptor, ExtensionError } from '../core/extensions/types';
 import type {
   SessionHeader,
   SessionMeta,
@@ -81,7 +82,21 @@ export type RpcCommand =
    * Re-scan the vault's `.pi/prompts/` directory for template changes
    * and return the refreshed listing. Invoked by `/reload`.
    */
-  | { id: string; type: 'reload_commands' };
+  | { id: string; type: 'reload_commands' }
+  /**
+   * Return the current extension descriptor list (name, enabled,
+   * loaded, error) for the main-thread ExtensionsPanel. The worker is
+   * the source of truth because the actual extension factories only
+   * run there.
+   */
+  | { id: string; type: 'list_extensions' }
+  /**
+   * Push a new enabled-state map from the main thread (Dexie-backed) to
+   * the worker. The worker reconciles against the map at the next
+   * `agent_end` boundary, then surfaces an `extension_states` event
+   * with the refreshed descriptor list.
+   */
+  | { id: string; type: 'set_extension_states'; states: Record<string, boolean> };
 
 export type RpcCommandType = RpcCommand['type'];
 
@@ -192,6 +207,20 @@ export type RpcResponse =
   | {
       id: string;
       type: 'response';
+      command: 'list_extensions';
+      success: true;
+      data: ExtensionDescriptor[];
+    }
+  | {
+      id: string;
+      type: 'response';
+      command: 'set_extension_states';
+      success: true;
+      data: ExtensionDescriptor[];
+    }
+  | {
+      id: string;
+      type: 'response';
       command: RpcCommandType;
       success: false;
       error: SerializedError;
@@ -272,11 +301,34 @@ export interface RpcCompactionEvent {
   tokensBefore?: number;
 }
 
+/**
+ * Worker → Main synthetic event: the set of loaded extensions changed.
+ *
+ * Fired after `mount_vault`, `unmount_vault`, `set_extension_states`
+ * reconciliation, and `reload_commands`. The main thread uses this to
+ * render the `ExtensionsPanel` without needing to poll `list_extensions`.
+ */
+export interface RpcExtensionStatesEvent {
+  type: 'extension_states';
+  extensions: ExtensionDescriptor[];
+}
+
+/**
+ * Worker → Main synthetic event: a hook handler, factory, or tool
+ * execution inside an extension threw. Rendered as a transient error
+ * message (same treatment as `compaction_end.success=false`).
+ */
+export interface RpcExtensionErrorEvent extends ExtensionError {
+  type: 'extension_error';
+}
+
 export type RpcEventEnvelope =
   | RpcAgentEventEnvelope
   | RpcToolCallRequest
   | RpcSessionLoadedEvent
-  | RpcCompactionEvent;
+  | RpcCompactionEvent
+  | RpcExtensionStatesEvent
+  | RpcExtensionErrorEvent;
 
 // ============================================================================
 // Wire envelope
@@ -285,3 +337,4 @@ export type RpcEventEnvelope =
 export type RpcMessage = RpcCommand | RpcResponse | RpcEventEnvelope;
 export type { UiMessageMeta } from '../core/session/types';
 export type { SlashCommandInfo, SlashCommandSource } from '../core/commands/types';
+export type { ExtensionDescriptor, ExtensionError } from '../core/extensions/types';

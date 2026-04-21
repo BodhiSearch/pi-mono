@@ -2,6 +2,7 @@ import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { LlmAuthCredential } from '../llm/types';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
+import type { ExtensionDescriptor } from '../core/extensions/types';
 import { deserializeError, serializeError } from './error';
 import type {
   McpToolDescriptor,
@@ -79,6 +80,9 @@ export interface AgentSessionHost {
   // M9 — slash-command registry.
   listCommands?(): SlashCommandInfo[];
   reloadCommands?(): Promise<SlashCommandInfo[]>;
+  // M8 — extensions.
+  listExtensions?(): ExtensionDescriptor[];
+  setExtensionStates?(states: Record<string, boolean>): Promise<ExtensionDescriptor[]>;
   /**
    * Register a sink for synthetic Worker-originated events (e.g.
    * `session_loaded`). Optional because test fakes and the jsdom
@@ -327,6 +331,28 @@ export class RpcServer {
           } satisfies RpcResponse);
           return;
         }
+        case 'list_extensions': {
+          const data = this.session.listExtensions?.() ?? [];
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'list_extensions',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'set_extension_states': {
+          const data = (await this.session.setExtensionStates?.(raw.states)) ?? [];
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'set_extension_states',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
       }
     } catch (err) {
       this.transport.send({
@@ -373,6 +399,8 @@ function ok<
     | 'get_available_models'
     | 'list_commands'
     | 'reload_commands'
+    | 'list_extensions'
+    | 'set_extension_states'
   >,
 >(id: string, command: C): RpcResponse {
   return { id, type: 'response', command, success: true } as RpcResponse;
@@ -409,6 +437,8 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   compact_now: true,
   list_commands: true,
   reload_commands: true,
+  list_extensions: true,
+  set_extension_states: true,
 };
 
 function isKnownCommandType(value: string): value is RpcCommandType {

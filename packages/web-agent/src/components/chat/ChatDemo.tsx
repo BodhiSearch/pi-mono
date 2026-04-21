@@ -5,6 +5,7 @@ import { useMcpList } from '@/hooks/useMcpList';
 import { useMcpSelection } from '@/hooks/useMcpSelection';
 import { useMcpAgentTools } from '@/hooks/useMcpAgentTools';
 import { useSkillSandbox } from '@/hooks/useSkillSandbox';
+import { useExtensionState } from '@/hooks/useExtensionState';
 import { SessionPicker } from '@/components/sessions/SessionPicker';
 import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 import ChatMessages from './ChatMessages';
@@ -22,6 +23,15 @@ export default function ChatDemo() {
   });
 
   const { descriptor: skillDescriptor, handler: skillHandler } = useSkillSandbox();
+
+  const {
+    extensions,
+    errors: extensionErrors,
+    enabledMap: extensionEnabledMap,
+    setEnabled: setExtensionEnabled,
+    disableAll: disableAllExtensions,
+    clearErrors: clearExtensionErrors,
+  } = useExtensionState();
 
   // Merge MCP tools with the bash-skill shim so the worker sees one
   // flat tool list. The handler dispatches by tool name — skills go
@@ -117,6 +127,12 @@ export default function ChatDemo() {
         isCompacting={isCompacting}
         isStreaming={isStreaming}
         onCompactNow={() => void sessions.compactNow()}
+        extensions={extensions}
+        extensionEnabledMap={extensionEnabledMap}
+        extensionErrors={extensionErrors}
+        onToggleExtension={setExtensionEnabled}
+        onDisableAllExtensions={disableAllExtensions}
+        onClearExtensionErrors={clearExtensionErrors}
       />
     </>
   );

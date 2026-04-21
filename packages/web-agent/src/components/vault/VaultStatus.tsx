@@ -82,16 +82,16 @@ export function VaultStatus() {
         </Button>
       ) : null}
 
-      {vault.status === 'mounted' && !vault.name?.startsWith('sample') ? (
+      {vault.status === 'mounted' ? (
         <Button
           size="sm"
           variant="ghost"
-          data-testid="vault-close"
+          data-testid="vault-unmount"
           onClick={() => {
             void vault.closeDirectory();
           }}
         >
-          Close
+          Unmount
         </Button>
       ) : null}
     </div>

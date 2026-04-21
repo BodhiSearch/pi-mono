@@ -1,8 +1,10 @@
 # M8 — Extensions
 
-**Status:** 🧪 spike complete, production implementation deferred.
+**Status:** ✅ Phase 1 landed. Phases 2 + 3 deferred.
 
-A research spike explored the design space; see [`ai-docs/extension-spike/`](../extension-spike/) for the feasibility report, spike writeup, unbiased from-scratch recommendation, gap analysis, lessons learned, and open questions. The spike code lives on the current branch for reference only. No commitment has been made on the production shape; the next iteration begins from the open-questions gate.
+Phase 1 ships a browser-native extension runtime: `.pi/extensions/<name>/index.js` is discovered from the vault, loaded inside the agent Worker via Blob-URL dynamic `import()`, and surfaces the `before_agent_start` / `tool_result` hooks plus `registerTool` / `registerCommand`. The main-thread `ExtensionsPanel` provides per-extension toggles, a global "Disable all" trip switch (the M8 gate), and surfaces both load-time and runtime errors. See [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md) for the full technical reference and [`../extension-impl/phase-1-report.md`](../extension-impl/phase-1-report.md) for the change log.
+
+The spike archive under [`ai-docs/extension-spike/`](../extension-spike/) is retained for historical context; the Phase 1 implementation superseded its open questions with the `inline_worker` / `minimal` / `per_ext_toggle` decisions captured in the plan.
 
 ---
 
@@ -51,6 +53,8 @@ Additional genres considered in scope for consideration but deferred from v1: to
 
 ## References
 
-- [`ai-docs/extension-spike/`](../extension-spike/) — spike archive; start with `README.md`, then `01-feasibility.md` and `03-unbiased-approach.md` before drafting the next plan.
-- [`ai-docs/extension-spike/06-open-questions.md`](../extension-spike/06-open-questions.md) — decision gates that must close before implementation starts.
-- [`ai-docs/decisions/m8-extensions.md`](../decisions/m8-extensions.md) — spike-era decisions (D20, D21); treat as historical, not forward commitments. Supersede if the next iteration overturns them.
+- [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md) — authoritative Phase 1 technical reference (types, loader, runner, wrapper, worker-host wiring, RPC, main-thread store + panel).
+- [`../extension-impl/phase-1-report.md`](../extension-impl/phase-1-report.md) — what shipped, known gaps, open questions carried into Phase 2.
+- [`../extension-impl/phase-2-prompt.md`](../extension-impl/phase-2-prompt.md), [`../extension-impl/phase-3-prompt.md`](../extension-impl/phase-3-prompt.md) — handoff prompts for the deferred phases (UI channel + widgets; iframe sandbox, TS sources, marketplace).
+- [`ai-docs/extension-spike/`](../extension-spike/) — spike archive retained for context; superseded by the Phase 1 implementation.
+- [`ai-docs/decisions/m8-extensions.md`](../decisions/m8-extensions.md) — spike-era decisions (D20, D21); treat as historical.

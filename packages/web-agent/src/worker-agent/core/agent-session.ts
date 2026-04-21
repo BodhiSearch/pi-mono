@@ -1,5 +1,14 @@
 import { Agent } from '@mariozechner/pi-agent-core';
-import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
+import type {
+  AfterToolCallContext,
+  AfterToolCallResult,
+  AgentEvent,
+  AgentMessage,
+  AgentTool,
+  BeforeToolCallContext,
+  BeforeToolCallResult,
+  StreamFn,
+} from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { RpcSessionState } from '../rpc/rpc-types';
 
@@ -75,6 +84,10 @@ export class AgentSession {
     this.agent.state.systemPrompt = prompt;
   }
 
+  getSystemPrompt(): string {
+    return this.agent.state.systemPrompt;
+  }
+
   setModel(model: Model<Api> | undefined): void {
     if (model) {
       this.agent.state.model = model;
@@ -123,5 +136,35 @@ export class AgentSession {
 
   subscribe(handler: (event: AgentEvent) => void | Promise<void>): () => void {
     return this.agent.subscribe(event => handler(event));
+  }
+
+  /**
+   * Install (or clear with `undefined`) pi-agent-core's native
+   * `afterToolCall` hook. The `WorkerAgentHost` uses this to give the
+   * extension runtime a chance to transform tool results before the
+   * agent emits `message_end` on the toolResult message. No-op when
+   * no extensions are loaded so the happy path carries zero overhead.
+   */
+  setAfterToolCall(
+    hook:
+      | ((
+          ctx: AfterToolCallContext,
+          signal?: AbortSignal
+        ) => Promise<AfterToolCallResult | undefined>)
+      | undefined
+  ): void {
+    this.agent.afterToolCall = hook;
+  }
+
+  /** Mirror of `setAfterToolCall` for the complementary `beforeToolCall` hook. */
+  setBeforeToolCall(
+    hook:
+      | ((
+          ctx: BeforeToolCallContext,
+          signal?: AbortSignal
+        ) => Promise<BeforeToolCallResult | undefined>)
+      | undefined
+  ): void {
+    this.agent.beforeToolCall = hook;
   }
 }

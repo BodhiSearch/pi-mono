@@ -20,7 +20,7 @@ Consolidated roadmap for porting `packages/coding-agent`'s feature set into `pac
 | —   | Post-M5 cleanup (pre-extraction hygiene)                                    | ✅ done  | `af2b7086` | [post-m5-cleanup.md](post-m5-cleanup.md) |
 | M6  | Session tree: fork from entry, switch sessions, branch navigation           | ✅ done  | latest     | [m6-session-tree.md](m6-session-tree.md) |
 | M7  | Compaction: auto + manual, result persistence, UI observability             | ✅ done  | latest     | [m7-compaction.md](m7-compaction.md) |
-| M8  | Extensions: dynamic, toggleable behaviour layer over the agent              | 🧪 spike | latest     | [m8-extensions.md](m8-extensions.md) |
+| M8  | Extensions: dynamic, toggleable behaviour layer over the agent              | ✅ Phase 1 | latest     | [m8-extensions.md](m8-extensions.md) |
 | M9  | Resources: slash commands, prompt templates, skills, themes                 | 🟡 partial — vault-sourced commands/prompts/skills landed; extension-provided + themes still pending | latest | [m9-resources.md](m9-resources.md) |
 | M10 | Polish: HTML export, diagnostics, logging, debug traces                     | planned | —          | [m10-polish.md](m10-polish.md) |
 | M11 | Library extraction: `@bodhiapp/bodhi-web-agent` publishable package               | planned | —          | [m11-library-extraction.md](m11-library-extraction.md) |
@@ -41,7 +41,7 @@ Load the file only if its hook matches what you're about to do.
 - **[post-m5-cleanup.md](post-m5-cleanup.md)** — dead-code removal, `WebAgentOptions` added, extension scaffolding de-exported; pre-Phase-6 hygiene.
 - **[m6-session-tree.md](m6-session-tree.md)** — `forkSession` (atomic copy preserving ids/timestamps), ephemeral `navigateToLeaf`, per-message Fork/Branch UI.
 - **[m7-compaction.md](m7-compaction.md)** — auto+manual compaction, `UiMessageMeta` pipeline, compaction summary bubble with data-test attributes, forced compaction for e2e.
-- **[m8-extensions.md](m8-extensions.md)** — spike complete; feature goal (dynamic toggleable behaviours — prompt shaping, tool output shaping, tool registration, skills) is agreed, production shape deferred. Archive in [`ai-docs/extension-spike/`](../extension-spike/) — read `README.md` first, then `01-feasibility.md`, `03-unbiased-approach.md`, `06-open-questions.md` before planning the next iteration.
+- **[m8-extensions.md](m8-extensions.md)** — Phase 1 landed: vault-scoped `.pi/extensions/<name>/index.js`, Blob-URL dynamic import inside the Worker, `before_agent_start` + `tool_result` hooks, `registerTool` + `registerCommand`, per-extension toggle + global disable-all trip switch. Full technical reference in [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md); handoff notes for subsequent phases in [`../extension-impl/`](../extension-impl/).
 
 ### Planned — previews (load when picking up that milestone)
 - **[m9-resources.md](m9-resources.md)** — **partially landed**: vault-sourced slash commands, prompt templates, and skills (with sandboxed `bash` shim for skill scripts) are shipped; the remaining work is extension-registered commands/themes and multi-tier (user + CLI) loading.

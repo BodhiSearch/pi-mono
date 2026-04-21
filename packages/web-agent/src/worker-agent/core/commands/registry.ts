@@ -15,6 +15,7 @@
  */
 
 import type { ReadOperations } from '../../fs/zenfs-operations';
+import type { RegisteredCommand as ExtensionRegisteredCommand } from '../extensions/types';
 import {
   expandPromptTemplate as expandPromptTemplatePure,
   loadPromptTemplatesFromDir,
@@ -42,6 +43,14 @@ export class CommandRegistry {
   private promptTemplates: PromptTemplate[] = [];
   private skills: Skill[] = [];
   private skillDiagnostics: SkillDiagnostic[] = [];
+  /**
+   * Commands contributed by loaded extensions. The handler closure stays
+   * in the worker — only the `SlashCommandInfo` descriptor crosses RPC.
+   * Collisions with builtins / prompts / skills are resolved first-found
+   * in `list()` order (builtin > prompt > skill > extension) to match
+   * coding-agent's precedence.
+   */
+  private extensionCommands: ExtensionRegisteredCommand[] = [];
 
   /**
    * Load `<vaultMount>/.pi/prompts/*.md` into the registry, replacing
@@ -75,10 +84,21 @@ export class CommandRegistry {
     this.skillDiagnostics = [];
   }
 
-  /** Drop both prompt templates and skills (e.g. on vault unmount). */
+  /** Drop all extension-registered commands (e.g. when the runner clears). */
+  clearExtensionCommands(): void {
+    this.extensionCommands = [];
+  }
+
+  /** Replace the extension-command set in one shot (called from the runner). */
+  setExtensionCommands(commands: ExtensionRegisteredCommand[]): void {
+    this.extensionCommands = commands;
+  }
+
+  /** Drop prompt templates, skills, and extension commands (e.g. on vault unmount). */
   clearAll(): void {
     this.clearPrompts();
     this.clearSkills();
+    this.clearExtensionCommands();
   }
 
   /**
@@ -107,7 +127,13 @@ export class CommandRegistry {
       source: 'skill',
       disableModelInvocation: s.disableModelInvocation,
     }));
-    return [...builtins, ...prompts, ...skills];
+    const extensions: SlashCommandInfo[] = this.extensionCommands.map(c => ({
+      name: c.name,
+      ...(c.description ? { description: c.description } : {}),
+      ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}),
+      source: 'extension',
+    }));
+    return [...builtins, ...prompts, ...skills, ...extensions];
   }
 
   getPromptTemplates(): PromptTemplate[] {
@@ -128,6 +154,14 @@ export class CommandRegistry {
 
   findSkill(name: string): Skill | null {
     return this.skills.find(s => s.name === name) ?? null;
+  }
+
+  findExtensionCommand(name: string): ExtensionRegisteredCommand | null {
+    return this.extensionCommands.find(c => c.name === name) ?? null;
+  }
+
+  getExtensionCommands(): ExtensionRegisteredCommand[] {
+    return this.extensionCommands;
   }
 
   /**

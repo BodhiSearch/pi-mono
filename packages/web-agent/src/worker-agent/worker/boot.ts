@@ -98,6 +98,7 @@ function bootInProcess(agentOptions?: WebAgentOptions): AgentWorkerBoot {
   // In-process fallback uses MemorySessionStore so jsdom tests don't need IDB.
   const host = new WorkerAgentHost(session, fakePort, new MemorySessionStore(), provider, {
     vaultMount: agentOptions?.vaultMount,
+    initialExtensionEnabledState: agentOptions?.initialExtensionEnabledState,
   });
   const { client: clientT, server: serverT } = createInProcessTransportPair();
   // Server retains itself via the transport's listener closure.

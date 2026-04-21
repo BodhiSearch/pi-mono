@@ -28,6 +28,14 @@ export interface WebAgentOptions {
   vaultMount?: string;
   /** Dexie IDB database name for session storage. Defaults to `web-agent`. */
   sessionsDbName?: string;
+  /**
+   * Persisted per-extension enabled flags (main-thread IDB map) so the
+   * Worker's first vault load already honours the user's previous
+   * choices. Without this the first scan loads everything and the
+   * main thread has to push disables immediately afterwards, causing
+   * a load-then-unload churn at boot.
+   */
+  initialExtensionEnabledState?: Record<string, boolean>;
 }
 
 export interface AgentWorkerInit {
