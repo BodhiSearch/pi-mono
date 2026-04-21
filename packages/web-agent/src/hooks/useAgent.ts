@@ -312,10 +312,13 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
           case 'reload': {
             const list = await rpcClient.reloadCommands();
             const promptCount = list.filter(c => c.source === 'prompt').length;
+            const skillCount = list.filter(c => c.source === 'skill').length;
             pushTransient({
               kind: 'info',
               title: '/reload',
-              text: `Reloaded prompt templates — ${promptCount} prompt template(s) available.`,
+              text:
+                `Reloaded prompt templates — ${promptCount} prompt template(s), ` +
+                `${skillCount} skill(s) available.`,
             });
             return true;
           }
@@ -450,7 +453,9 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
       }
       setError(null);
 
-      await rpcClient.setSystemPrompt('');
+      // System prompt is owned by the worker (built from loaded skills
+      // + vault cwd in `WorkerAgentHost.rebuildSystemPrompt`). Main
+      // thread no longer pushes a blank prompt on every send.
       await rpcClient.setModel(match.provider, match.id);
 
       try {

@@ -25,8 +25,9 @@ import type { LlmAuthCredential, LlmProvider } from '../llm/types';
 import { SessionManager } from '../core/session/session-manager';
 import type { SessionStore } from '../core/session/store';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
+import { buildSystemPrompt } from '../core/system-prompt';
 import { createVaultTools } from '../core/tools';
-import { createZenfsVaultOperations } from '../fs/zenfs-operations';
+import { createZenfsVaultOperations, type VaultOperations } from '../fs/zenfs-operations';
 import { VAULT_MOUNT } from '../fs/zenfs-provider';
 import type { AgentSessionHost, HostEventSink, ToolUpcallInvoker } from '../rpc/rpc-server';
 import type { McpToolDescriptor, RpcSessionState } from '../rpc/rpc-types';
@@ -90,12 +91,19 @@ export class WorkerAgentHost implements AgentSessionHost {
   private compactionAbort: AbortController | null = null;
   /**
    * Slash-command registry: builtin metadata + prompt templates loaded
-   * from `<vaultMount>/.pi/prompts/`. Templates are (re)loaded on
-   * `mountVault` / `mountDevSeed` and cleared on `unmountVault`. The
-   * registry is also consulted from `prompt()` to expand template
-   * invocations before they reach the agent.
+   * from `<vaultMount>/.pi/prompts/` + skills loaded from
+   * `<vaultMount>/.pi/skills/`. All three collections are (re)loaded
+   * on `mountVault` / `mountDevSeed` and cleared on `unmountVault`.
+   * The registry is also consulted from `prompt()` to expand skill
+   * and template invocations before they reach the agent.
    */
   private readonly commands = new CommandRegistry();
+  /**
+   * Currently mounted vault operations handle. Kept so `prompt()` can
+   * lazily re-read SKILL.md during `/skill:<name>` expansion without a
+   * second `createZenfsVaultOperations` call.
+   */
+  private vaultOps: VaultOperations | null = null;
 
   constructor(
     session: AgentSession,
@@ -140,14 +148,18 @@ export class WorkerAgentHost implements AgentSessionHost {
   // Plain-data passthroughs
   // ==========================================================================
 
-  prompt(message: string): Promise<void> {
-    // Expand prompt templates ahead of the agent call so the LLM sees
-    // the fully substituted user message, matching coding-agent's
-    // `AgentSession.prompt` ordering (template expansion happens
-    // before the user message is built). Unknown `/foo` invocations
-    // fall through unchanged — they become literal user text, same
-    // as coding-agent's behaviour when no extension/template matches.
-    const expanded = this.commands.expand(message);
+  async prompt(message: string): Promise<void> {
+    // Expand `/skill:<name>` (async, re-reads SKILL.md via the mounted
+    // vault) and then prompt templates (sync string substitution)
+    // ahead of the agent call so the LLM sees the fully substituted
+    // user message. Mirrors coding-agent's `AgentSession.prompt`
+    // ordering where skill expansion precedes template expansion.
+    // Unknown `/foo` invocations fall through unchanged — they become
+    // literal user text, same as coding-agent's behaviour when no
+    // extension/template/skill matches.
+    const expanded = this.vaultOps
+      ? await this.commands.expandAsync(message, this.vaultOps.read)
+      : this.commands.expand(message);
     return this.session.prompt(expanded);
   }
   abort(): void {
@@ -292,9 +304,12 @@ export class WorkerAgentHost implements AgentSessionHost {
       },
     };
     const vaultOps = createZenfsVaultOperations();
+    this.vaultOps = vaultOps;
     this.vaultTools = createVaultTools(vaultOps, { cwd: this.vaultMount });
     this.refreshTools();
     await this.commands.loadPromptsFromVault(vaultOps, this.vaultMount);
+    await this.commands.loadSkillsFromVault(vaultOps, this.vaultMount);
+    this.rebuildSystemPrompt();
   }
 
   /**
@@ -338,16 +353,21 @@ export class WorkerAgentHost implements AgentSessionHost {
       },
     };
     const vaultOps = createZenfsVaultOperations();
+    this.vaultOps = vaultOps;
     this.vaultTools = createVaultTools(vaultOps, { cwd: this.vaultMount });
     this.refreshTools();
     await this.commands.loadPromptsFromVault(vaultOps, this.vaultMount);
+    await this.commands.loadSkillsFromVault(vaultOps, this.vaultMount);
+    this.rebuildSystemPrompt();
   }
 
   async unmountVault(): Promise<void> {
     this.detachVault();
     this.vaultTools = [];
+    this.vaultOps = null;
     this.refreshTools();
-    this.commands.clearPrompts();
+    this.commands.clearAll();
+    this.rebuildSystemPrompt();
   }
 
   /**
@@ -360,12 +380,19 @@ export class WorkerAgentHost implements AgentSessionHost {
   }
 
   /**
-   * Rescan `<vaultMount>/.pi/prompts/` for template changes and return
-   * the refreshed listing. No-op when the vault isn't mounted.
+   * Rescan `<vaultMount>/.pi/prompts/` (templates) and `<vaultMount>/.pi/skills/`
+   * (skill descriptors) and return the refreshed listing. No-op when
+   * the vault isn't mounted. Rebuilds the system prompt so skill
+   * additions/removals are reflected in the next LLM call without
+   * needing a session reset.
    */
   async reloadCommands(): Promise<SlashCommandInfo[]> {
     if (this.attachedFs) {
-      await this.commands.loadPromptsFromVault(createZenfsVaultOperations(), this.vaultMount);
+      const ops = this.vaultOps ?? createZenfsVaultOperations();
+      this.vaultOps = ops;
+      await this.commands.loadPromptsFromVault(ops, this.vaultMount);
+      await this.commands.loadSkillsFromVault(ops, this.vaultMount);
+      this.rebuildSystemPrompt();
     }
     return this.commands.list();
   }
@@ -601,6 +628,23 @@ export class WorkerAgentHost implements AgentSessionHost {
 
   private refreshTools(): void {
     this.session.setTools([...this.vaultTools, ...this.mcpTools]);
+  }
+
+  /**
+   * Rebuild the worker-owned system prompt from the current vault +
+   * skills state and push it to the agent session. Called after any
+   * lifecycle event that can change what the LLM should see in its
+   * preamble (vault mount/unmount, `reloadCommands`). Matches
+   * coding-agent's pattern of owning the prompt string inside the
+   * agent instead of letting the main thread push it.
+   */
+  private rebuildSystemPrompt(): void {
+    const prompt = buildSystemPrompt({
+      cwd: this.attachedFs ? this.vaultMount : undefined,
+      skills: this.commands.getSkills(),
+      hasReadTool: this.vaultTools.length > 0,
+    });
+    this.session.setSystemPrompt(prompt);
   }
 }
 

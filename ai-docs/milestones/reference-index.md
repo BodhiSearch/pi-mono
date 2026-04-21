@@ -13,7 +13,7 @@ Source-mapping table for porting work. Coding-agent sources are read-only refere
 | Session tree             | `packages/coding-agent/src/core/session-manager.ts`, `agent-session-runtime.ts`              | M6                                                        |
 | Compaction               | `packages/coding-agent/src/core/compaction/*`                                                | M7                                                        |
 | Extension types + runner | `packages/coding-agent/src/core/extensions/{types,runner,wrapper}.ts`                        | M8                                                        |
-| Skills + resources       | `packages/coding-agent/src/core/{slash-commands,resource-loader,prompt-templates,skills}.ts` | M9                                                        |
+| Skills + resources       | `packages/coding-agent/src/core/{slash-commands,resource-loader,prompt-templates,skills}.ts` | M9 (vault-sourced subset done — commands, prompts, skills + sandboxed `bash` shim; extensions/themes/multi-tier pending) |
 | HTML export              | `packages/coding-agent/src/core/export-html/*`                                               | M10                                                       |
 | Bash executor            | `packages/coding-agent/src/core/bash-executor.ts`, `tools/bash.ts`                           | deferred                                                  |
 | TUI                      | `packages/coding-agent/src/modes/interactive/`                                               | not ported (React UI replaces)                            |

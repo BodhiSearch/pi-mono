@@ -17,6 +17,11 @@ For readers who know one side and are porting to the other, these are the name-l
 | Context replay on load | `buildSessionContext` | `buildSessionContext` (ported) |
 | Extension types | `core/extensions/types.ts` (wired via `ExtensionRunner`) | `core/extensions/types.ts` (scaffolding only) |
 | Tool operations | `ReadOperations` etc. (Node `fs`) | same interfaces (ZenFS) |
+| Slash-command registry | in-process property on `AgentSession` | `CommandRegistry` (`core/commands/registry.ts`) exposed via `list_commands` RPC |
+| Prompt template loader | `prompt-templates.ts` (user + project + CLI) | `prompt-templates.ts` (vault-only: `<vaultMount>/.pi/prompts/`) |
+| Skill loader | `skills.ts` + `skill.ts` (user + project + CLI) | `skills.ts` (vault-only: `<vaultMount>/.pi/skills/`) |
+| System prompt assembly | `system-prompt.ts` (cwd + skills + tool snippets + extensions) | `core/system-prompt.ts` (cwd + skills only; built by `WorkerAgentHost`, not the main thread) |
+| Skill script execution | `bash` tool → Node `child_process` | restricted `bash` shim → `SandboxHost` → sandbox iframe + Worker (`packages/web-agent/src/sandbox/`) |
 
 ## Practical guidance
 
@@ -43,7 +48,7 @@ Treat it as an independent upstream. The "hard rule" is one-directional (web-age
 
 ## Open questions / known gaps
 
-- **Extension runtime in web-agent.** Types are ported; the browser-side runtime, sandboxing, and UI surface are a separate future milestone. Until it lands, there is no way to register slash commands, skills, or extension widgets from host code, and no `extension_ui_request` / `extension_ui_response` channel exists on the wire.
+- **Extension runtime in web-agent.** Types are ported; the browser-side runtime, sandboxing, and UI surface are a separate future milestone. Vault-sourced slash commands (`/`), prompt templates (`.pi/prompts/`) and skills (`.pi/skills/`) **are** ported and wired through `CommandRegistry` — but *extension-registered* commands / widgets and the `extension_ui_request` / `extension_ui_response` channel still wait on the runtime milestone.
 - **Branch-summary generation on navigate** is present in coding-agent but deferred in web-agent — the entry type is already on the wire so the upgrade won't break replay.
 - **Session stats**. Web-agent has no `get_session_stats` equivalent yet; the main-thread React app computes stats locally from messages + usage.
 - **Thinking level** is persisted through `ThinkingLevelChangeEntry` in the ported types but there is no RPC to set / cycle it. When adding, keep `cycle_thinking_level` naming.

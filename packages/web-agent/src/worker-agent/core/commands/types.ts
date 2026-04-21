@@ -7,7 +7,7 @@
  * later phases.
  */
 
-export type SlashCommandSource = 'builtin' | 'prompt';
+export type SlashCommandSource = 'builtin' | 'prompt' | 'skill';
 
 /**
  * Plain-data descriptor emitted over RPC for the main-thread autocomplete.
@@ -20,6 +20,11 @@ export interface SlashCommandInfo {
   description?: string;
   argumentHint?: string;
   source: SlashCommandSource;
+  /**
+   * When true (skills only), this command is hidden from the model's
+   * system prompt and can only be invoked explicitly via `/skill:<name>`.
+   */
+  disableModelInvocation?: boolean;
 }
 
 /**

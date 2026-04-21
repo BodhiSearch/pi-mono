@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useAgent } from '@/hooks/useAgent';
 import { useMcpList } from '@/hooks/useMcpList';
 import { useMcpSelection } from '@/hooks/useMcpSelection';
 import { useMcpAgentTools } from '@/hooks/useMcpAgentTools';
+import { useSkillSandbox } from '@/hooks/useSkillSandbox';
 import { SessionPicker } from '@/components/sessions/SessionPicker';
+import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 
@@ -13,11 +15,29 @@ export default function ChatDemo() {
   const { enabledMcpTools, toggleTool, toggleMcp, getEnabledToolCount, getCheckboxState } =
     useMcpSelection(mcps, toolsByMcpId);
 
-  const { descriptors: mcpToolDescriptors, handler: toolCallHandler } = useMcpAgentTools({
+  const { descriptors: mcpDescriptors, handler: mcpHandler } = useMcpAgentTools({
     enabledMcpTools,
     mcps,
     toolsByMcpId,
   });
+
+  const { descriptor: skillDescriptor, handler: skillHandler } = useSkillSandbox();
+
+  // Merge MCP tools with the bash-skill shim so the worker sees one
+  // flat tool list. The handler dispatches by tool name — skills go
+  // to the sandbox, everything else falls through to MCP.
+  const mcpToolDescriptors = useMemo<McpToolDescriptor[]>(
+    () => [skillDescriptor, ...mcpDescriptors],
+    [skillDescriptor, mcpDescriptors]
+  );
+  const toolCallHandler = useMemo<ToolCallHandler>(() => {
+    return async (toolName, args) => {
+      if (toolName === skillDescriptor.name) {
+        return skillHandler(toolName, args);
+      }
+      return mcpHandler(toolName, args);
+    };
+  }, [skillDescriptor, skillHandler, mcpHandler]);
 
   const {
     messages,

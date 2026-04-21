@@ -7,7 +7,10 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 
 export default defineConfig([
-  globalIgnores(['dist', 'scratch']),
+  // `e2e/data/**` is test-fixture content executed inside the skill
+  // sandbox via `new Function(source)`, so top-level statements are
+  // legal there. Skip linting those files — they are data, not code.
+  globalIgnores(['dist', 'scratch', 'e2e/data']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

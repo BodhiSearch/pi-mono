@@ -37,6 +37,17 @@ These axes are intentional: each reflects a constraint one runtime imposes that 
 
 **Why:** MCP clients in a browser need the fetch credential + OAuth context, which is host-owned; sending the live client across `postMessage` would require serialising functions.
 
+## Skill execution: local `bash` vs sandboxed iframe + Worker
+
+- **coding-agent** skills invoke any binary or script the host shell can reach. The `bash` tool in coding-agent spawns a real child process with full Node + `$PATH` access; SKILL.md authors write `node hello.js` and it runs on the user's machine under the user's credentials.
+- **web-agent** replaces that with a **restricted `bash` shim** (`packages/web-agent/src/sandbox/bash-skill.ts`) whose parser only accepts `node <path>.js` / `./<path>.js` / `<path>.js` invocations, and only when the resolved path sits under `<vaultMount>/.pi/skills/`. Everything else is rejected as a tool error. Accepted invocations are routed to a `SandboxHost` that:
+  1. Hides a `sandbox="allow-scripts"` iframe (null origin — no access to host cookies / storage) at document-ready time.
+  2. Spawns a fresh Web Worker per run from a blob URL inside the iframe.
+  3. Threads a curated capability API (`console`, `fetch`, `vault.readFile/writeFile/ls`, `process.argv/env/cwd`, `stdin`) into the script via `new Function(...)` parameters.
+  4. Bounds execution with a timeout that calls `worker.terminate()` and returns `exitCode: 124`.
+
+**Why:** the browser has no process model, so anything shell-shaped has to be synthesised. The iframe + Worker pattern gives us two isolation boundaries (null origin + separate thread) while keeping the skill author's mental model (`node script.js args`) intact. Capability requests round-trip Worker → iframe → host over structured-clone `postMessage`, and the host enforces path-traversal rejection + credential-header stripping (`authorization`, `cookie`) before any real fetch fires. See [`worker-agent/skills.md`](../worker-agent/skills.md) for the full capability table.
+
 ## Interactive UX: pi-tui TUI vs React host
 
 - **coding-agent** ships three run modes — `InteractiveMode` (pi-tui TUI with model selector, theme picker, slash commands, extension widgets), `runPrintMode` (one-shot stdout), `runRpcMode` (embed-in-another-app). The TUI is the primary UX.

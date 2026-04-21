@@ -15,6 +15,7 @@
 - Mounts [`vault tools`](./vault-tools.md) and [`MCP proxy tools`](./mcp-proxy.md) against the `AgentSession`.
 - Persists messages at turn boundary and drives [`compaction`](./compaction.md).
 - Delegates [`auth + catalog`](./llm-provider.md) to the injected `LlmProvider`.
+- Owns the [`system prompt`](./skills.md#worker-system-prompt--coresystem-promptts) — rebuilt on every mount/reload/unmount so loaded [`skills`](./skills.md) are reflected in the model's context. The main thread no longer calls `setSystemPrompt('')`.
 
 The host is the "assembly" layer. It contains no LLM-provider code, no storage-engine code, and no UI code — each of those is an injected collaborator.
 
@@ -78,14 +79,18 @@ See [`vault-tools.md`](./vault-tools.md) for the tool factories; host-side lifec
   2. `await WebAccess.create({ handle })`.
   3. `vfs.mount(vaultMount, webAccessFs)`.
   4. `attachFS(vfsPort, webAccessFs)`.
-  5. Build `vaultTools` via `createVaultTools(createZenfsVaultOperations(), { cwd: vaultMount })`.
-  6. `refreshTools()`.
+  5. Build `vaultTools` via `createVaultTools(createZenfsVaultOperations(), { cwd: vaultMount })`; cache `vaultOps` for the command registry.
+  6. `commands.loadPromptTemplatesFromVault` + `commands.loadSkillsFromVault`.
+  7. `refreshTools()` + `rebuildSystemPrompt()`.
 - `mountDevSeed(seed: InMemoryVaultSeed)`:
   1. `detachVault()` if needed.
   2. `configure({ mounts: {} })`, `InMemory.create({ label: seed.name })`, mount at `vaultMount`.
   3. `mkdir -p` every parent directory, `writeFile` each seed path. `EEXIST` on mkdir is tolerated; other errors propagate.
   4. `attachFS(vfsPort, memFs)`, build + refresh tools.
-- `unmountVault()` → `detachVault()` + clear `vaultTools` + `refreshTools()`.
+  5. `commands.loadPromptTemplatesFromVault` + `commands.loadSkillsFromVault`, then `rebuildSystemPrompt()`.
+- `unmountVault()` → `detachVault()` + clear `vaultTools` + `commands.clearAll()` + drop the cached `vaultOps` + `refreshTools()` + `rebuildSystemPrompt()`.
+- `reloadCommands()` reloads both prompt templates and skills against the active `vaultOps`, then `rebuildSystemPrompt()` and returns `commands.list()` to the main thread.
+- `rebuildSystemPrompt()` (private) calls `buildSystemPrompt` from [`core/system-prompt.ts`](./skills.md#worker-system-prompt--coresystem-promptts) with the current skills + `cwd` and assigns the result via `session.setSystemPrompt`.
 - `detachVault()` (private) — best-effort `detachFS(vfsPort, fs)` then `vfs.umount(vaultMount)`.
 
 ### MCP proxying

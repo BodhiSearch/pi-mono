@@ -28,6 +28,7 @@ Start with **[overview](#overview)** below. Then drill into the module-level spe
 | [`compaction.md`](./compaction.md) | Token estimation, cut selection, summarisation, lifecycle events. |
 | [`vault-tools.md`](./vault-tools.md) | Filesystem tools, ZenFS operations, vault mounting (FSA + dev seed). |
 | [`mcp-proxy.md`](./mcp-proxy.md) | MCP tool descriptors + main-thread upcall protocol. |
+| [`skills.md`](./skills.md) | `.pi/skills/` loader, `/skill:<name>` expansion, sandboxed `bash` shim, worker-owned system prompt. |
 
 ## Overview
 
@@ -38,14 +39,15 @@ Start with **[overview](#overview)** below. Then drill into the module-level spe
 3. Filesystem tools mounted over a ZenFS backend: `read`, `write`, `edit`, `ls`, `glob`, `grep`.
 4. Vault mounting — FSA directory handle or in-memory seed, surfaced to the main thread over a Port channel.
 5. MCP tool proxying — descriptors registered in the worker, execution upcalls back to the main thread.
-6. Session persistence — Dexie (IndexedDB) store with an in-memory fallback; append-only DAG of typed entries.
-7. Session tree — fork, navigate to leaf, list, delete, rename.
-8. Context compaction — threshold-driven auto + manual trigger, cutting on user-message turn boundaries.
-9. LLM provider abstraction — `LlmProvider` interface (auth + catalog), `createStreamFn` factory, `LlmAuthCredential` rotation envelope.
-10. RPC wire protocol — typed commands, responses, events (agent, session-loaded, compaction, tool upcall).
-11. Transport pairs — in-process (`MessageChannel`) and Worker (`MessagePort`).
-12. Worker boot protocol — tagged init message transferring `agentPort` and `vfsPort`.
-13. Extension type scaffolding — placeholder types for a future extension host.
+6. Skills — `.pi/skills/` discovery, worker-owned system prompt injection, `/skill:<name>` expansion, and a sandboxed `bash` shim (see [`skills.md`](./skills.md)). The `SandboxHost` itself lives on the main thread under `src/sandbox/` because it depends on the DOM.
+7. Session persistence — Dexie (IndexedDB) store with an in-memory fallback; append-only DAG of typed entries.
+8. Session tree — fork, navigate to leaf, list, delete, rename.
+9. Context compaction — threshold-driven auto + manual trigger, cutting on user-message turn boundaries.
+10. LLM provider abstraction — `LlmProvider` interface (auth + catalog), `createStreamFn` factory, `LlmAuthCredential` rotation envelope.
+11. RPC wire protocol — typed commands, responses, events (agent, session-loaded, compaction, tool upcall).
+12. Transport pairs — in-process (`MessageChannel`) and Worker (`MessagePort`).
+13. Worker boot protocol — tagged init message transferring `agentPort` and `vfsPort`.
+14. Extension type scaffolding — placeholder types for a future extension host.
 
 ### Scope out
 
@@ -71,15 +73,23 @@ packages/web-agent/src/worker-agent/
 ├── index.ts                  # public barrel
 ├── core/
 │   ├── agent-session.ts
+│   ├── commands/             # frontmatter, prompt-templates, skills, registry, slash-commands
 │   ├── compaction/           # token-estimate, prepare, summarize, prompts, serialize, file-ops
 │   ├── extensions/           # type scaffolding (not wired yet)
 │   ├── session/              # store, memory-store, dexie-store, session-manager, types, ids, tree
+│   ├── system-prompt.ts      # worker-owned prompt builder (skills + cwd + date)
 │   └── tools/                # read/write/edit/ls/glob/grep + truncation + file-mutation-queue
 ├── fs/                       # zenfs-provider, zenfs-operations, path-utils
 ├── llm/                      # types (LlmProvider/LlmAuthCredential), stream (createStreamFn)
 ├── rpc/                      # rpc-types, rpc-client, rpc-server, transport, error, transports/
 └── worker/                   # init-protocol, agent-worker (Worker entry), boot (main-thread), worker-host
 ```
+
+Two directories sit **outside** `worker-agent/` because they need
+DOM or React access: `src/sandbox/` (iframe-based skill sandbox,
+driven through the `bash` tool shim) and `src/hooks/` (React
+integration, including `useSkillSandbox`). They are documented in
+[`skills.md`](./skills.md) alongside the in-worker skill loader.
 
 ### Public surface
 

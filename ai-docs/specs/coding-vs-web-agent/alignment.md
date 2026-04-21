@@ -53,6 +53,22 @@ Both implement the same 4-stage pipeline (token estimation → cut-point selecti
 
 Both surface a lifecycle — `compaction_start` → `compaction_end` events — and both persist a `CompactionEntry` that subsequent `buildSessionContext` calls use to swap the head of the branch with a summary message.
 
+## Slash commands, prompt templates, skills
+
+All three resource loaders (`slash-commands`, `prompt-templates`, `skills`) are ported as a **vault-sourced** subset: coding-agent reads them from `~/.pi/agent/` + project + CLI flags, web-agent reads them only from the mounted vault's `.pi/` tree.
+
+| Surface | coding-agent (`packages/coding-agent/src/core/`) | web-agent (`packages/web-agent/src/worker-agent/core/commands/`) |
+| --- | --- | --- |
+| Builtin slash commands | `slash-commands.ts` — static table + dispatcher | `slash-commands.ts` + `BUILTIN_SLASH_COMMANDS` — same shape, dispatched from `useAgent.intercept()` on the main thread |
+| Prompt templates | `prompt-templates.ts` (`<project>/.pi/prompts/*.md` + user dir) | `prompt-templates.ts` (`<vaultMount>/.pi/prompts/*.md` only) — identical frontmatter (`description`, `argument-hint`), identical `$1`/`$ARGUMENTS` substitution |
+| Skills | `skills.ts` + `skill.ts` (`<project>/.pi/skills/<name>/SKILL.md` + user + CLI) | `skills.ts` (`<vaultMount>/.pi/skills/<name>/SKILL.md` only) — identical validation (name regex, length caps, consecutive-hyphen rule), `disable-model-invocation` honoured |
+| System prompt composition | `system-prompt.ts` builds cwd + skills + tool-snippets + extension docs | `system-prompt.ts` — trimmed to cwd + skills (no extensions yet, no tool-snippets) |
+| `/skill:<name>` expansion | `_expandSkillCommand` on `AgentSession` wraps SKILL.md in a `<skill name=… location=…>` block | `CommandRegistry.expandSkill` — identical wrapper text, same `$ARGUMENTS` handling |
+| Command registry | Lives inside `AgentSession`; exposed via `get_commands` RPC | `CommandRegistry` (`worker-agent/core/commands/registry.ts`) — exposed via `list_commands` RPC, returns `SlashCommandInfo[]` with `source: 'builtin' \| 'prompt' \| 'skill'` |
+| Autocomplete palette | pi-tui `SlashCommandsOverlay` | React `CommandPalette.tsx` + `useSlashCommands` hook — same prefix-match semantics |
+
+The XML envelope web-agent emits for `<skill>` and the `<available-skills>` block is byte-for-byte compatible with coding-agent's output, so a SKILL.md authored for one runs verbatim in the other (as long as its scripts don't rely on Node-only APIs — see `divergence.md § Skill execution`).
+
 ## Agent core
 
 Both harnesses are thin wrappers over `@mariozechner/pi-agent-core`'s `Agent`:

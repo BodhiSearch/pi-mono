@@ -43,7 +43,7 @@ Exported from the public barrel at `packages/web-agent/src/worker-agent/index.ts
 | `getStreamingMessage()` | Returns `agent.state.streamingMessage`. |
 | `getErrorMessage()` | Returns `agent.state.errorMessage`. |
 | `isStreaming()` | Returns `agent.state.isStreaming`. |
-| `setSystemPrompt(prompt)` | Assigns `agent.state.systemPrompt`. Not persisted. |
+| `setSystemPrompt(prompt)` | Assigns `agent.state.systemPrompt`. Not persisted. The worker host (not the main thread) owns the concrete prompt string — it is rebuilt from `core/system-prompt.ts` on every vault mount / reload / unmount so loaded skills are reflected in the model's context. See [`skills.md`](./skills.md) and [`worker-host.md`](./worker-host.md). |
 | `setModel(model)` | Assigns `agent.state.model = model` and memoises on `currentModel` when a model is provided; `undefined` is accepted as a "cleared" signal (used by session-restore paths when the catalog cannot yet resolve the identifier). |
 | `getModel()` | Returns the memoised `currentModel`. Compaction reads this for `contextWindow` and for the `completeSimple` call. |
 | `restoreMessages(messages)` | Replaces `agent.state.messages` without replaying lifecycle events. Used by session load / navigate / compaction so restored messages are not double-persisted. |

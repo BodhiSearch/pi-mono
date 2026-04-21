@@ -102,6 +102,15 @@ Idempotency rule: mounting the same port twice is a no-op; mounting a different 
 - `unmountVault()` detaches + clears the tool set.
 - `refreshTools()` rebuilds the combined `[vaultTools, mcpTools]` list on the `AgentSession`.
 
+Beyond the six tools listed above, two conventional sub-paths of the vault are consumed by the worker itself — they are **data**, not tools:
+
+- `<vaultMount>/.pi/prompts/*.md` — prompt-template library (`/name [args]`). Parsed by `core/commands/prompt-templates.ts`.
+- `<vaultMount>/.pi/skills/<name>/SKILL.md` (+ sibling scripts) — skills, surfaced via `/skill:<name>` expansion, the worker-owned system prompt, and the `bash` sandbox shim. See [`skills.md`](./skills.md).
+
+The vault tools (`read`, `write`, etc.) are oblivious to these
+conventions — the loader code reads the files through
+`VaultOperations` directly.
+
 ### Integration with the main thread
 
 After the Worker is booted and the `mount_vault` RPC has succeeded, the main thread calls `mountVaultPort(vfsPort)` once. From that moment any `fs.promises.*` call on the main thread at `/vault/...` is marshalled over the Port channel to the Worker's real backend. UI consumers (file tree, file viewer, markdown editor) use this transparently.
