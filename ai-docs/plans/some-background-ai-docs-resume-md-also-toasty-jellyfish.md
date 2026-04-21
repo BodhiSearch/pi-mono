@@ -136,11 +136,15 @@ Uses turn-agnostic helpers (`waitForStreamingDone`, `lastAssistantText`) since t
 - `web-agent` build — ✅
 - No new `any` / `@ts-ignore` / skipped tests — ✅
 
-## Decisions appended to `05-decisions.md`
+## Decisions appended to `ai-docs/decisions/m7-compaction.md`
 
-- **D20** — Compaction pipeline is Worker-local; auto trigger runs inside `writeChain` after `message_end`. Manual trigger is `compact_now` RPC.
-- **D21** — M7 cuts on turn boundaries only; turn-split summarization deferred.
-- **D22** — `CompactionSettings.contextWindow` override isolates M7 from the 128000 hardcode in `agent-model.ts`.
+IDs use the new milestone-prefixed form since M8's spike concurrently took the
+unprefixed `D20` and `D21` slots. See the convention note at the top of the
+decisions file.
+
+- **m7-d20** — Compaction pipeline is Worker-local; auto trigger runs inside `writeChain` after `message_end`. Manual trigger is `compact_now` RPC. Sub-operations never cross the RPC boundary — main observes only the command, `compaction_start` / `compaction_end` events, and the subsequent `session_loaded` refresh.
+- **m7-d21** — M7 cuts on user-message turn boundaries only; turn-split summarization deferred. Manual `compactNow` adds a `force: true` fallback that picks the last user-message entry when the normal token walk finds nothing (keeps the button functional on short conversations, e.g. e2e).
+- **m7-d22** — `CompactionSettings.contextWindow` override isolates M7 from the hardcoded 128000 in `agent-model.ts`. Tests use small windows; production reads `model.contextWindow ?? 128_000`. The underlying hardcode fix is tracked separately.
 
 ## Critical files (quick index)
 

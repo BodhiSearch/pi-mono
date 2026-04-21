@@ -11,6 +11,8 @@
 
 **Coding-agent references.** `packages/coding-agent/src/core/compaction/compaction.ts`, `compaction/branch-summarization.ts`, `compaction/utils.ts`. Studied, not imported (Principle #1).
 
+**Decisions.** Architectural rationale in [`../decisions/m7-compaction.md`](../decisions/m7-compaction.md) (`m7-d20` Worker-local pipeline, `m7-d21` turn-boundary-only cuts + `force: true` fallback, `m7-d22` `CompactionSettings.contextWindow` override).
+
 **Gate.** `npm run check` clean, vitest all pass, Playwright compaction spec passes, no new `any`/`@ts-ignore`/skipped tests.
 
 ## Outcome

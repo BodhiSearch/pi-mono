@@ -31,6 +31,9 @@ Running log of locked architectural decisions for web-agent. Append-only.
 | D19 | Ephemeral leaf navigation — `navigateToLeaf` mutates in-memory only       | 2026-04-20 | active      | [m6-session-tree.md](m6-session-tree.md) |
 | D20 | Extensions load via Dexie bytes + Blob URL + per-extension nested Worker | 2026-04-20 | spike-only — not a forward commitment | [m8-extensions.md](m8-extensions.md) |
 | D21 | Mid-stream extension toggles defer to the next `agent_end`               | 2026-04-20 | active      | [m8-extensions.md](m8-extensions.md) |
+| m7-d20 | Compaction pipeline is Worker-local; RPC exposes only trigger + lifecycle events | 2026-04-20 | active      | [m7-compaction.md](m7-compaction.md) |
+| m7-d21 | Cut on user-message turn boundaries only; turn-split summarisation deferred | 2026-04-20 | active      | [m7-compaction.md](m7-compaction.md) |
+| m7-d22 | `CompactionSettings.contextWindow` override isolates M7 from the hardcoded 128000 | 2026-04-20 | active      | [m7-compaction.md](m7-compaction.md) |
 
 ## Progressive-disclosure hooks
 
@@ -43,6 +46,7 @@ Load the file only if its hook matches what you're about to do.
 - **[m5-storage-swap.md](m5-storage-swap.md)** (D13–D15) — `SessionStore` seam, Dexie replaces ZenFS, Worker-writes + main-reads via `liveQuery`; load when touching session storage.
 - **[post-m5-cleanup.md](post-m5-cleanup.md)** (D16–D17) — `WebAgentOptions` constructor surface, extension-stub de-export; load when adjusting library configuration or the public API barrel.
 - **[m6-session-tree.md](m6-session-tree.md)** (D18–D19) — atomic fork copy with preserved ids, ephemeral `navigateToLeaf`; load when touching fork semantics or branch navigation.
+- **[m7-compaction.md](m7-compaction.md)** (m7-d20–m7-d22) — Worker-local compaction pipeline (auto + manual share one code path), turn-boundary-only cuts with `force: true` fallback, `CompactionSettings.contextWindow` override as interim stopgap for the hardcoded 128000. Load when touching compaction, threshold logic, or the `shouldCompact` call site.
 - **[m8-extensions.md](m8-extensions.md)** (D20–D21) — D20 captures the spike's loader shape (Dexie + Blob URL + nested Worker) and is **not a forward commitment** — see [`../extension-spike/`](../extension-spike/) for the unbiased recommendation. D21 (defer mid-stream toggles to `agent_end`) is a general lifecycle rule worth keeping. Load this file when touching the spike code or drafting the next extension plan.
 
 ## Conventions
@@ -51,4 +55,4 @@ Load the file only if its hook matches what you're about to do.
 - **Date format:** ISO `YYYY-MM-DD`.
 - **Scope:** architectural choices that shape future implementation. Routine code style lives in lint configs, not here.
 - **Cross-refs:** prefer repo-relative paths (e.g. `packages/ai/src/env-api-keys.ts`) over commit SHAs so entries remain readable as the code evolves.
-- **IDs:** monotonically increasing across the whole ledger (not per-file). When adding a new decision, find the highest `Dxx` currently in the ledger and use the next integer.
+- **IDs:** new decisions use the milestone-prefixed form `m<milestone>-d<serial>` (e.g. `m7-d20`, `m8-d3`). The serial is scoped to the milestone — start fresh at the lowest unused number for that milestone. The legacy unprefixed `Dxx` entries (D1–D21) stay as historical records and are referenced by their original id. The prefix scheme was adopted to stop concurrent milestones colliding on the global serial; see the note at the top of [m7-compaction.md](m7-compaction.md).
