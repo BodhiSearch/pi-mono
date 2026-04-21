@@ -7,6 +7,10 @@ Living specs for extractable modules under `packages/web-agent/src/`. Each folde
 | `worker-agent` — browser-runtime coding-agent harness, future `@bodhiapp/bodhi-web-agent` | `packages/web-agent/src/worker-agent/` | [`./worker-agent/`](./worker-agent/index.md) |
 | `worker-bodhi` — concrete Bodhi `LlmProvider` | `packages/web-agent/src/worker-bodhi/` | [`./worker-bodhi/`](./worker-bodhi/index.md) |
 
+## Cross-cutting
+
+- [`coding-agent-vs-web-agent.md`](./coding-agent-vs-web-agent.md) — architectural comparison between `packages/coding-agent/` (Node CLI) and `packages/web-agent/` (browser + Worker): aligned patterns, intentional divergences, features missing on either side.
+
 ## Conventions
 
 - Each module folder has an `index.md` with a summary, navigation, and change procedure.
