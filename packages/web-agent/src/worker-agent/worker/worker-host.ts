@@ -12,6 +12,8 @@ import { WebAccess } from '@zenfs/dom';
 import type { AgentEvent, AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { AgentSession } from '../core/agent-session';
+import { CommandRegistry } from '../core/commands';
+import type { SlashCommandInfo } from '../core/commands';
 import {
   compactSummarize,
   DEFAULT_COMPACTION_SETTINGS,
@@ -86,6 +88,14 @@ export class WorkerAgentHost implements AgentSessionHost {
   private compactionInFlight = false;
   /** Cancels an in-flight summarisation LLM call on session swaps. */
   private compactionAbort: AbortController | null = null;
+  /**
+   * Slash-command registry: builtin metadata + prompt templates loaded
+   * from `<vaultMount>/.pi/prompts/`. Templates are (re)loaded on
+   * `mountVault` / `mountDevSeed` and cleared on `unmountVault`. The
+   * registry is also consulted from `prompt()` to expand template
+   * invocations before they reach the agent.
+   */
+  private readonly commands = new CommandRegistry();
 
   constructor(
     session: AgentSession,
@@ -131,7 +141,14 @@ export class WorkerAgentHost implements AgentSessionHost {
   // ==========================================================================
 
   prompt(message: string): Promise<void> {
-    return this.session.prompt(message);
+    // Expand prompt templates ahead of the agent call so the LLM sees
+    // the fully substituted user message, matching coding-agent's
+    // `AgentSession.prompt` ordering (template expansion happens
+    // before the user message is built). Unknown `/foo` invocations
+    // fall through unchanged — they become literal user text, same
+    // as coding-agent's behaviour when no extension/template matches.
+    const expanded = this.commands.expand(message);
+    return this.session.prompt(expanded);
   }
   abort(): void {
     this.session.abort();
@@ -274,8 +291,10 @@ export class WorkerAgentHost implements AgentSessionHost {
         }
       },
     };
-    this.vaultTools = createVaultTools(createZenfsVaultOperations(), { cwd: this.vaultMount });
+    const vaultOps = createZenfsVaultOperations();
+    this.vaultTools = createVaultTools(vaultOps, { cwd: this.vaultMount });
     this.refreshTools();
+    await this.commands.loadPromptsFromVault(vaultOps, this.vaultMount);
   }
 
   /**
@@ -318,14 +337,37 @@ export class WorkerAgentHost implements AgentSessionHost {
         }
       },
     };
-    this.vaultTools = createVaultTools(createZenfsVaultOperations(), { cwd: this.vaultMount });
+    const vaultOps = createZenfsVaultOperations();
+    this.vaultTools = createVaultTools(vaultOps, { cwd: this.vaultMount });
     this.refreshTools();
+    await this.commands.loadPromptsFromVault(vaultOps, this.vaultMount);
   }
 
   async unmountVault(): Promise<void> {
     this.detachVault();
     this.vaultTools = [];
     this.refreshTools();
+    this.commands.clearPrompts();
+  }
+
+  /**
+   * Return the plain-data slash-command listing for the main-thread
+   * autocomplete palette. Includes builtins first, then prompt
+   * templates loaded from the vault.
+   */
+  listCommands(): SlashCommandInfo[] {
+    return this.commands.list();
+  }
+
+  /**
+   * Rescan `<vaultMount>/.pi/prompts/` for template changes and return
+   * the refreshed listing. No-op when the vault isn't mounted.
+   */
+  async reloadCommands(): Promise<SlashCommandInfo[]> {
+    if (this.attachedFs) {
+      await this.commands.loadPromptsFromVault(createZenfsVaultOperations(), this.vaultMount);
+    }
+    return this.commands.list();
   }
 
   setMcpTools(descriptors: McpToolDescriptor[], invoker: ToolUpcallInvoker): void {

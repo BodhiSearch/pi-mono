@@ -8,6 +8,11 @@ import { useSessionsList } from '@/hooks/useSessionsList';
 import { BODHI_PROVIDER_TAG } from '@/worker-bodhi';
 import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 import type { UiMessageMeta } from '@/worker-agent/core/session/types';
+import {
+  BUILTIN_COMMAND_NAMES,
+  BUILTIN_SLASH_COMMANDS,
+} from '@/worker-agent/core/commands/slash-commands';
+import { nextTransientId, type TransientMessage } from '@/types/transient-message';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'web-agent.activeSessionId';
 
@@ -18,6 +23,7 @@ interface ActiveSession {
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: Model<Api>[] = [];
+const EMPTY_TRANSIENT: TransientMessage[] = [];
 
 interface UseAgentInput {
   /** MCP tool descriptors (plain data) shipped to the Worker. */
@@ -39,7 +45,33 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [messageMeta, setMessageMeta] = useState<UiMessageMeta[]>([]);
+  const [transientMessages, setTransientMessages] = useState<TransientMessage[]>([]);
   const sessionSummaries = useSessionsList();
+
+  const messagesRef = useRef<AgentMessage[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const pushTransient = useCallback(
+    (input: { kind: TransientMessage['kind']; title?: string; text: string }): TransientMessage => {
+      const msg: TransientMessage = {
+        id: nextTransientId(),
+        kind: input.kind,
+        title: input.title,
+        text: input.text,
+        createdAt: Date.now(),
+        afterMessageIndex: messagesRef.current.length,
+      };
+      setTransientMessages(prev => [...prev, msg]);
+      return msg;
+    },
+    []
+  );
+
+  const clearTransient = useCallback(() => {
+    setTransientMessages([]);
+  }, []);
 
   const isLoadingModelsRef = useRef(false);
   const sessionBootRef = useRef(false);
@@ -138,6 +170,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
       setStreamingMessage(undefined);
       setIsStreaming(false);
       setError(null);
+      setTransientMessages([]);
       setActiveSession({ id: event.sessionId, name: event.name });
       if (typeof window !== 'undefined') {
         try {
@@ -231,8 +264,181 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     setSelectedModelState(id);
   }, []);
 
+  /**
+   * Dispatch a builtin slash command. Returns `true` when the command
+   * was a builtin and was handled locally (caller should NOT fall
+   * through to `rpcClient.prompt`). Returns `false` for non-builtins
+   * — they flow to the Worker which expands matching prompt templates
+   * or forwards raw text to the LLM, matching coding-agent behaviour.
+   *
+   * Feedback (confirmations, help listing, session info, errors) is
+   * surfaced via `pushTransient` — frontend-only bubbles that are not
+   * persisted to the session JSONL and reset to `[]` on reload.
+   */
+  const tryDispatchBuiltin = useCallback(
+    async (text: string): Promise<boolean> => {
+      if (!text.startsWith('/')) return false;
+      const spaceIdx = text.indexOf(' ');
+      const name = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
+      const args = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
+      if (!BUILTIN_COMMAND_NAMES.has(name)) return false;
+
+      try {
+        switch (name) {
+          case 'new':
+            await rpcClient.newSession();
+            return true;
+          case 'compact':
+            setCompactionError(null);
+            await rpcClient.compactNow();
+            pushTransient({ kind: 'info', title: '/compact', text: 'Compaction requested.' });
+            return true;
+          case 'name':
+            if (args) {
+              await rpcClient.setSessionName(args);
+              pushTransient({
+                kind: 'info',
+                title: '/name',
+                text: `Session renamed to "${args}".`,
+              });
+            } else {
+              pushTransient({
+                kind: 'error',
+                title: '/name',
+                text: 'Usage: /name <new session name>',
+              });
+            }
+            return true;
+          case 'reload': {
+            const list = await rpcClient.reloadCommands();
+            const promptCount = list.filter(c => c.source === 'prompt').length;
+            pushTransient({
+              kind: 'info',
+              title: '/reload',
+              text: `Reloaded prompt templates — ${promptCount} prompt template(s) available.`,
+            });
+            return true;
+          }
+          case 'session': {
+            const meta = await rpcClient.getSessionMeta();
+            if (!meta) {
+              pushTransient({
+                kind: 'info',
+                title: '/session',
+                text: 'No active session.',
+              });
+              return true;
+            }
+            const lines = [
+              `id:       ${meta.id}`,
+              meta.name ? `name:     ${meta.name}` : null,
+              `messages: ${messagesRef.current.length}`,
+              meta.parentSession ? `parent:   ${meta.parentSession}` : null,
+              meta.cwd ? `cwd:      ${meta.cwd}` : null,
+            ].filter(Boolean);
+            pushTransient({
+              kind: 'info',
+              title: '/session',
+              text: lines.join('\n'),
+            });
+            return true;
+          }
+          case 'help': {
+            const longest = BUILTIN_SLASH_COMMANDS.reduce(
+              (acc, c) => Math.max(acc, c.name.length),
+              0
+            );
+            const body = BUILTIN_SLASH_COMMANDS.map(
+              c => `/${c.name.padEnd(longest)}  ${c.description}`
+            ).join('\n');
+            pushTransient({
+              kind: 'info',
+              title: 'Available commands',
+              text: body,
+            });
+            return true;
+          }
+          case 'model': {
+            if (!args) {
+              const current = selectedModel || '(none)';
+              const catalog = models.length
+                ? models.map(m => `  ${m.id}`).join('\n')
+                : '  (no models loaded — sign in to populate the catalog)';
+              pushTransient({
+                kind: 'info',
+                title: '/model',
+                text: `Current model: ${current}\n\nAvailable models:\n${catalog}\n\nUsage: /model <model-id>`,
+              });
+              return true;
+            }
+            const exact = models.find(m => m.id === args);
+            if (exact) {
+              setSelectedModelState(exact.id);
+              try {
+                await rpcClient.setModel(exact.provider, exact.id);
+              } catch (err) {
+                console.error('[useAgent] /model setModel failed:', err);
+              }
+              pushTransient({
+                kind: 'info',
+                title: '/model',
+                text: `Model set to ${exact.id}.`,
+              });
+              return true;
+            }
+            const needle = args.toLowerCase();
+            const matches = models.filter(m => m.id.toLowerCase().includes(needle));
+            const suggestions = matches.length
+              ? `\n\nDid you mean:\n${matches.map(m => `  ${m.id}`).join('\n')}`
+              : '';
+            pushTransient({
+              kind: 'error',
+              title: '/model',
+              text: `Unknown model "${args}".${suggestions}`,
+            });
+            return true;
+          }
+          case 'fork':
+            pushTransient({
+              kind: 'info',
+              title: '/fork',
+              text: 'Hover over an assistant message and click the fork icon to fork from that point.',
+            });
+            return true;
+          case 'tree':
+            pushTransient({
+              kind: 'info',
+              title: '/tree',
+              text: 'Session tree navigation is coming soon. Use /resume to switch sessions.',
+            });
+            return true;
+          case 'resume':
+            pushTransient({
+              kind: 'info',
+              title: '/resume',
+              text: 'Open the session picker in the sidebar to resume a different session.',
+            });
+            return true;
+          default:
+            return false;
+        }
+      } catch (err) {
+        console.error(`[useAgent] builtin /${name} failed:`, err);
+        pushTransient({
+          kind: 'error',
+          title: `/${name}`,
+          text: getErrorMessage(err, `Builtin command /${name} failed`),
+        });
+        return true;
+      }
+    },
+    [rpcClient, pushTransient, selectedModel, models]
+  );
+
   const sendMessage = useCallback(
     async (prompt: string) => {
+      if (await tryDispatchBuiltin(prompt)) return;
+
       if (!selectedModel) {
         setError('Please select a model first');
         return;
@@ -255,7 +461,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
         setError(getErrorMessage(err, 'Failed to send message'));
       }
     },
-    [selectedModel, models, rpcClient]
+    [tryDispatchBuiltin, selectedModel, models, rpcClient]
   );
 
   const stop = useCallback(() => {
@@ -333,6 +539,8 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     clearMessages,
     error: isAuthenticated ? error : null,
     clearError,
+    transientMessages: isAuthenticated ? transientMessages : EMPTY_TRANSIENT,
+    clearTransient,
     models: isAuthenticated ? models : EMPTY_MODELS,
     isLoadingModels: isAuthenticated ? isLoadingModels : false,
     loadModels,

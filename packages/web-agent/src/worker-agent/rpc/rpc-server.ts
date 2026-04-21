@@ -12,6 +12,7 @@ import type {
   RpcResponse,
   RpcSessionState,
   RpcToolCallRequest,
+  SlashCommandInfo,
 } from './rpc-types';
 import type { Transport } from './transport';
 
@@ -75,6 +76,9 @@ export interface AgentSessionHost {
   navigateToLeaf?(entryId: string): Promise<void>;
   // M7 — manual compaction trigger.
   compactNow?(): Promise<void>;
+  // M9 — slash-command registry.
+  listCommands?(): SlashCommandInfo[];
+  reloadCommands?(): Promise<SlashCommandInfo[]>;
   /**
    * Register a sink for synthetic Worker-originated events (e.g.
    * `session_loaded`). Optional because test fakes and the jsdom
@@ -301,6 +305,28 @@ export class RpcServer {
           await (this.session.compactNow?.() ?? Promise.resolve());
           this.transport.send(ok(id, 'compact_now'));
           return;
+        case 'list_commands': {
+          const data = this.session.listCommands?.() ?? [];
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'list_commands',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
+        case 'reload_commands': {
+          const data = (await this.session.reloadCommands?.()) ?? [];
+          this.transport.send({
+            id,
+            type: 'response',
+            command: 'reload_commands',
+            success: true,
+            data,
+          } satisfies RpcResponse);
+          return;
+        }
       }
     } catch (err) {
       this.transport.send({
@@ -341,7 +367,12 @@ export class RpcServer {
 function ok<
   C extends Exclude<
     RpcCommandType,
-    'get_state' | 'get_messages' | 'set_model' | 'get_available_models'
+    | 'get_state'
+    | 'get_messages'
+    | 'set_model'
+    | 'get_available_models'
+    | 'list_commands'
+    | 'reload_commands'
   >,
 >(id: string, command: C): RpcResponse {
   return { id, type: 'response', command, success: true } as RpcResponse;
@@ -376,6 +407,8 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   fork_session: true,
   navigate_to_leaf: true,
   compact_now: true,
+  list_commands: true,
+  reload_commands: true,
 };
 
 function isKnownCommandType(value: string): value is RpcCommandType {

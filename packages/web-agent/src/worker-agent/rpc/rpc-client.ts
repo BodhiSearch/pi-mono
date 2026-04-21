@@ -13,6 +13,7 @@ import type {
   RpcSessionLoadedEvent,
   RpcSessionState,
   RpcToolCallRequest,
+  SlashCommandInfo,
 } from './rpc-types';
 import type { Transport } from './transport';
 
@@ -198,6 +199,27 @@ export class RpcClient {
   onCompactionEvent(listener: (event: RpcCompactionEvent) => void): () => void {
     this.compactionListeners.add(listener);
     return () => this.compactionListeners.delete(listener);
+  }
+
+  // --------------------------------------------------------------------------
+  // Slash commands (M9)
+  // --------------------------------------------------------------------------
+
+  /**
+   * Fetch the unified slash-command listing (builtins + prompt
+   * templates loaded from the mounted vault). Feeds the
+   * autocomplete palette.
+   */
+  listCommands(): Promise<SlashCommandInfo[]> {
+    return this.send({ type: 'list_commands' }) as Promise<SlashCommandInfo[]>;
+  }
+
+  /**
+   * Re-scan the vault's `.pi/prompts/` for template changes and
+   * return the refreshed listing. Invoked by the `/reload` builtin.
+   */
+  reloadCommands(): Promise<SlashCommandInfo[]> {
+    return this.send({ type: 'reload_commands' }) as Promise<SlashCommandInfo[]>;
   }
 
   dispose(): void {

@@ -37,6 +37,8 @@ export type {
   RpcResponse,
   RpcSessionState,
   RpcToolCallRequest,
+  SlashCommandInfo,
+  SlashCommandSource,
 } from './rpc/rpc-types';
 export type { SerializedError } from './rpc/error';
 export { serializeError, deserializeError } from './rpc/error';

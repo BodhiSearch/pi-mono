@@ -3,8 +3,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import type { ToolResultMessage } from '@mariozechner/pi-ai';
 import MessageBubble from './MessageBubble';
 import ToolCallMessage from './ToolCallMessage';
+import TransientBubble from './TransientBubble';
 import { extractTextFromAgentMessage, getToolCalls, type AgentMessage } from '@/types/chat';
 import type { UiMessageMeta } from '@/worker-agent/core/session/types';
+import type { TransientMessage } from '@/types/transient-message';
 
 interface ChatMessagesProps {
   messages: AgentMessage[];
@@ -12,6 +14,7 @@ interface ChatMessagesProps {
   isStreaming: boolean;
   error?: string | null;
   messageMeta?: UiMessageMeta[];
+  transientMessages?: TransientMessage[];
   onForkFromEntry?: (entryId: string) => void;
   onBranchFromEntry?: (entryId: string) => void;
 }
@@ -22,6 +25,7 @@ export default function ChatMessages({
   isStreaming,
   error,
   messageMeta,
+  transientMessages,
   onForkFromEntry,
   onBranchFromEntry,
 }: ChatMessagesProps) {
@@ -33,6 +37,22 @@ export default function ChatMessages({
   const renderList = useMemo<AgentMessage[]>(() => {
     return streamingMessage ? [...messages, streamingMessage] : messages;
   }, [messages, streamingMessage]);
+
+  // Bucket transient messages by the persisted-message index they were
+  // pinned to at push-time. Sort by createdAt within a bucket so the
+  // visual order matches the dispatch order, even for rapid pushes.
+  const transientBuckets = useMemo<Map<number, TransientMessage[]>>(() => {
+    const buckets = new Map<number, TransientMessage[]>();
+    if (!transientMessages?.length) return buckets;
+    const sorted = [...transientMessages].sort((a, b) => a.createdAt - b.createdAt);
+    for (const t of sorted) {
+      const clamped = Math.min(Math.max(t.afterMessageIndex, 0), messages.length);
+      const list = buckets.get(clamped);
+      if (list) list.push(t);
+      else buckets.set(clamped, [t]);
+    }
+    return buckets;
+  }, [transientMessages, messages.length]);
 
   useEffect(() => {
     const viewport = scrollViewportRef.current;
@@ -111,16 +131,25 @@ export default function ChatMessages({
     >
       <div className="p-4 bg-gray-50">
         <div className="max-w-4xl mx-auto">
-          {renderList.length === 0 ? (
+          {renderList.length === 0 && !transientBuckets.size ? (
             <p className="text-center text-gray-400 mt-8">No messages yet. Start a conversation!</p>
           ) : (
             <>
+              {transientBuckets.get(0)?.map(t => (
+                <TransientBubble key={t.id} message={t} />
+              ))}
               {renderList.map((msg, index) => {
                 if (msg.role === 'toolResult') return null;
                 const turn = turnByIndex[index];
                 // Streaming message lives at the tail with no entry id yet.
                 const isStreamingTail = streamingMessage && index === renderList.length - 1;
                 const meta = isStreamingTail ? undefined : messageMeta?.[index];
+                // Transients are anchored against the persisted-message
+                // count; the streaming tail does not count because it is
+                // not yet persisted and must not claim a bucket slot.
+                const transientAfterThis = isStreamingTail
+                  ? undefined
+                  : transientBuckets.get(index + 1);
 
                 if (msg.role === 'assistant' && getToolCalls(msg).length > 0) {
                   const hasText = !!extractTextFromAgentMessage(msg);
@@ -136,19 +165,26 @@ export default function ChatMessages({
                         />
                       )}
                       <ToolCallMessage message={msg} toolResults={toolResults} />
+                      {transientAfterThis?.map(t => (
+                        <TransientBubble key={t.id} message={t} />
+                      ))}
                     </div>
                   );
                 }
 
                 return (
-                  <MessageBubble
-                    key={index}
-                    message={msg}
-                    turn={turn}
-                    meta={meta}
-                    onFork={onForkFromEntry}
-                    onBranchHere={onBranchFromEntry}
-                  />
+                  <div key={index}>
+                    <MessageBubble
+                      message={msg}
+                      turn={turn}
+                      meta={meta}
+                      onFork={onForkFromEntry}
+                      onBranchHere={onBranchFromEntry}
+                    />
+                    {transientAfterThis?.map(t => (
+                      <TransientBubble key={t.id} message={t} />
+                    ))}
+                  </div>
                 );
               })}
               {showPending && (

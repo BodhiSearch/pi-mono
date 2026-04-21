@@ -34,7 +34,11 @@ export default function ChatDemo() {
     isLoadingModels,
     loadModels,
     sessions,
-  } = useAgent({ mcpToolDescriptors, toolCallHandler });
+    transientMessages,
+  } = useAgent({
+    mcpToolDescriptors,
+    toolCallHandler,
+  });
 
   useEffect(() => {
     if (chatError) {
@@ -66,6 +70,7 @@ export default function ChatDemo() {
         isStreaming={isStreaming}
         error={chatError}
         messageMeta={sessions.messageMeta}
+        transientMessages={transientMessages}
         onForkFromEntry={entryId => {
           void sessions.fork(entryId);
         }}

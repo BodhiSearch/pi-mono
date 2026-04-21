@@ -10,6 +10,7 @@
 import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { LlmAuthCredential } from '../llm/types';
+import type { SlashCommandInfo } from '../core/commands/types';
 import type {
   SessionHeader,
   SessionMeta,
@@ -69,7 +70,18 @@ export type RpcCommand =
   | { id: string; type: 'get_session_meta' }
   | { id: string; type: 'fork_session'; fromEntryId: string }
   | { id: string; type: 'navigate_to_leaf'; entryId: string }
-  | { id: string; type: 'compact_now' };
+  | { id: string; type: 'compact_now' }
+  /**
+   * Return the unified slash-command listing (builtins + prompt
+   * templates loaded from the mounted vault's `.pi/prompts/`). Feeds
+   * the main-thread autocomplete palette.
+   */
+  | { id: string; type: 'list_commands' }
+  /**
+   * Re-scan the vault's `.pi/prompts/` directory for template changes
+   * and return the refreshed listing. Invoked by `/reload`.
+   */
+  | { id: string; type: 'reload_commands' };
 
 export type RpcCommandType = RpcCommand['type'];
 
@@ -166,6 +178,20 @@ export type RpcResponse =
   | {
       id: string;
       type: 'response';
+      command: 'list_commands';
+      success: true;
+      data: SlashCommandInfo[];
+    }
+  | {
+      id: string;
+      type: 'response';
+      command: 'reload_commands';
+      success: true;
+      data: SlashCommandInfo[];
+    }
+  | {
+      id: string;
+      type: 'response';
       command: RpcCommandType;
       success: false;
       error: SerializedError;
@@ -258,3 +284,4 @@ export type RpcEventEnvelope =
 
 export type RpcMessage = RpcCommand | RpcResponse | RpcEventEnvelope;
 export type { UiMessageMeta } from '../core/session/types';
+export type { SlashCommandInfo, SlashCommandSource } from '../core/commands/types';
