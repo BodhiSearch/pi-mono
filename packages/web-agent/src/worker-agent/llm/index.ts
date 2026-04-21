@@ -1,2 +1,2 @@
-export type { LlmAuthCredential, LlmAuthProvider } from './types';
+export type { LlmAuthCredential, LlmProvider } from './types';
 export { createStreamFn } from './stream';

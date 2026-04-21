@@ -6,15 +6,14 @@ import { Input } from '@/components/ui/input';
 import ModelCombobox from './ModelCombobox';
 import McpPopover from './McpPopover';
 import type { Mcp, McpTool } from '@/lib/mcp-tools';
-import type { BodhiModelInfo } from '@/lib/bodhi-models';
-import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
+import type { Api, Model } from '@mariozechner/pi-ai';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => Promise<void>;
   onClearMessages: () => void;
   selectedModel: string;
-  setSelectedModel: (id: string, fmt: ApiFormat) => void;
-  models: BodhiModelInfo[];
+  setSelectedModel: (id: string) => void;
+  models: Model<Api>[];
   isLoadingModels: boolean;
   onRefreshModels: () => void;
   mcps: Mcp[];

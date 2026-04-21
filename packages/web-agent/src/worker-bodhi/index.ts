@@ -1,1 +1,1 @@
-export { BodhiAuthProvider, BODHI_PROVIDER_TAG } from './bodhi-auth-provider';
+export { BodhiProvider, BODHI_PROVIDER_TAG } from './bodhi-provider';

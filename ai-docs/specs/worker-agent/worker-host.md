@@ -10,11 +10,11 @@
 
 - Wraps one [`AgentSession`](./agent-session.md) and its tool/streamFn state.
 - Owns the ZenFS attach/detach lifecycle on the VFS `MessagePort`.
-- Holds the worker-local model registry (seeded from the main thread).
+- Routes model catalog lookups (and session-restore resolution) through the injected `LlmProvider` — no worker-local catalog state.
 - Delegates persistence to an injected [`SessionStore`](./sessions.md).
 - Mounts [`vault tools`](./vault-tools.md) and [`MCP proxy tools`](./mcp-proxy.md) against the `AgentSession`.
 - Persists messages at turn boundary and drives [`compaction`](./compaction.md).
-- Delegates [`auth`](./llm-auth.md) rotation to the injected `LlmAuthProvider`.
+- Delegates [`auth + catalog`](./llm-provider.md) to the injected `LlmProvider`.
 
 The host is the "assembly" layer. It contains no LLM-provider code, no storage-engine code, and no UI code — each of those is an injected collaborator.
 
@@ -27,7 +27,7 @@ constructor(
   session: AgentSession,
   vfsPort: MessagePort,
   store: SessionStore,
-  authProvider: LlmAuthProvider,
+  provider: LlmProvider,
   options?: WorkerAgentHostOptions
 )
 ```
@@ -43,7 +43,7 @@ The constructor wires a `session.subscribe` listener that runs the [turn-boundar
 | `session` | The injected `AgentSession`. |
 | `vfsPort` | MessagePort for ZenFS attach/detach. |
 | `store` | The injected `SessionStore`. |
-| `authProvider` | The injected `LlmAuthProvider` (rotated via `setAuthToken`, consumed during compaction). |
+| `provider` | The injected `LlmProvider` — rotated via `setAuthToken`, consulted for `getApiKeyAndHeaders` during streams and compaction, and `getAvailableModels` during catalog RPCs, `setModel`, and session restore. |
 | `vaultMount` | Mount path; defaults to `VAULT_MOUNT`. |
 | `compactionSettings` | Merged with `DEFAULT_COMPACTION_SETTINGS`. |
 | `vaultTools` / `mcpTools` | Tool arrays union'd into `session.setTools` via `refreshTools`. |
@@ -51,7 +51,6 @@ The constructor wires a `session.subscribe` listener that runs the [turn-boundar
 | `sessionManager` | Active `SessionManager`; `null` until `newSession` / `loadSession`. |
 | `hostEventSink` | Sink for synthetic Worker-side events (`session_loaded`, compaction events). |
 | `writeChain` | Promise chain serialising store appends. |
-| `availableModels` | The model registry seeded from the main thread. |
 | `compactionInFlight` | Single-flight guard. |
 | `compactionAbort` | `AbortController` for the in-flight summarisation; aborted on session swap. |
 
@@ -59,17 +58,16 @@ The constructor wires a `session.subscribe` listener that runs the [turn-boundar
 
 `prompt`, `abort`, `setSystemPrompt`, `reset`, `getState`, `getMessages`, `isStreaming`, `getStreamingMessage`, `getErrorMessage`, `subscribe` all delegate to the `AgentSession`.
 
-### Model registry
+### Model catalog routing
 
-- `setAvailableModels(models)` — copies the array into `availableModels`. If a session is already active, re-runs `restoreModelFromContext(buildSessionContext().model)` and `emitSessionLoaded()` — this is the boot-race recovery path for sessions loaded before the catalog was seeded.
-- `getAvailableModels()` — returns a copy.
-- `findModel(provider, modelId)` — private lookup by `(provider, id)`.
-- `setModel(provider, modelId)` — resolves via `findModel`, throws if unregistered, updates `AgentSession`, and appends a `model_change` entry through `writeChain` **iff** the current branch's `(provider, modelId)` differs (identity dedup). Does NOT emit `session_loaded` — model-change entries don't shift any message entry ids, and re-emission mid-turn would reset the main thread's `streamingMessage` / `isStreaming` UI state.
-- `restoreModelFromContext(ctxModel)` — private. Called from session load/fork/navigate. Resolves via registry; leaves the agent's model `undefined` if unresolved so the boot-race `setAvailableModels` path can pick it up later.
+- `getAvailableModels()` — returns `this.provider.getAvailableModels()` (a `Promise<Model<Api>[]>`). The worker does not hold any state here; each call hits the provider.
+- `resolveModel(provider, modelId)` — private. Fetches the catalog via `this.provider.getAvailableModels()` and finds the matching `{provider, id}` entry.
+- `setModel(provider, modelId)` — awaits `resolveModel`, throws if unknown, updates `AgentSession`, and appends a `model_change` entry through `writeChain` **iff** the current branch's `(provider, modelId)` differs (identity dedup). Does NOT emit `session_loaded` — model-change entries don't shift any message entry ids, and re-emission mid-turn would reset the main thread's `streamingMessage` / `isStreaming` UI state.
+- `restoreModelFromContext(ctxModel)` — private, async. Called from session load/fork/navigate. Awaits `resolveModel`; leaves the agent's model `undefined` if the catalog doesn't contain it (the main thread will see `session_loaded.model` still pointing at the identifier and can react — e.g. render a disabled combobox and surface an error).
 
 ### Auth rotation
 
-`setAuthToken(credential)` simply delegates to `this.authProvider.setAuthToken?.(credential)`. The host is oblivious to the credential's internal shape beyond the `LlmAuthCredential` envelope from [`llm-auth.md`](./llm-auth.md).
+`setAuthToken(credential)` simply delegates to `this.provider.setAuthToken?.(credential)`. The host is oblivious to the credential's internal shape beyond the `LlmAuthCredential` envelope from [`llm-provider.md`](./llm-provider.md).
 
 ### Vault lifecycle
 
@@ -103,8 +101,8 @@ See [`vault-tools.md`](./vault-tools.md) for the tool factories; host-side lifec
 2. `await writeChain` — drain pending appends.
 3. `session.abort()` — stop any streaming turn.
 4. Load or mutate via `SessionManager` / `SessionStore`.
-5. `session.reset()` + `session.restoreMessages(ctx.messages)` + `restoreModelFromContext(ctx.model)`.
-6. `emitSessionLoaded()`.
+5. `session.reset()` + `session.restoreMessages(ctx.messages)` + `await restoreModelFromContext(ctx.model)`.
+6. `emitSessionLoaded()` — includes the `{provider, id}` identifier from `ctx.model` in the envelope so the main thread does not need a follow-up `get_state`.
 
 `deleteSession(id)` adds a special case: if the active session is deleted, the host auto-loads the parent (or calls `newSession()`) so the UI never lands on a blank state.
 
@@ -136,7 +134,7 @@ Serialisation through `writeChain` is essential: two `message_end` events in the
   2. Length gate: `path.length < settings.minEntriesToCompact && !force` → return.
   3. `prepareCompaction(path, settings, { force })` — returns `null` if there's nothing to compact.
   4. Emit `compaction_start` through the sink.
-  5. `compactSummarize(preparation, model, { authProvider, signal })`. Model is `session.getModel()`; throws if unset.
+  5. `compactSummarize(preparation, model, { provider, signal })`. Model is `session.getModel()`; throws if unset.
   6. On success: `sm.appendCompaction(...)`, rebuild context via `buildSessionContext()`, `session.restoreMessages`, `emitSessionLoaded`, emit `compaction_end{success: true, tokensBefore}`.
   7. On error (non-abort): emit `compaction_end{success: false, errorMessage}`.
   8. Abort-signal aborts suppress both emissions (the session already moved on).
@@ -146,7 +144,7 @@ Full pipeline detail is in [`compaction.md`](./compaction.md).
 
 ### `emitSessionLoaded` helper
 
-Private. Builds `{type: 'session_loaded', sessionId, header, name, messages, messageMeta}` from `SessionManager.getHeader()` + `getSessionName()` + `buildSessionContext()` and forwards through `hostEventSink`. No-op if no sink or no session.
+Private. Builds `{type: 'session_loaded', sessionId, header, name, messages, messageMeta, model}` from `SessionManager.getHeader()` + `getSessionName()` + `buildSessionContext()` and forwards through `hostEventSink`. The `model` field mirrors `ctx.model` as `{provider, id}` (or `null`) so the main thread can update its combobox directly. No-op if no sink or no session.
 
 ### `AgentSessionHost` interface
 
@@ -159,7 +157,7 @@ Declared in `rpc/rpc-server.ts`. `WorkerAgentHost` satisfies it structurally (op
 
 ## Tests
 
-- `packages/web-agent/src/worker-agent/worker/worker-host.test.ts` — integration over the `AgentSessionHost` surface with a fake session + fake auth provider. Covers auth delegation (verifies `authProvider.setAuthToken` is invoked with the forwarded credential), session lifecycle, compaction triggering, and MCP upcall routing.
+- `packages/web-agent/src/worker-agent/worker/worker-host.test.ts` — integration over the `AgentSessionHost` surface with a fake session + fake `LlmProvider`. Covers auth-token delegation (verifies `provider.setAuthToken` is invoked with the forwarded credential), catalog-driven `setModel` / session-restore resolution, session lifecycle, compaction triggering, and MCP upcall routing.
 
 ## Change procedure
 

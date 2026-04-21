@@ -11,11 +11,11 @@
 
 import { streamSimple } from '@mariozechner/pi-ai';
 import type { StreamFn } from '@mariozechner/pi-agent-core';
-import type { LlmAuthProvider } from './types';
+import type { LlmProvider } from './types';
 
-export function createStreamFn(authProvider: LlmAuthProvider): StreamFn {
+export function createStreamFn(provider: LlmProvider): StreamFn {
   return async (model, context, options) => {
-    const auth = await authProvider.getApiKeyAndHeaders(model);
+    const auth = await provider.getApiKeyAndHeaders(model);
     const headers = mergeHeaders(auth.headers, options?.headers);
     return streamSimple(model, context, {
       ...options,

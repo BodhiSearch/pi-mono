@@ -7,7 +7,9 @@ import { type AgentSessionHost, type HostEventSink, RpcServer } from './rpc-serv
 import type { RpcSessionState } from './rpc-types';
 import { createInProcessTransportPair } from './transports/in-process';
 
-function createFakeSession(): AgentSessionHost {
+type FakeSession = AgentSessionHost & { __seedModels(models: Model<Api>[]): void };
+
+function createFakeSession(): FakeSession {
   const listeners = new Set<(event: AgentEvent) => void | Promise<void>>();
   const state: {
     messages: AgentMessage[];
@@ -70,11 +72,13 @@ function createFakeSession(): AgentSessionHost {
       state.model = resolved;
       return resolved;
     },
-    setAvailableModels(models: Model<Api>[]): void {
-      state.availableModels = [...models];
-    },
     getAvailableModels(): Model<Api>[] {
       return [...state.availableModels];
+    },
+    // Test-only hook for seeding the fake catalog, mirroring the prior
+    // setAvailableModels RPC but kept off the AgentSessionHost interface.
+    __seedModels(models: Model<Api>[]): void {
+      state.availableModels = [...models];
     },
     setSystemPrompt(prompt) {
       state.systemPrompt = prompt;
@@ -105,7 +109,7 @@ function createFakeSession(): AgentSessionHost {
   };
 }
 
-function bootPair(): { session: AgentSessionHost; client: RpcClient } {
+function bootPair(): { session: FakeSession; client: RpcClient } {
   const session = createFakeSession();
   const { client: clientT, server: serverT } = createInProcessTransportPair();
   new RpcServer(serverT, session);
@@ -132,7 +136,7 @@ describe('RPC round-trip', () => {
   });
 
   test('get_state returns a serialized snapshot', async () => {
-    const { client } = bootPair();
+    const { session, client } = bootPair();
 
     const initial = await client.getState();
     expect(initial).toEqual({
@@ -146,7 +150,8 @@ describe('RPC round-trip', () => {
       provider: 'fake',
       baseUrl: '',
     } as unknown as Model<Api>;
-    await client.setAvailableModels([fakeModel]);
+    // Worker now owns catalog — seed the fake directly rather than via RPC.
+    session.__seedModels([fakeModel]);
     await client.setModel('fake', 'test');
 
     const afterModel = await client.getState();
@@ -224,6 +229,7 @@ function createSessionedHost(): AgentSessionHost {
       name: rec.name,
       messages: [...rec.messages],
       messageMeta: rec.messages.map((_, i) => ({ entryId: `entry-${rec.id}-${i}` })),
+      model: null,
     });
   };
 

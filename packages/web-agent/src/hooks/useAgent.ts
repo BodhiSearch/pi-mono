@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isDirectState, useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { Api, Model } from '@mariozechner/pi-ai';
 import { getErrorMessage } from '@/lib/utils';
-import { apiFormatToProvider, buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
-import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
-import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { useWebAgent } from '@/providers/web-agent-context';
 import { useSessionsList } from '@/hooks/useSessionsList';
 import { BODHI_PROVIDER_TAG } from '@/worker-bodhi';
@@ -19,7 +17,7 @@ interface ActiveSession {
 }
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
-const EMPTY_MODELS: BodhiModelInfo[] = [];
+const EMPTY_MODELS: Model<Api>[] = [];
 
 interface UseAgentInput {
   /** MCP tool descriptors (plain data) shipped to the Worker. */
@@ -36,61 +34,20 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
   const [streamingMessage, setStreamingMessage] = useState<AgentMessage | undefined>(undefined);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [models, setModels] = useState<BodhiModelInfo[]>([]);
+  const [models, setModels] = useState<Model<Api>[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModelState] = useState<string>('');
-  const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [messageMeta, setMessageMeta] = useState<UiMessageMeta[]>([]);
   const sessionSummaries = useSessionsList();
 
   const isLoadingModelsRef = useRef(false);
   const sessionBootRef = useRef(false);
-  /**
-   * Holds the most recent `{ provider, modelId }` restored from a
-   * session_loaded envelope when the `models` list wasn't ready yet.
-   * The `models`-settles effect drains this and syncs the combobox.
-   */
-  const pendingRestoredModelRef = useRef<{ provider: string; modelId: string } | null>(null);
-  /** Latest `models` snapshot, readable from event callbacks without stale closures. */
-  const modelsRef = useRef<BodhiModelInfo[]>(EMPTY_MODELS);
-  useEffect(() => {
-    modelsRef.current = models;
-  }, [models]);
-
-  const applyRestoredModelIdentifier = useCallback(
-    (id: { provider: string; modelId: string } | null) => {
-      if (!id) {
-        pendingRestoredModelRef.current = null;
-        return;
-      }
-      const currentModels = modelsRef.current;
-      if (currentModels.length === 0) {
-        // Models not loaded yet — stash; the loadModels `getState` pass
-        // or the drain effect will finish the apply later.
-        pendingRestoredModelRef.current = id;
-        return;
-      }
-      const match = currentModels.find(m => m.id === id.modelId);
-      if (match) {
-        setSelectedModelState(match.id);
-        setSelectedApiFormat(match.apiFormat);
-      } else {
-        console.warn(
-          `[useAgent] restored model ${id.provider}/${id.modelId} not in catalog — falling back`
-        );
-        setSelectedModelState(currentModels[0].id);
-        setSelectedApiFormat(currentModels[0].apiFormat);
-      }
-      pendingRestoredModelRef.current = null;
-    },
-    []
-  );
 
   // Push the auth credential envelope to the Worker on every change.
-  // The Worker's BodhiAuthProvider captures the token; the next
-  // streamFn / compaction call reads it synchronously via
-  // `getApiKeyAndHeaders(model)`.
+  // The Worker's BodhiProvider captures the token; the next streamFn /
+  // compaction / catalog-fetch call reads it synchronously via
+  // `getApiKeyAndHeaders(model)` or `getAvailableModels()`.
   useEffect(() => {
     const state = bodhiClient.getState();
     const baseUrl = isDirectState(state) && state.url ? state.url : undefined;
@@ -170,10 +127,10 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
 
   // Session-loaded envelopes are the authoritative signal that the Worker
   // has swapped sessions. Replace the local message buffer, surface the
-  // new active-session meta, and persist the id so a reload restores it.
-  // The picker list is driven by `useSessionsList` (Dexie liveQuery), so
-  // no manual refresh is needed — new/renamed/deleted sessions appear
-  // automatically on cross-context write.
+  // new active-session meta, persist the id for reload, and apply the
+  // restored model identifier the envelope now carries directly — the
+  // Worker resolves `{ provider, id }` server-side before emitting, so
+  // the main thread no longer needs a follow-up `getState` round trip.
   useEffect(() => {
     return rpcClient.onSessionLoaded(event => {
       setMessages(event.messages);
@@ -189,32 +146,11 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
           // localStorage disabled or full — fall back to in-memory only.
         }
       }
-      // Mirror coding-agent's TUI pattern: after a session swap, poll
-      // `get_state` for the restored model and sync the combobox.
-      // `models` may not be loaded yet (boot race) — `applyRestoredModelIdentifier`
-      // stashes in that case and the drain effect below finishes the apply.
-      void rpcClient
-        .getState()
-        .then(state => {
-          applyRestoredModelIdentifier(
-            state.model ? { provider: state.model.provider, modelId: state.model.id } : null
-          );
-        })
-        .catch(err => {
-          console.error('[useAgent] getState after session_loaded failed:', err);
-        });
+      if (event.model) {
+        setSelectedModelState(event.model.id);
+      }
     });
-  }, [rpcClient, applyRestoredModelIdentifier]);
-
-  // Drain any pending restored-model identifier when `models` settles
-  // (boot-time race: the first session_loaded fires before the catalog
-  // is loaded, so the handler stashed the id). Runtime session-switches
-  // apply directly from the handler — nothing to drain there.
-  useEffect(() => {
-    const pending = pendingRestoredModelRef.current;
-    if (!pending || models.length === 0) return;
-    applyRestoredModelIdentifier(pending);
-  }, [models, applyRestoredModelIdentifier]);
+  }, [rpcClient]);
 
   // Boot-time session restore: prefer the session id from localStorage so
   // reloads pick up where the user left off. StrictMode-safe via a ref.
@@ -258,37 +194,18 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     setIsLoadingModels(true);
     setError(null);
     try {
-      const list = await fetchBodhiModels(bodhiClient);
+      // The Worker's BodhiProvider owns the fetch against `/bodhi/v1/models`
+      // — we just consume the `Model<Api>[]` it returns. No main-thread
+      // mapping / metadata fabrication here.
+      const list = await rpcClient.getAvailableModels();
       setModels(list);
-      // Seed the Worker-side model registry so `setModel(provider,
-      // modelId)` can resolve identifiers. Coding-agent owns this
-      // registry via config-file seed; we push from the main thread
-      // because only it has the bodhiClient.
-      const serverUrl = getServerUrlOrThrow(bodhiClient.getState());
-      const resolved = list.map(m => buildModel(m.id, serverUrl, m.apiFormat));
-      await rpcClient.setAvailableModels(resolved);
-      // Seeding the registry triggers the Worker's boot-race recovery:
-      // any persisted `model_change` that couldn't resolve earlier now
-      // resolves and becomes the session's active model. Ask the Worker
-      // for the authoritative state and pick that over the default. Only
-      // falls back to `list[0]` when the session genuinely has no
-      // restored model (fresh session, or stale id removed earlier).
-      const restored = await rpcClient.getState();
-      if (restored.model) {
-        const match = list.find(m => m.id === restored.model?.id);
-        if (match) {
-          setSelectedModelState(match.id);
-          setSelectedApiFormat(match.apiFormat);
-        } else if (list.length > 0) {
-          setSelectedModelState(list[0].id);
-          setSelectedApiFormat(list[0].apiFormat);
-        }
-      } else if (list.length > 0 && !selectedModel) {
-        setSelectedModelState(list[0].id);
-        setSelectedApiFormat(list[0].apiFormat);
-      }
-      // Boot-time restore is now handled; any earlier stash is stale.
-      pendingRestoredModelRef.current = null;
+      // If no model has been selected yet (fresh session) and the Worker
+      // didn't already hand us a restored identifier via `session_loaded`,
+      // fall back to the first entry so the combobox isn't blank.
+      setSelectedModelState(prev => {
+        if (prev) return prev;
+        return list[0]?.id ?? '';
+      });
     } catch (err) {
       console.error('Failed to fetch models:', err);
       setError(getErrorMessage(err, 'Failed to fetch models'));
@@ -296,7 +213,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
       setIsLoadingModels(false);
       isLoadingModelsRef.current = false;
     }
-  }, [bodhiClient, isAuthenticated, selectedModel, rpcClient]);
+  }, [isAuthenticated, rpcClient]);
 
   useEffect(() => {
     if (isReady && isAuthenticated && models.length === 0 && !isLoadingModelsRef.current) {
@@ -310,9 +227,8 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     }
   }, [isAuthenticated, rpcClient]);
 
-  const setSelectedModel = useCallback((id: string, fmt: ApiFormat) => {
+  const setSelectedModel = useCallback((id: string) => {
     setSelectedModelState(id);
-    setSelectedApiFormat(fmt);
   }, []);
 
   const sendMessage = useCallback(
@@ -321,12 +237,15 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
         setError('Please select a model first');
         return;
       }
+      const match = models.find(m => m.id === selectedModel);
+      if (!match) {
+        setError('Selected model is no longer available. Pick another model and retry.');
+        return;
+      }
       setError(null);
 
-      const provider = apiFormatToProvider(selectedApiFormat);
-
       await rpcClient.setSystemPrompt('');
-      await rpcClient.setModel(provider, selectedModel);
+      await rpcClient.setModel(match.provider, match.id);
 
       try {
         await rpcClient.prompt(prompt);
@@ -336,7 +255,7 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
         setError(getErrorMessage(err, 'Failed to send message'));
       }
     },
-    [selectedModel, selectedApiFormat, rpcClient]
+    [selectedModel, models, rpcClient]
   );
 
   const stop = useCallback(() => {
@@ -408,7 +327,6 @@ export function useAgent({ mcpToolDescriptors, toolCallHandler }: UseAgentInput)
     streamingMessage: isAuthenticated ? streamingMessage : undefined,
     isStreaming: isAuthenticated ? isStreaming : false,
     selectedModel: isAuthenticated ? selectedModel : '',
-    selectedApiFormat,
     setSelectedModel,
     sendMessage,
     stop,

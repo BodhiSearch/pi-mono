@@ -5,7 +5,7 @@ Living specs for extractable modules under `packages/web-agent/src/`. Each folde
 | Module | Source of truth | Spec folder |
 | --- | --- | --- |
 | `worker-agent` — browser-runtime coding-agent harness, future `@bodhiapp/bodhi-web-agent` | `packages/web-agent/src/worker-agent/` | [`./worker-agent/`](./worker-agent/index.md) |
-| `worker-bodhi` — concrete Bodhi `LlmAuthProvider` | `packages/web-agent/src/worker-bodhi/` | [`./worker-bodhi/`](./worker-bodhi/index.md) |
+| `worker-bodhi` — concrete Bodhi `LlmProvider` | `packages/web-agent/src/worker-bodhi/` | [`./worker-bodhi/`](./worker-bodhi/index.md) |
 
 ## Conventions
 

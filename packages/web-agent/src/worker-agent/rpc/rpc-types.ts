@@ -28,21 +28,19 @@ export type RpcCommand =
   | { id: string; type: 'get_state' }
   | { id: string; type: 'get_messages' }
   | { id: string; type: 'set_model'; provider: string; modelId: string }
-  | { id: string; type: 'get_available_models' }
   /**
-   * Seed the Worker-side model registry. Wire shape mirrors the
-   * `get_available_models` response — it's the same `Model<Api>[]` payload,
-   * just flowing in the opposite direction. Coding-agent's node Worker
-   * owns its registry via config-file seed; web-agent's Worker can't reach
-   * the Bodhi catalog on its own, so the main thread pushes it here.
+   * Ask the Worker for its current model catalog. The Worker delegates to
+   * the injected `LlmProvider.getAvailableModels()` — for Bodhi this
+   * round-trips `/bodhi/v1/models` each call, so the main thread owns
+   * none of the fetching/mapping logic.
    */
-  | { id: string; type: 'set_available_models'; models: Model<Api>[] }
+  | { id: string; type: 'get_available_models' }
   | { id: string; type: 'set_system_prompt'; prompt: string }
   | { id: string; type: 'reset' }
   /**
    * Rotate the worker-side LLM auth credential. The payload carries a
    * `provider` tag so future non-Bodhi auth providers can coexist; the
-   * worker's `LlmAuthProvider` inspects the tag and accepts or ignores
+   * worker's `LlmProvider` inspects the tag and accepts or ignores
    * the credential accordingly.
    */
   | { id: string; type: 'set_auth_token'; credential: LlmAuthCredential | null }
@@ -125,7 +123,6 @@ export type RpcResponse =
       success: true;
       data: { models: Model<Api>[] };
     }
-  | { id: string; type: 'response'; command: 'set_available_models'; success: true }
   | { id: string; type: 'response'; command: 'set_system_prompt'; success: true }
   | { id: string; type: 'response'; command: 'reset'; success: true }
   | { id: string; type: 'response'; command: 'set_auth_token'; success: true }
@@ -219,6 +216,18 @@ export interface RpcSessionLoadedEvent {
   messages: AgentMessage[];
   /** Per-message metadata aligned with `messages` (entry ids + compaction info). */
   messageMeta: UiMessageMeta[];
+  /**
+   * The model identifier the session resolved to after replaying its
+   * persisted `model_change` entries, or `null` when the session has no
+   * selected model. Populated by the Worker so the main thread can drive
+   * its combobox state directly off this envelope — no follow-up
+   * `get_state` round trip is needed to recover the selection.
+   *
+   * Shape `{ provider, id }` mirrors `Model<Api>` rather than the
+   * internal `SessionContext.model.modelId` name so the UI can match
+   * directly against entries from `get_available_models`.
+   */
+  model: { provider: string; id: string } | null;
 }
 
 /**

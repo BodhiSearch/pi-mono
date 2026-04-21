@@ -34,9 +34,8 @@ Declared in `rpc-types.ts` as the `RpcCommand` union. Each command has an `id` f
 | `reset` | — | Reset agent state. |
 | `get_state` | — | Snapshot `RpcSessionState`. |
 | `get_messages` | — | Full message list. |
-| `set_model` | `provider`, `modelId` | Resolve + set active model. |
-| `get_available_models` | — | List registry. |
-| `set_available_models` | `models: Model<Api>[]` | Seed registry from main thread. |
+| `set_model` | `provider`, `modelId` | Resolve via `LlmProvider.getAvailableModels()` and set active model. |
+| `get_available_models` | — | Fetch the live catalog from the worker-owned `LlmProvider`. |
 | `set_system_prompt` | `prompt: string` | Configure system prompt. |
 | `set_auth_token` | `credential: LlmAuthCredential \| null` | Rotate the auth credential. |
 | `mount_vault` | `handle: FileSystemDirectoryHandle` | Mount FSA handle. |
@@ -59,13 +58,15 @@ Declared in `rpc-types.ts` as the `RpcCommand` union. Each command has an `id` f
 
 Commands that return payloads (`get_state`, `get_messages`, `set_model`, `get_available_models`, `list_sessions`, `new_session`, `fork_session`, `get_session_meta`) populate `data`.
 
+`get_available_models` returns the catalog produced by `LlmProvider.getAvailableModels()` at call time. The worker does not cache a seeded list between calls — each RPC triggers a fresh provider-side fetch.
+
 ### Events (worker → main, unsolicited)
 
 `RpcEventEnvelope` union:
 
 - `RpcAgentEventEnvelope` (`type: 'event'`) — wraps one pi-agent-core `AgentEvent` plus a state snapshot (`messages`, `isStreaming`, `streamingMessage`, `errorMessage`) so the main thread can reflect UI state off a single envelope without follow-up `get_*` commands.
 - `RpcToolCallRequest` (`type: 'tool_call_request'`) — MCP tool upcall; `{callId, toolName, args}`. Flow in [`mcp-proxy.md`](./mcp-proxy.md).
-- `RpcSessionLoadedEvent` (`type: 'session_loaded'`) — full restored session: `{sessionId, header, name, messages, messageMeta}`. Emitted at session switch, model-registry reseed (if a session was already active), and after a successful compaction.
+- `RpcSessionLoadedEvent` (`type: 'session_loaded'`) — full restored session: `{sessionId, header, name, messages, messageMeta, model}`. `model` carries the `{provider, id}` identifier resolved from the session's last `model_change` entry (or `null` when no model is active), so the main thread can update its combobox without a follow-up `get_state`. Emitted at session switch and after a successful compaction.
 - `RpcCompactionEvent` (`type: 'compaction_start' | 'compaction_end'`) — compaction lifecycle; `compaction_end` carries `{success, tokensBefore?, errorMessage?}`.
 
 ### Shared types
@@ -100,7 +101,7 @@ Typed facade over a `Transport`. Responsibilities:
 
 Notable methods:
 
-- `prompt`, `abort`, `reset`, `getState`, `getMessages`, `setModel`, `getAvailableModels`, `setAvailableModels`, `setSystemPrompt`.
+- `prompt`, `abort`, `reset`, `getState`, `getMessages`, `setModel`, `getAvailableModels`, `setSystemPrompt`.
 - `setAuthToken(credential: LlmAuthCredential | null)` — sends `set_auth_token`. The envelope shape is the RPC contract; construction lives in the main-thread integration (`packages/web-agent/src/hooks/useAgent.ts`).
 - `mountVault`, `unmountVault`, `setMcpTools`, `setToolCallHandler(handler | null)`.
 - `subscribe(listener)`, `onSessionLoaded(listener)`, `onCompactionEvent(listener)` — each returns an unsubscribe closure.
@@ -123,7 +124,7 @@ Binds a `Transport` to an `AgentSessionHost`. Responsibilities:
 
 Narrow contract the server drives. `WorkerAgentHost` satisfies it structurally. Core methods are required:
 
-- `prompt`, `abort`, `setModel`, `setAvailableModels`, `getAvailableModels`, `setSystemPrompt`, `reset`, `getState`, `getMessages`, `isStreaming`, `getStreamingMessage`, `getErrorMessage`, `subscribe`.
+- `prompt`, `abort`, `setModel`, `getAvailableModels` (may return sync or async), `setSystemPrompt`, `reset`, `getState`, `getMessages`, `isStreaming`, `getStreamingMessage`, `getErrorMessage`, `subscribe`.
 
 Optional members let test fakes implement subsets:
 

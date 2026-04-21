@@ -58,7 +58,7 @@ async function assertPortsFree(): Promise<void> {
   // in parallel with globalSetup — checking it here races and spuriously fails.
   // Playwright's `reuseExistingServer: false` already surfaces a clear error if
   // that port is taken before the run starts.
-  const portsToCheck = [BODHI_SERVER_PORT];
+  const portsToCheck = [1135, BODHI_SERVER_PORT];
   for (const port of portsToCheck) {
     if (await isPortInUse(port)) {
       throw new Error(

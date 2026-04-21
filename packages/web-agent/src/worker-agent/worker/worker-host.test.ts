@@ -13,7 +13,7 @@ import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import { describe, expect, test } from 'vitest';
 import type { AgentSession } from '../core/agent-session';
-import type { LlmAuthCredential, LlmAuthProvider } from '../llm/types';
+import type { LlmAuthCredential, LlmProvider } from '../llm/types';
 import { MemorySessionStore } from '../core/session/memory-store';
 import type { SessionStore } from '../core/session/store';
 import type { HostEventSink } from '../rpc/rpc-server';
@@ -108,21 +108,30 @@ function userMessage(text: string): AgentMessage {
   return { role: 'user', content: text } as unknown as AgentMessage;
 }
 
-type FakeAuthProvider = LlmAuthProvider & {
+type FakeProvider = LlmProvider & {
   credentials: (LlmAuthCredential | null)[];
   nextAuth: { apiKey: string; headers?: Record<string, string> };
+  /** Test-only hook that replaces the catalog returned by getAvailableModels. */
+  setModels(models: Model<Api>[]): void;
 };
 
-function makeFakeAuthProvider(): FakeAuthProvider {
+function makeFakeProvider(): FakeProvider {
   const credentials: (LlmAuthCredential | null)[] = [];
   const nextAuth = { apiKey: 'fake-key' };
+  let models: Model<Api>[] = [];
   return {
     credentials,
     nextAuth,
     async getApiKeyAndHeaders() {
       return nextAuth;
     },
-    setAuthToken(credential) {
+    async getAvailableModels() {
+      return [...models];
+    },
+    setModels(next: Model<Api>[]) {
+      models = [...next];
+    },
+    setAuthToken(credential: LlmAuthCredential | null) {
       credentials.push(credential);
     },
   };
@@ -132,17 +141,17 @@ function makeHost(store: SessionStore = new MemorySessionStore()): {
   host: WorkerAgentHost;
   fake: FakeSession;
   store: SessionStore;
-  authProvider: FakeAuthProvider;
+  provider: FakeProvider;
 } {
   const fake = makeFakeAgentSession();
-  const authProvider = makeFakeAuthProvider();
-  const host = new WorkerAgentHost(fake.session, makeFakePort(), store, authProvider);
-  return { host, fake, store, authProvider };
+  const provider = makeFakeProvider();
+  const host = new WorkerAgentHost(fake.session, makeFakePort(), store, provider);
+  return { host, fake, store, provider };
 }
 
 describe('WorkerAgentHost auth delegation', () => {
-  test('setAuthToken forwards credentials to the injected LlmAuthProvider', () => {
-    const { host, authProvider } = makeHost();
+  test('setAuthToken forwards credentials to the injected LlmProvider', () => {
+    const { host, provider } = makeHost();
     const credential: LlmAuthCredential = {
       provider: 'bodhi',
       baseUrl: 'https://example.test',
@@ -150,7 +159,7 @@ describe('WorkerAgentHost auth delegation', () => {
     };
     host.setAuthToken(credential);
     host.setAuthToken(null);
-    expect(authProvider.credentials).toEqual([credential, null]);
+    expect(provider.credentials).toEqual([credential, null]);
   });
 });
 
@@ -443,10 +452,10 @@ function fakeModel(provider: string, id: string): Model<Api> {
 }
 
 describe('WorkerAgentHost — model registry + persistence', () => {
-  test('setModel resolves via the registry and updates the session', async () => {
-    const { host, fake } = makeHost();
+  test('setModel resolves via the provider catalog and updates the session', async () => {
+    const { host, fake, provider } = makeHost();
     const oai = fakeModel('openai', 'gpt-4.1-nano');
-    host.setAvailableModels([oai]);
+    provider.setModels([oai]);
     await host.newSession();
 
     const resolved = await host.setModel('openai', 'gpt-4.1-nano');
@@ -454,7 +463,7 @@ describe('WorkerAgentHost — model registry + persistence', () => {
     expect(fake.getCurrentModel()).toBe(oai);
   });
 
-  test('setModel throws when the identifier is not in the registry', async () => {
+  test('setModel throws when the identifier is not in the provider catalog', async () => {
     const { host } = makeHost();
     await host.newSession();
     await expect(host.setModel('openai', 'unknown-model')).rejects.toThrow(/Model not registered/);
@@ -462,9 +471,9 @@ describe('WorkerAgentHost — model registry + persistence', () => {
 
   test('setModel persists a model_change entry; repeated setModel dedupes', async () => {
     const store = new MemorySessionStore();
-    const { host } = makeHost(store);
+    const { host, provider } = makeHost(store);
     const oai = fakeModel('openai', 'gpt-4.1-nano');
-    host.setAvailableModels([oai]);
+    provider.setModels([oai]);
     const { sessionId } = await host.newSession();
 
     await host.setModel('openai', 'gpt-4.1-nano');
@@ -483,10 +492,10 @@ describe('WorkerAgentHost — model registry + persistence', () => {
 
   test('setModel to a different identity appends a second model_change entry', async () => {
     const store = new MemorySessionStore();
-    const { host } = makeHost(store);
+    const { host, provider } = makeHost(store);
     const oai = fakeModel('openai', 'gpt-4.1-nano');
     const gem = fakeModel('google', 'gemini-2.0-flash-lite');
-    host.setAvailableModels([oai, gem]);
+    provider.setModels([oai, gem]);
     const { sessionId } = await host.newSession();
 
     await host.setModel('openai', 'gpt-4.1-nano');
@@ -511,49 +520,51 @@ describe('WorkerAgentHost — model registry + persistence', () => {
     const gem = fakeModel('google', 'gemini-2.0-flash-lite');
 
     // Host 1: record a model_change on a session.
-    const { host: host1 } = makeHost(store);
-    host1.setAvailableModels([gem]);
+    const { host: host1, provider: provider1 } = makeHost(store);
+    provider1.setModels([gem]);
     const { sessionId } = await host1.newSession();
     await host1.setModel('google', 'gemini-2.0-flash-lite');
     await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
 
-    // Host 2: load it fresh, registry seeded — restore should apply.
-    const { host: host2, fake: fake2 } = makeHost(store);
-    host2.setAvailableModels([gem]);
+    // Host 2: load it fresh, catalog available — restore should apply.
+    const { host: host2, fake: fake2, provider: provider2 } = makeHost(store);
+    provider2.setModels([gem]);
     await host2.loadSession(sessionId);
 
     expect(fake2.getCurrentModel()?.id).toBe('gemini-2.0-flash-lite');
     expect(fake2.getCurrentModel()?.provider).toBe('google');
   });
 
-  test('loadSession with empty registry leaves model undefined; late setAvailableModels retroactively applies', async () => {
+  test('loadSession with an empty provider catalog leaves model undefined', async () => {
+    // Catalog-ownership is now the provider's responsibility and
+    // getAvailableModels is called synchronously during restore. If
+    // the catalog is empty at load time, the persisted model_change
+    // cannot be resolved — the session stays model-less and the UI
+    // must pick a fresh model. (This replaces the previous boot-race
+    // recovery behaviour where a later setAvailableModels retroactively
+    // applied the restore.)
     const store = new MemorySessionStore();
     const gem = fakeModel('google', 'gemini-2.0-flash-lite');
 
-    const { host: host1 } = makeHost(store);
-    host1.setAvailableModels([gem]);
+    const { host: host1, provider: provider1 } = makeHost(store);
+    provider1.setModels([gem]);
     const { sessionId } = await host1.newSession();
     await host1.setModel('google', 'gemini-2.0-flash-lite');
     await new Promise(r => setTimeout(r, 0));
     await new Promise(r => setTimeout(r, 0));
 
-    // Host 2: load WITHOUT seeding the registry first.
     const { host: host2, fake: fake2 } = makeHost(store);
     await host2.loadSession(sessionId);
     expect(fake2.getCurrentModel()).toBeUndefined();
-
-    // Now seed — the boot-race recovery path re-applies.
-    host2.setAvailableModels([gem]);
-    expect(fake2.getCurrentModel()?.id).toBe('gemini-2.0-flash-lite');
   });
 
   test('fork inherits the branch model; subsequent setModel on the fork does not affect the parent', async () => {
     const store = new MemorySessionStore();
     const oai = fakeModel('openai', 'gpt-4.1-nano');
     const gem = fakeModel('google', 'gemini-2.0-flash-lite');
-    const { host, fake } = makeHost(store);
-    host.setAvailableModels([oai, gem]);
+    const { host, fake, provider } = makeHost(store);
+    provider.setModels([oai, gem]);
 
     const { sessionId: parentId } = await host.newSession();
     await host.setModel('openai', 'gpt-4.1-nano');

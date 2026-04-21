@@ -34,12 +34,12 @@ Single top-level `self.addEventListener('message', ...)` that filters via `isAge
 
 `boot()` sequence:
 
-1. `new BodhiAuthProvider()` from `../../worker-bodhi`. **This is one of the two files under `worker-agent/` allowed to import a concrete auth provider;** the other is `boot.ts`.
+1. `new BodhiProvider()` from `../../worker-bodhi`. **This is one of the two files under `worker-agent/` allowed to import a concrete provider;** the other is `boot.ts`.
 2. `new AgentSession()` (no constructor options — auth flows through the injected `streamFn`).
-3. `session.setStreamFn(createStreamFn(authProvider))` from [`llm-auth.md`](./llm-auth.md).
+3. `session.setStreamFn(createStreamFn(provider))` from [`llm-provider.md`](./llm-provider.md).
 4. `vfsPort.start()` — listeners require explicit start.
 5. Construct the session store: `new DexieSessionStore(new WebAgentDB(options?.sessionsDbName ?? DEFAULT_DB_NAME))`.
-6. `new WorkerAgentHost(session, vfsPort, store, authProvider, { vaultMount: options?.vaultMount })`.
+6. `new WorkerAgentHost(session, vfsPort, store, provider, { vaultMount: options?.vaultMount })`.
 7. `agentPort.start()` + build an ad-hoc `Transport` wrapping it + `new RpcServer(transport, host)`.
 8. If `devSeed` is present, `await host.mountDevSeed(devSeed)`; errors are logged but not fatal.
 9. Best-effort `indexedDB.deleteDatabase('web-agent-sessions')` cleans up the legacy M5 ZenFS-backed DB.
@@ -59,11 +59,11 @@ Error handling is best-effort: the listener wraps boot in a `.catch` and logs; n
 
 `bootInProcess(agentOptions)` stands up a self-contained RPC pair on the main thread:
 
-1. `new BodhiAuthProvider()` (second of two allowed imports).
+1. `new BodhiProvider()` (second of two allowed imports).
 2. `new AgentSession({})`.
-3. `session.setStreamFn(createStreamFn(authProvider))`.
+3. `session.setStreamFn(createStreamFn(provider))`.
 4. `makeFakePort()` — returns `MessageChannel().port1` when available, else a no-op shim. The in-process fallback does not expose a usable VFS port; vault tools won't work, but the agent does.
-5. `new WorkerAgentHost(session, fakePort, new MemorySessionStore(), authProvider, { vaultMount: agentOptions?.vaultMount })`.
+5. `new WorkerAgentHost(session, fakePort, new MemorySessionStore(), provider, { vaultMount: agentOptions?.vaultMount })`.
 6. `createInProcessTransportPair()` → `new RpcServer(serverT, host)` (server retains itself via transport listener closure).
 7. Returns `{rpcClient: new RpcClient(clientT), vfsPort: null, worker: null}`.
 
@@ -90,7 +90,7 @@ The host app typically:
 
 ## Constraints
 
-- Only `agent-worker.ts` and `boot.ts` may import concrete auth providers. Everything else under `worker-agent/` depends on [`LlmAuthProvider`](./llm-auth.md).
+- Only `agent-worker.ts` and `boot.ts` may import concrete providers. Everything else under `worker-agent/` depends on [`LlmProvider`](./llm-provider.md).
 - The init message must carry both ports; splitting into two messages would race the Worker's `message` listener against the first post.
 - `agent-worker.ts` must tolerate arbitrary cross-library `postMessage` noise (the `isAgentWorkerInit` guard is not optional).
 

@@ -41,8 +41,15 @@ export interface AgentSessionHost {
    * resolved model so callers can echo it back to the client.
    */
   setModel(provider: string, modelId: string): Promise<Model<Api>>;
-  setAvailableModels(models: Model<Api>[]): void;
-  getAvailableModels(): Model<Api>[];
+  /**
+   * Return the model catalog the Worker currently resolves
+   * identifiers against. The default `WorkerAgentHost` delegates to
+   * `LlmProvider.getAvailableModels()`, which may be async (e.g. the
+   * Bodhi provider fetches `/bodhi/v1/models` on every call). The
+   * RPC server awaits the result before emitting
+   * `get_available_models` responses.
+   */
+  getAvailableModels(): Promise<Model<Api>[]> | Model<Api>[];
   setSystemPrompt(prompt: string): void;
   reset(): void;
   getState(): RpcSessionState;
@@ -180,7 +187,7 @@ export class RpcServer {
           return;
         }
         case 'get_available_models': {
-          const models = this.session.getAvailableModels();
+          const models = await this.session.getAvailableModels();
           this.transport.send({
             id,
             type: 'response',
@@ -190,10 +197,6 @@ export class RpcServer {
           } satisfies RpcResponse);
           return;
         }
-        case 'set_available_models':
-          this.session.setAvailableModels(raw.models);
-          this.transport.send(ok(id, 'set_available_models'));
-          return;
         case 'set_system_prompt':
           this.session.setSystemPrompt(raw.prompt);
           this.transport.send(ok(id, 'set_system_prompt'));
@@ -357,7 +360,6 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   get_messages: true,
   set_model: true,
   get_available_models: true,
-  set_available_models: true,
   set_system_prompt: true,
   reset: true,
   set_auth_token: true,

@@ -9,9 +9,11 @@
 export { AgentSession } from './core/agent-session';
 export type { AgentSessionOptions } from './core/agent-session';
 
-// LLM auth abstraction — interface worker-agent consumes; concrete
+// LLM provider abstraction — interface worker-agent consumes; concrete
 // implementations live outside this folder (e.g. `src/worker-bodhi/`).
-export type { LlmAuthCredential, LlmAuthProvider } from './llm/types';
+// Covers both auth resolution and catalog listing (the worker resolves
+// `(provider, modelId)` identifiers against `getAvailableModels()`).
+export type { LlmAuthCredential, LlmProvider } from './llm/types';
 export { createStreamFn } from './llm/stream';
 
 export { RpcServer } from './rpc/rpc-server';

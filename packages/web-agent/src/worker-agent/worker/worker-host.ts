@@ -19,7 +19,7 @@ import {
   shouldCompact,
   type CompactionSettings,
 } from '../core/compaction';
-import type { LlmAuthCredential, LlmAuthProvider } from '../llm/types';
+import type { LlmAuthCredential, LlmProvider } from '../llm/types';
 import { SessionManager } from '../core/session/session-manager';
 import type { SessionStore } from '../core/session/store';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
@@ -71,17 +71,17 @@ export class WorkerAgentHost implements AgentSessionHost {
   private readonly session: AgentSession;
   private readonly vfsPort: MessagePort;
   private readonly store: SessionStore;
-  private readonly authProvider: LlmAuthProvider;
+  /**
+   * The pluggable LLM gateway. Owns both auth resolution (used by the
+   * live streamFn and the summariser) and the model catalog the Worker
+   * resolves `(provider, id)` identifiers against. Coding-agent's node
+   * Worker ships a config-file seeded `ModelRegistry`; web-agent's
+   * Worker delegates the equivalent responsibility to this provider so
+   * the main thread never has to push the catalog itself.
+   */
+  private readonly provider: LlmProvider;
   private readonly vaultMount: string;
   private readonly compactionSettings: CompactionSettings;
-  /**
-   * Model registry seeded from the main thread via `setAvailableModels`.
-   * Coding-agent's node Worker owns its `ModelRegistry` via config-file
-   * seed at boot; web-agent's Worker gets the catalog pushed from the
-   * main thread (only it has the catalog fetcher). Resolution is the
-   * same: match by `(provider, id)`.
-   */
-  private availableModels: Model<Api>[] = [];
   /** Re-entrancy guard for the compaction pipeline. */
   private compactionInFlight = false;
   /** Cancels an in-flight summarisation LLM call on session swaps. */
@@ -91,13 +91,13 @@ export class WorkerAgentHost implements AgentSessionHost {
     session: AgentSession,
     vfsPort: MessagePort,
     store: SessionStore,
-    authProvider: LlmAuthProvider,
+    provider: LlmProvider,
     options: WorkerAgentHostOptions = {}
   ) {
     this.session = session;
     this.vfsPort = vfsPort;
     this.store = store;
-    this.authProvider = authProvider;
+    this.provider = provider;
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
     this.compactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, ...options.compactionSettings };
     // Persist user/assistant/toolResult messages on turn boundaries. After
@@ -139,16 +139,16 @@ export class WorkerAgentHost implements AgentSessionHost {
   /**
    * Set the active model by `(provider, modelId)`. Mirrors coding-agent
    * `AgentSession.setModel` (agent-session.ts:1394-1409): resolve via
-   * the Worker's registry, update in-memory state, then persist a
-   * `model_change` entry **iff** the identity actually changed along
+   * the injected provider's catalog, update in-memory state, then persist
+   * a `model_change` entry **iff** the identity actually changed along
    * the current branch. The dedupe makes the main-thread's
    * `onSessionLoaded → setModel` re-apply idempotent.
    */
   async setModel(provider: string, modelId: string): Promise<Model<Api>> {
-    const resolved = this.findModel(provider, modelId);
+    const resolved = await this.resolveModel(provider, modelId);
     if (!resolved) {
       throw new Error(
-        `Model not registered: ${provider}/${modelId}. Seed the registry via setAvailableModels first.`
+        `Model not registered: ${provider}/${modelId}. The provider's catalog did not return a matching entry.`
       );
     }
     this.session.setModel(resolved);
@@ -178,41 +178,35 @@ export class WorkerAgentHost implements AgentSessionHost {
     }
     return resolved;
   }
-  setAvailableModels(models: Model<Api>[]): void {
-    this.availableModels = [...models];
-    // Boot-race recovery: a session may have loaded before the catalog
-    // was seeded, in which case `restoreModelFromContext` couldn't
-    // resolve its persisted `model_change` and left the session model
-    // undefined. Re-run the restore + re-emit so the main thread's
-    // `onSessionLoaded → getState` sync picks up the now-resolvable
-    // identifier. Idempotent when resolution already succeeded.
-    const sm = this.sessionManager;
-    if (sm) {
-      const ctx = sm.buildSessionContext();
-      this.restoreModelFromContext(ctx.model);
-      this.emitSessionLoaded();
-    }
+  /**
+   * Return the Worker's authoritative model catalog. Delegates directly
+   * to the injected provider — for Bodhi this round-trips
+   * `/bodhi/v1/models` on every call.
+   */
+  getAvailableModels(): Promise<Model<Api>[]> {
+    return this.provider.getAvailableModels();
   }
-  getAvailableModels(): Model<Api>[] {
-    return [...this.availableModels];
-  }
-  private findModel(provider: string, modelId: string): Model<Api> | undefined {
-    return this.availableModels.find(m => m.provider === provider && m.id === modelId);
+  private async resolveModel(provider: string, modelId: string): Promise<Model<Api> | undefined> {
+    const catalog = await this.provider.getAvailableModels();
+    return catalog.find(m => m.provider === provider && m.id === modelId);
   }
   /**
    * Restore the in-memory model from a persisted branch. No side effect
    * on the session's JSONL transcript — the caller has already read
    * `ctx.model` from `buildSessionContext`, so there is nothing to append.
-   * If the registry can't resolve the identifier (pre-seed or stale
-   * entry), leaves the session's model undefined and lets the main
-   * thread's first-available fallback take over.
+   * If the provider's catalog can't resolve the identifier (e.g. the
+   * model was removed upstream since the branch was recorded), leaves
+   * the session's model undefined and lets the main thread's
+   * first-available fallback take over.
    */
-  private restoreModelFromContext(ctxModel: { provider: string; modelId: string } | null): void {
+  private async restoreModelFromContext(
+    ctxModel: { provider: string; modelId: string } | null
+  ): Promise<void> {
     if (!ctxModel) {
       this.session.setModel(undefined);
       return;
     }
-    const resolved = this.findModel(ctxModel.provider, ctxModel.modelId);
+    const resolved = await this.resolveModel(ctxModel.provider, ctxModel.modelId);
     this.session.setModel(resolved);
   }
   setSystemPrompt(prompt: string): void {
@@ -250,7 +244,7 @@ export class WorkerAgentHost implements AgentSessionHost {
    * or ignore the payload — so multi-provider hosts remain possible.
    */
   setAuthToken(credential: LlmAuthCredential | null): void {
-    this.authProvider.setAuthToken?.(credential);
+    this.provider.setAuthToken?.(credential);
   }
 
   /**
@@ -360,7 +354,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     const ctx = sm.buildSessionContext();
     this.session.restoreMessages(ctx.messages);
-    this.restoreModelFromContext(ctx.model);
+    await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
   }
 
@@ -376,7 +370,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     this.session.restoreMessages([]);
     const ctx = sm.buildSessionContext();
-    this.restoreModelFromContext(ctx.model);
+    await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
     return { sessionId: sm.getSessionId() };
   }
@@ -392,7 +386,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     const ctx = forked.buildSessionContext();
     this.session.restoreMessages(ctx.messages);
-    this.restoreModelFromContext(ctx.model);
+    await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
     return { sessionId: forked.getSessionId() };
   }
@@ -407,7 +401,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.reset();
     const ctx = sm.buildSessionContext();
     this.session.restoreMessages(ctx.messages);
-    this.restoreModelFromContext(ctx.model);
+    await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
   }
 
@@ -492,7 +486,7 @@ export class WorkerAgentHost implements AgentSessionHost {
       if (!model) throw new Error('No model set — cannot summarize');
 
       const result = await compactSummarize(preparation, model, {
-        authProvider: this.authProvider,
+        provider: this.provider,
         signal: abort.signal,
       });
 
@@ -538,6 +532,14 @@ export class WorkerAgentHost implements AgentSessionHost {
     const sm = this.sessionManager;
     if (!sink || !sm) return;
     const ctx = sm.buildSessionContext();
+    // `ctx.model` is stored as `{ provider, modelId }` in the session
+    // context; rename to `{ provider, id }` on the wire so it matches
+    // the shape of `Model<Api>` entries returned by
+    // `get_available_models`. The main thread uses this field directly
+    // to hydrate combobox state — no follow-up `get_state` round trip
+    // needed (that was the boot-race recovery path the old main-thread
+    // push model required).
+    const model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.modelId } : null;
     sink({
       type: 'session_loaded',
       sessionId: sm.getSessionId(),
@@ -545,6 +547,7 @@ export class WorkerAgentHost implements AgentSessionHost {
       name: sm.getSessionName(),
       messages: ctx.messages,
       messageMeta: ctx.messageMeta,
+      model,
     });
   }
 

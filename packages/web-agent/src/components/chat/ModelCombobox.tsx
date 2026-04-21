@@ -4,13 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import type { BodhiModelInfo } from '@/lib/bodhi-models';
-import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
+import type { Api, Model } from '@mariozechner/pi-ai';
 
 interface ModelComboboxProps {
-  models: BodhiModelInfo[];
+  models: Model<Api>[];
   selected: string;
-  onSelect: (id: string, fmt: ApiFormat) => void;
+  onSelect: (id: string) => void;
   disabled?: boolean;
 }
 
@@ -78,7 +77,7 @@ export default function ModelCombobox({
                 aria-selected={selected === m.id}
                 data-testid={`model-option-${m.id}`}
                 onClick={() => {
-                  onSelect(m.id, m.apiFormat);
+                  onSelect(m.id);
                   setSearch('');
                   setOpen(false);
                 }}

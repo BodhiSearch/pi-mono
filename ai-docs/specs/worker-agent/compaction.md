@@ -74,7 +74,7 @@ Pure; returns `CompactionPreparation | null`. Algorithm:
 
 ### `summarize.ts::compactSummarize`
 
-Shape: `compactSummarize(preparation, model, options: CompactSummarizeOptions)`, where `CompactSummarizeOptions = { authProvider: LlmAuthProvider, signal?: AbortSignal }`.
+Shape: `compactSummarize(preparation, model, options: CompactSummarizeOptions)`, where `CompactSummarizeOptions = { provider: LlmProvider, signal?: AbortSignal }`.
 
 Flow:
 
@@ -83,7 +83,7 @@ Flow:
 3. Assemble `promptText`:
    - With prior summary: `<conversation>…</conversation>\n\n<previous-summary>…</previous-summary>\n\n${basePrompt}`.
    - Without: `<conversation>…</conversation>\n\n${basePrompt}`.
-4. `auth = await authProvider.getApiKeyAndHeaders(model)` — auth resolution is delegated; see [`llm-auth.md`](./llm-auth.md).
+4. `auth = await provider.getApiKeyAndHeaders(model)` — auth resolution is delegated; see [`llm-provider.md`](./llm-provider.md).
 5. `maxTokens = floor(0.8 * (model.maxTokens ?? 4096))`.
 6. `completeSimple(model, { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: [user-message with promptText] }, { maxTokens, signal, apiKey: auth.apiKey, headers: auth.headers })`.
 7. On `stopReason === 'error'`, throw.
@@ -109,7 +109,7 @@ No auth-header synthesis. pi-ai's per-format provider code handles that.
 The orchestrator is `WorkerAgentHost.runCompaction` (see [`worker-host.md`](./worker-host.md)). Pipeline from the compaction module's perspective:
 
 1. **Preparation** — `prepareCompaction(path, settings, { force })`.
-2. **Summarisation** — `compactSummarize(preparation, model, { authProvider, signal })`.
+2. **Summarisation** — `compactSummarize(preparation, model, { provider, signal })`.
 3. **Persistence** — `SessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details)`.
 4. **Context rebuild** — `SessionManager.buildSessionContext()` emits the synthetic summary message; `AgentSession.restoreMessages(ctx.messages)` swaps the in-memory buffer.
 5. **Emissions** — host emits `session_loaded` (refreshed messages + meta) and `compaction_end{success, tokensBefore}`.
@@ -133,7 +133,7 @@ and emits a `UiMessageMeta{ kind: 'compaction-summary', tokensBefore, firstKeptE
 
 ## Constraints
 
-1. **No direct LLM auth.** `compactSummarize` only goes through `LlmAuthProvider`. No Bodhi-specific imports allowed here.
+1. **No direct LLM auth.** `compactSummarize` only goes through `LlmProvider`. No Bodhi-specific imports allowed here.
 2. **No side effects in `prepare.ts`.** It is pure so unit tests can exercise edge cases deterministically.
 3. **Abort discipline.** Any caller that may swap sessions must hold the `AbortController` and cancel it before starting a new compaction.
 

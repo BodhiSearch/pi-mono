@@ -20,7 +20,7 @@ import { RpcServer } from '../rpc/rpc-server';
 import { createInProcessTransportPair } from '../rpc/transports/in-process';
 import { createWorkerTransportPair } from '../rpc/transports/worker';
 import type { Transport } from '../rpc/transport';
-import { BodhiAuthProvider } from '../../worker-bodhi';
+import { BodhiProvider } from '../../worker-bodhi';
 import type { InMemoryVaultSeed, WebAgentOptions } from './init-protocol';
 import { WorkerAgentHost } from './worker-host';
 
@@ -90,13 +90,13 @@ function bootOnce(options: GetAgentWorkerOptions): AgentWorkerBoot {
 }
 
 function bootInProcess(agentOptions?: WebAgentOptions): AgentWorkerBoot {
-  const authProvider = new BodhiAuthProvider();
+  const provider = new BodhiProvider();
   const session = new AgentSession({});
-  session.setStreamFn(createStreamFn(authProvider));
+  session.setStreamFn(createStreamFn(provider));
   // No vfs port in fallback; vault tools won't work, but the agent does.
   const fakePort = makeFakePort();
   // In-process fallback uses MemorySessionStore so jsdom tests don't need IDB.
-  const host = new WorkerAgentHost(session, fakePort, new MemorySessionStore(), authProvider, {
+  const host = new WorkerAgentHost(session, fakePort, new MemorySessionStore(), provider, {
     vaultMount: agentOptions?.vaultMount,
   });
   const { client: clientT, server: serverT } = createInProcessTransportPair();

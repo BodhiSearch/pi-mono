@@ -81,19 +81,15 @@ export class RpcClient {
     return this.send({ type: 'set_model', provider, modelId }) as Promise<Model<Api>>;
   }
 
+  /**
+   * Ask the Worker for its model catalog. The Worker delegates to its
+   * injected `LlmProvider`; for Bodhi this triggers a fresh fetch of
+   * `/bodhi/v1/models` on every call.
+   */
   getAvailableModels(): Promise<Model<Api>[]> {
     return this.send({ type: 'get_available_models' }).then(
       data => (data as { models: Model<Api>[] }).models
     );
-  }
-
-  /**
-   * Seed / refresh the Worker-side model registry. Must be called before
-   * any `setModel` so the Worker can resolve `(provider, modelId)` to a
-   * concrete `Model<Api>`.
-   */
-  setAvailableModels(models: Model<Api>[]): Promise<void> {
-    return this.send({ type: 'set_available_models', models }) as Promise<void>;
   }
 
   setSystemPrompt(prompt: string): Promise<void> {

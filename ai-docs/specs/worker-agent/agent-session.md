@@ -19,7 +19,7 @@ Responsibilities:
 
 Explicit non-responsibilities:
 
-- **Auth is not owned here.** The session accepts a `StreamFn` at construction or via `setStreamFn`; the Worker composes it from an injected `LlmAuthProvider` in `worker/agent-worker.ts`.
+- **Auth is not owned here.** The session accepts a `StreamFn` at construction or via `setStreamFn`; the Worker composes it from an injected `LlmProvider` in `worker/agent-worker.ts`.
 - **Persistence is not owned here.** The session does not read or write session entries; that's [`sessions.md`](./sessions.md) and [`worker-host.md`](./worker-host.md).
 
 ## Technical reference
