@@ -1,0 +1,48 @@
+# Where they diverge (and why)
+
+These axes are intentional: each reflects a constraint one runtime imposes that the other does not.
+
+## Transport: stdio JSONL vs `MessagePort` structured clone
+
+- **coding-agent** RPC mode runs on top of stdin/stdout JSONL (`packages/coding-agent/src/modes/rpc/jsonl.ts`, `packages/coding-agent/src/modes/rpc/rpc-mode.ts`). Commands and responses are JSON lines; streams are deterministic because stdout is taken over with `packages/coding-agent/src/core/output-guard.ts`.
+- **web-agent** runs on top of `postMessage` + structured clone (`packages/web-agent/src/worker-agent/rpc/transport.ts`, `packages/web-agent/src/worker-agent/rpc/transports/`). This buys cheap `ArrayBuffer` / `MessagePort` / `FileSystemDirectoryHandle` transfer at the cost of a hard rule: **no functions may cross the RPC** (closures don't clone). That constraint ripples through the rest of the architecture — MCP tools can't ship across, `streamFn` is wired worker-side only, tool executors are installed by the worker host rather than configured via RPC.
+
+## Auth + model registry: monolithic vs single provider seam
+
+- **coding-agent** bundles **everything** — auth storage, OAuth flows, JSON-defined providers, model inventory, per-request header resolution — into `packages/coding-agent/src/core/auth-storage.ts` + `packages/coding-agent/src/core/model-registry.ts` (~1340 lines combined). A user can drop provider/model JSON into `~/.pi/` to extend the matrix; OAuth credentials live on disk.
+- **web-agent** exposes a small `LlmProvider` interface (`packages/web-agent/src/worker-agent/llm/types.ts:LlmProvider`) with two methods (`getApiKeyAndHeaders`, `getAvailableModels`) plus an optional `setAuthToken` rotation sink. The **host** owns auth storage (React providers, `localStorage`, etc.) and **rotates credentials into the worker** via the `set_auth_token` RPC. The concrete provider (`packages/web-agent/src/worker-bodhi/bodhi-provider.ts`) fetches the catalog on demand from `/bodhi/v1/models` and maps every alias variant to `Model<Api>`.
+
+**Why:** browsers don't have a file-system-level credential store, and the extracted `@bodhiapp/bodhi-web-agent` library needs to be usable behind any auth scheme (Bodhi, Supabase, custom OAuth, raw API key). Collapsing auth + catalog into one provider interface is the smallest possible coupling point.
+
+## Sessions: append-only JSONL on disk vs Dexie with in-memory fallback
+
+- **coding-agent**: one session = one `.jsonl` file under `~/.pi/sessions/`. `SessionManager` (~1425 loc, `packages/coding-agent/src/core/session-manager.ts`) does `appendFileSync` / `readFileSync` directly. Sessions are browsable with `cat`, `jq`, `grep`.
+- **web-agent**: `SessionStore` interface with **Dexie (IndexedDB)** as the primary backend and an in-memory store for tests (`packages/web-agent/src/worker-agent/core/session/{store,dexie-store,memory-store}.ts`). The same entry shapes are persisted but addressed by `(sessionId, entryId)` rows instead of file offsets. A single write chain (`WorkerAgentHost.turnBoundaryPersistence`) serialises message persistence, auto-compaction, and `session_loaded` re-emission so parent-id links never dangle.
+
+**Why:** browsers can't write JSONL files directly. Dexie gives transactional writes, indexed lookups, and survives tab refresh. The append-only invariant is still there — entries are only ever added, never mutated.
+
+## Filesystem: `process.cwd()` vs FSA vault
+
+- **coding-agent** tools walk real paths under `process.cwd()` and call Node `fs`.
+- **web-agent** mounts a user-selected `FileSystemDirectoryHandle` (from the FSA picker) as a ZenFS volume at `VAULT_MOUNT`, or an in-memory seed for dev. Tool paths are always vault-relative and go through `resolveVaultPath` (`packages/web-agent/src/worker-agent/fs/path-utils.ts:resolveVaultPath`) for sandboxing. The vault handle is forwarded to the Worker over a dedicated `vfsPort`; mounting is driven by `mount_vault` / `unmount_vault` RPCs.
+
+**Why:** the browser has no process-level CWD, and the security boundary must be enforced in code since the Worker can't `chroot`.
+
+## Tool hosting: worker-local vs main-thread MCP proxy
+
+- **coding-agent** tools are all local — `bashTool`, `readTool` etc. execute in-process with unrestricted access to the host Node environment.
+- **web-agent** has **two tool origins**:
+  1. **Worker-local vault tools** — `createVaultTools` runs inside the Worker against ZenFS.
+  2. **MCP proxy tools** — descriptors are registered in the Worker via `set_mcp_tools`, but when the agent invokes one the Worker emits a `tool_call_request` event up to the main thread, the host runs the actual MCP call (where the `bodhiClient` + auth context lives), and pipes the result back via `tool_call_response`. This is web-agent only — coding-agent has no equivalent RPC round-trip inside a tool call.
+
+**Why:** MCP clients in a browser need the fetch credential + OAuth context, which is host-owned; sending the live client across `postMessage` would require serialising functions.
+
+## Interactive UX: pi-tui TUI vs React host
+
+- **coding-agent** ships three run modes — `InteractiveMode` (pi-tui TUI with model selector, theme picker, slash commands, extension widgets), `runPrintMode` (one-shot stdout), `runRpcMode` (embed-in-another-app). The TUI is the primary UX.
+- **web-agent** has no shipped TUI and no print mode. The worker-agent library *is* the RPC surface; rendering is up to the host. The reference React app (`packages/web-agent/src/`) is one host; `@bodhiapp/bodhi-web-agent` consumers could build their own.
+
+## `AgentSession` sizing
+
+- **coding-agent** `AgentSession` is the centre of gravity — scoped models, thinking level cycling, steering / follow-up queues, bash queue, retry / overflow recovery, extension lifecycle, tool registry, system-prompt composition, skill parsing, `navigateTree`, `fork`, branch summarisation, session-stats.
+- **web-agent** `AgentSession` deliberately stays tiny (plain-data surface only); all orchestration moves to `WorkerAgentHost`. This is because the Worker boundary already forces a clean "plain data ↔ non-serialisable state" split, so `AgentSession` exposes only what the RPC server needs and `WorkerAgentHost` does the wiring.
