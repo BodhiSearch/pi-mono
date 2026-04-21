@@ -20,8 +20,30 @@ Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `p
 - @ai-docs/milestones/index.md — status board with progressive-disclosure hooks
 - @ai-docs/04-principles.md — working rules (read when a design choice is on the line)
 - @ai-docs/decisions/index.md — append-only decisions log
+- @ai-docs/specs/README.md — top-level navigation across all module specs
+- @ai-docs/specs/worker-agent/index.md — specs for `packages/web-agent/src/worker-agent/` (the extractable agent library)
+- @ai-docs/specs/worker-bodhi/index.md — specs for `packages/web-agent/src/worker-bodhi/` (the concrete Bodhi auth provider)
 
 Per-deliverable plans at `ai-docs/plans/*.md` are disposable; the files above are durable.
+
+## Functional specs
+
+`ai-docs/specs/` holds the living specs for the extractable worker-agent library and its concrete implementations. Each module has its own folder with an `index.md` entry point; topic files inside each folder combine the functional (what / why) and technical (how / where) views since splitting them leads to duplication and drift.
+
+Conventions:
+
+- Each module folder has `index.md` (overview, navigation, change procedure) and one file per topic / submodule.
+- Technical content references files by **repo-relative paths** and symbols by **method / field name**, never line numbers.
+- Specs are living documents. Changes to the code and changes to the matching spec ship together.
+
+**Rule:** any plan that changes files under `packages/web-agent/src/worker-agent/` or `packages/web-agent/src/worker-bodhi/` MUST include an explicit task to update the matching topic file(s) before the plan is considered complete. The spec update is part of the change, not a follow-up. When the functional / technical surface is unchanged (pure internal refactor), state that explicitly in the plan rather than skipping the check.
+
+Currently tracked:
+
+| Folder | Spec |
+| --- | --- |
+| `packages/web-agent/src/worker-agent/` | `ai-docs/specs/worker-agent/` (see its `index.md` for the topic map) |
+| `packages/web-agent/src/worker-bodhi/` | `ai-docs/specs/worker-bodhi/` (see its `index.md` for the topic map) |
 
 ## Dev commands
 
