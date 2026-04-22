@@ -1,5 +1,18 @@
 # M8 — Extensions — Phase 2 handoff prompt
 
+> **Status: superseded.** The scope below was split across two phases:
+>
+> - **Phase 2a** (landed) — context + lifecycle hooks, modal `pi.ui.*` channel
+>   (`notify`, `setStatus`, `select`, `confirm`, `input`). See
+>   [`./phase-2a-report.md`](./phase-2a-report.md).
+> - **Phase 2b** (pending) — widgets, editor, `setTitle`, `registerProvider`,
+>   `registerSkill`, session-manager access, compaction hooks, initial-mount
+>   `session_loaded` lifecycle clarification. See
+>   [`./phase-2b-prompt.md`](./phase-2b-prompt.md) — use that for any new
+>   Phase 2 work.
+>
+> This file is kept as historical context only.
+
 Use this as the starting prompt for the Phase 2 implementation plan.
 
 ---
