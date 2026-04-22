@@ -68,20 +68,20 @@ test.describe('Model switching — fork + provider swap', () => {
       ).toHaveCount(0);
     });
 
-    await test.step('switch model to Gemini on the fork', async () => {
+    await test.step('switch model to Anthropic on the fork', async () => {
       await chat.selectModel(SECOND_FULL_MODEL_ID);
     });
 
-    await test.step('ask who trained you on the Gemini branch — expect Google/Gemini', async () => {
+    await test.step('ask who trained you on the Anthropic branch — expect Anthropic/Claude', async () => {
       await chat.send('who trained you? answer in one short sentence');
       // Turn count on the fork: turn 0 inherited, turn 1 is the new Q.
       await chat.waitForAssistantTurn(1);
       await expect(page.locator(chat.selectors.message(1, 'assistant'))).toContainText(
-        /google|gemini/i
+        /anthropic|claude/i
       );
     });
 
-    await test.step('reload — fork is still active and Gemini is still the selected model', async () => {
+    await test.step('reload — fork is still active and Anthropic is still the selected model', async () => {
       await page.reload();
       await chat.waitServerReady(bodhiServerUrl);
       const restoredId = await sessions.waitForActiveSession();

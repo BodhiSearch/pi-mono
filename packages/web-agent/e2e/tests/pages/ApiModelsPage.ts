@@ -53,7 +53,9 @@ export class ApiModelsPage {
     // Base URL field, so we don't need to fill it manually.
     if (apiFormat !== 'openai') {
       await this.page.click(this.selectors.apiFormatSelector);
-      await this.page.getByRole('option', { name: ApiModelsPage.FORMAT_LABELS[apiFormat] }).click();
+      await this.page
+        .getByRole('option', { name: ApiModelsPage.FORMAT_LABELS[apiFormat], exact: true })
+        .click();
     }
 
     const isApiKeyChecked = await this.page.locator(this.selectors.useApiKeyCheckbox).isChecked();
