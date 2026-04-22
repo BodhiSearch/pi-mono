@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import ModelCombobox from './ModelCombobox';
 import McpPopover from './McpPopover';
 import ExtensionsPanel from '@/components/extensions/ExtensionsPanel';
+import ExtensionStatusChips from '@/components/extensions/ExtensionStatusChips';
 import CommandPalette, { type CommandPaletteHandle } from './CommandPalette';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
 import type { Mcp, McpTool } from '@/lib/mcp-tools';
@@ -38,6 +39,8 @@ interface ChatInputProps {
   onToggleExtension: (name: string, enabled: boolean) => void | Promise<void>;
   onDisableAllExtensions: () => void | Promise<void>;
   onClearExtensionErrors: () => void;
+  /** Per-extension status chips driven by `pi.ui.setStatus`. */
+  extensionStatusChips: Record<string, string>;
 }
 
 /**
@@ -78,6 +81,7 @@ export default function ChatInput({
   onToggleExtension,
   onDisableAllExtensions,
   onClearExtensionErrors,
+  extensionStatusChips,
 }: ChatInputProps) {
   const { isReady, isAuthenticated } = useBodhi();
   const [message, setMessage] = useState('');
@@ -145,6 +149,7 @@ export default function ChatInput({
   return (
     <div className="w-full px-4 py-4">
       <div className="max-w-4xl mx-auto">
+        <ExtensionStatusChips statusChips={extensionStatusChips} className="mb-2 px-2" />
         <div className="relative grid grid-cols-[auto_1fr_auto] grid-rows-[1fr_auto] gap-2 p-3 bg-white border border-gray-200 rounded-3xl shadow-sm">
           <CommandPalette
             ref={paletteRef}

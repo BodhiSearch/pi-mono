@@ -167,4 +167,18 @@ export class AgentSession {
   ): void {
     this.agent.beforeToolCall = hook;
   }
+
+  /**
+   * Install (or clear with `undefined`) pi-agent-core's native
+   * `transformContext` hook. Each LLM call runs this transform on the
+   * outgoing `AgentMessage[]`; the extension runtime uses it to
+   * implement the `on('context')` hook surface. Zero overhead when
+   * no extensions subscribe (the closure short-circuits on empty
+   * handler set).
+   */
+  setTransformContext(
+    hook: ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined
+  ): void {
+    this.agent.transformContext = hook;
+  }
 }

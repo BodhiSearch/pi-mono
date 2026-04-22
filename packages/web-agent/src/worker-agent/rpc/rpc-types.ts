@@ -96,7 +96,20 @@ export type RpcCommand =
    * `agent_end` boundary, then surfaces an `extension_states` event
    * with the refreshed descriptor list.
    */
-  | { id: string; type: 'set_extension_states'; states: Record<string, boolean> };
+  | { id: string; type: 'set_extension_states'; states: Record<string, boolean> }
+  /**
+   * Main → Worker reply for an `extension_ui_request`. `requestId`
+   * correlates the reply with the pending request inside the Worker's
+   * `ExtensionUIController`. Set `error` to surface an exception instead
+   * of a resolved value.
+   */
+  | {
+      id: string;
+      type: 'extension_ui_response';
+      requestId: string;
+      result?: unknown;
+      error?: string;
+    };
 
 export type RpcCommandType = RpcCommand['type'];
 
@@ -218,6 +231,7 @@ export type RpcResponse =
       success: true;
       data: ExtensionDescriptor[];
     }
+  | { id: string; type: 'response'; command: 'extension_ui_response'; success: true }
   | {
       id: string;
       type: 'response';
@@ -322,13 +336,93 @@ export interface RpcExtensionErrorEvent extends ExtensionError {
   type: 'extension_error';
 }
 
+// ============================================================================
+// Extension UI channel (Phase 2a)
+// ============================================================================
+
+/** Notification severity. Mirrors `ExtensionUINotifyType` on the wire. */
+export type RpcExtensionNotifyType = 'info' | 'warning' | 'error';
+
+/**
+ * UI request kinds. `notify` / `setStatus` are fire-and-forget (main
+ * sends no reply); `select` / `confirm` / `input` correlate via
+ * `requestId` to a later `extension_ui_response` command.
+ */
+export type ExtensionUIRequestKind = 'notify' | 'setStatus' | 'select' | 'confirm' | 'input';
+
+export interface ExtensionUINotifyPayload {
+  message: string;
+  notifyType: RpcExtensionNotifyType;
+}
+
+export interface ExtensionUISetStatusPayload {
+  /** `null` clears the extension's current status chip. */
+  text: string | null;
+}
+
+export interface ExtensionUISelectPayload {
+  title: string;
+  /**
+   * Options for the dialog. `index` is the original array index; the
+   * worker rehydrates the extension's value from that index when the
+   * main thread replies. Keeping values serialisation-agnostic lets
+   * extensions pass complex payloads without hitting structured-clone
+   * edge cases.
+   */
+  options: { label: string; index: number }[];
+}
+
+export interface ExtensionUIConfirmPayload {
+  title: string;
+  message: string;
+}
+
+export interface ExtensionUIInputPayload {
+  title: string;
+  /** `null` renders no placeholder. */
+  placeholder: string | null;
+}
+
+export type ExtensionUIRequestPayload =
+  | ExtensionUINotifyPayload
+  | ExtensionUISetStatusPayload
+  | ExtensionUISelectPayload
+  | ExtensionUIConfirmPayload
+  | ExtensionUIInputPayload;
+
+/**
+ * Worker → Main event requesting a UI interaction. `requestId`
+ * correlates the response (only for `select` / `confirm` / `input`);
+ * `notify` / `setStatus` fire without awaiting a reply.
+ */
+export interface ExtensionUIRequestEvent {
+  type: 'extension_ui_request';
+  requestId: string;
+  extensionPath: string;
+  kind: ExtensionUIRequestKind;
+  payload: ExtensionUIRequestPayload;
+}
+
+/**
+ * Main → Worker reply shape (stripped of the `id` that the command
+ * envelope carries). Import this when constructing responses in the
+ * main-thread UI renderer.
+ */
+export interface ExtensionUIResponseCommand {
+  type: 'extension_ui_response';
+  requestId: string;
+  result?: unknown;
+  error?: string;
+}
+
 export type RpcEventEnvelope =
   | RpcAgentEventEnvelope
   | RpcToolCallRequest
   | RpcSessionLoadedEvent
   | RpcCompactionEvent
   | RpcExtensionStatesEvent
-  | RpcExtensionErrorEvent;
+  | RpcExtensionErrorEvent
+  | ExtensionUIRequestEvent;
 
 // ============================================================================
 // Wire envelope

@@ -4,7 +4,11 @@ import { describe, expect, test } from 'vitest';
 import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { RpcClient } from './rpc-client';
 import { type AgentSessionHost, type HostEventSink, RpcServer } from './rpc-server';
-import type { RpcSessionState } from './rpc-types';
+import type {
+  ExtensionUIRequestEvent,
+  ExtensionUIResponseCommand,
+  RpcSessionState,
+} from './rpc-types';
 import { createInProcessTransportPair } from './transports/in-process';
 
 type FakeSession = AgentSessionHost & { __seedModels(models: Model<Api>[]): void };
@@ -378,5 +382,80 @@ describe('RPC round-trip — session commands', () => {
     client.onSessionLoaded(() => events.push('loaded'));
     await expect(client.navigateToLeaf('entry-1')).resolves.toBeUndefined();
     expect(events.length).toBeGreaterThan(0);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Phase 2a — extension UI channel
+// ----------------------------------------------------------------------------
+
+describe('RPC round-trip — extension UI channel', () => {
+  function bootUIPair() {
+    const base = createFakeSession();
+    const received: ExtensionUIResponseCommand[] = [];
+    let sink: HostEventSink | null = null;
+    const host: AgentSessionHost = {
+      ...base,
+      setHostEventSink(s) {
+        sink = s;
+      },
+      handleExtensionUIResponse(response: ExtensionUIResponseCommand) {
+        received.push(response);
+      },
+    };
+    const { client: clientT, server: serverT } = createInProcessTransportPair();
+    new RpcServer(serverT, host);
+    const client = new RpcClient(clientT);
+    return {
+      client,
+      received,
+      emit: (event: ExtensionUIRequestEvent) => sink?.(event),
+    };
+  }
+
+  test('extension_ui_request events flow to the client listener', async () => {
+    const { client, emit } = bootUIPair();
+    const seen: ExtensionUIRequestEvent[] = [];
+    client.onExtensionUIRequest(event => seen.push(event));
+
+    emit({
+      type: 'extension_ui_request',
+      requestId: 'req-1',
+      extensionPath: '/ext/a',
+      kind: 'confirm',
+      payload: { title: 'T', message: 'M' },
+    });
+
+    // MessageChannel delivery is asynchronous; settle queued messages.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].requestId).toBe('req-1');
+    expect(seen[0].kind).toBe('confirm');
+  });
+
+  test('sendExtensionUIResponse reaches the host with the correlation id', async () => {
+    const { client, received } = bootUIPair();
+    await client.sendExtensionUIResponse('req-1', { index: 0 });
+    expect(received).toEqual([
+      {
+        type: 'extension_ui_response',
+        requestId: 'req-1',
+        result: { index: 0 },
+        error: undefined,
+      },
+    ]);
+  });
+
+  test('sendExtensionUIResponse propagates errors via the error field', async () => {
+    const { client, received } = bootUIPair();
+    await client.sendExtensionUIResponse('req-2', undefined, 'boom');
+    expect(received).toEqual([
+      {
+        type: 'extension_ui_response',
+        requestId: 'req-2',
+        result: undefined,
+        error: 'boom',
+      },
+    ]);
   });
 });

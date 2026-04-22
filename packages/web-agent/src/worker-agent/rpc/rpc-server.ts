@@ -5,6 +5,7 @@ import type { SessionMeta, SessionSummary } from '../core/session/types';
 import type { ExtensionDescriptor } from '../core/extensions/types';
 import { deserializeError, serializeError } from './error';
 import type {
+  ExtensionUIResponseCommand,
   McpToolDescriptor,
   RpcAgentEventEnvelope,
   RpcCommand,
@@ -83,6 +84,12 @@ export interface AgentSessionHost {
   // M8 — extensions.
   listExtensions?(): ExtensionDescriptor[];
   setExtensionStates?(states: Record<string, boolean>): Promise<ExtensionDescriptor[]>;
+  /**
+   * Deliver a main-thread reply to an `extension_ui_request`. The
+   * host routes it into its `ExtensionUIController` so the pending
+   * promise inside the extension resolves with the correct payload.
+   */
+  handleExtensionUIResponse?(response: ExtensionUIResponseCommand): void;
   /**
    * Register a sink for synthetic Worker-originated events (e.g.
    * `session_loaded`). Optional because test fakes and the jsdom
@@ -353,6 +360,16 @@ export class RpcServer {
           } satisfies RpcResponse);
           return;
         }
+        case 'extension_ui_response': {
+          this.session.handleExtensionUIResponse?.({
+            type: 'extension_ui_response',
+            requestId: raw.requestId,
+            result: raw.result,
+            error: raw.error,
+          });
+          this.transport.send(ok(id, 'extension_ui_response'));
+          return;
+        }
       }
     } catch (err) {
       this.transport.send({
@@ -439,6 +456,7 @@ const KNOWN_COMMANDS: Record<RpcCommandType, true> = {
   reload_commands: true,
   list_extensions: true,
   set_extension_states: true,
+  extension_ui_response: true,
 };
 
 function isKnownCommandType(value: string): value is RpcCommandType {

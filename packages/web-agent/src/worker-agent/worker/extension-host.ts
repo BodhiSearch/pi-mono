@@ -22,7 +22,11 @@
 import type {
   AfterToolCallContext,
   AfterToolCallResult,
+  AgentEvent,
+  AgentMessage,
   AgentTool,
+  BeforeToolCallContext,
+  BeforeToolCallResult,
 } from '@mariozechner/pi-agent-core';
 import type { AgentSession } from '../core/agent-session';
 import type { CommandRegistry } from '../core/commands';
@@ -34,9 +38,11 @@ import {
   type ExtensionContext,
   type ExtensionDescriptor,
   type ExtensionError,
+  type ExtensionUIContext,
 } from '../core/extensions';
 import type { VaultOperations } from '../fs/zenfs-operations';
 import type { RpcEventEnvelope } from '../rpc/rpc-types';
+import type { ExtensionUIController } from './extension-ui-controller';
 
 /**
  * Collaborators the controller needs from the worker-host. Kept as a
@@ -52,6 +58,8 @@ export interface ExtensionHostDeps {
   isVaultAttached(): boolean;
   refreshTools(): void;
   emitEvent(event: RpcEventEnvelope): void;
+  /** UI controller that backs `ctx.ui` / `pi.ui`. */
+  uiController: ExtensionUIController;
 }
 
 export class ExtensionHostController {
@@ -65,6 +73,12 @@ export class ExtensionHostController {
   private pendingFlush = false;
   /** Installed lazily once any extension is loaded; idempotent on reloads. */
   private toolCallHookInstalled = false;
+  /** Lazy-install flag for pi-agent-core's `beforeToolCall` (context: `tool_call`). */
+  private beforeToolCallHookInstalled = false;
+  /** Lazy-install flag for pi-agent-core's `transformContext` (context: `context`). */
+  private transformContextHookInstalled = false;
+  /** Disposer for the session-event fan-out installed in `attachLifecycleSubscribers`. */
+  private lifecycleUnsubscribe: (() => void) | null = null;
 
   constructor(deps: ExtensionHostDeps, initialEnabledState: Record<string, boolean> = {}) {
     this.deps = deps;
@@ -73,6 +87,10 @@ export class ExtensionHostController {
     // once and kept for the lifetime of the host — extensions come and
     // go across vault mounts but the controller instance does not.
     this.runner.onError(err => this.emitError(err));
+    // Attach the `turn_start` / `message_end` fan-out once; the handler
+    // short-circuits when no extensions subscribe so the happy path
+    // carries zero overhead.
+    this.attachLifecycleSubscribers();
   }
 
   // --------------------------------------------------------------------------
@@ -100,6 +118,7 @@ export class ExtensionHostController {
     try {
       result = await loadExtensionsFromVault(vaultOps, this.deps.getVaultMount(), {
         enabledState: this.enabledState,
+        buildUIContext: path => this.deps.uiController.createContextFor(path),
       });
     } catch (err) {
       console.error('[ExtensionHostController] scan failed:', err);
@@ -113,6 +132,18 @@ export class ExtensionHostController {
     this.descriptors = result.descriptors;
     this.deps.commands.setExtensionCommands(this.runner.getRegisteredCommands());
     this.ensureToolCallHook();
+    this.ensureTransformContextHook();
+    this.ensureBeforeToolCallHook();
+  }
+
+  /**
+   * Fire the `session_loaded` extension event. Phase 2a only invokes
+   * this from the `/reload` path — initial mount and dev-seed happen
+   * before extensions subscribe, so no one is listening yet. Phase 3
+   * needs to revisit the boot lifecycle.
+   */
+  async emitSessionLoaded(reason: 'reload' = 'reload'): Promise<void> {
+    await this.runner.emitSessionLoaded({ type: 'session_loaded', reason }, this.buildContext());
   }
 
   /** `set_extension_states` RPC command entry point. */
@@ -142,6 +173,15 @@ export class ExtensionHostController {
     this.runner.clear();
     this.descriptors = [];
     this.deps.commands.clearExtensionCommands();
+    // Cancel any in-flight UI requests; late replies are dropped.
+    this.deps.uiController.cancelAllForSession('vault unmount');
+  }
+
+  /** Dispose lifecycle subscribers. Used by tests that stand up / tear down hosts. */
+  dispose(): void {
+    this.lifecycleUnsubscribe?.();
+    this.lifecycleUnsubscribe = null;
+    this.deps.uiController.cancelAllForSession('host dispose');
   }
 
   /** Broadcast the current descriptor snapshot over RPC. */
@@ -171,7 +211,7 @@ export class ExtensionHostController {
     const cmd = this.deps.commands.findExtensionCommand(commandName);
     if (!cmd) return false;
     try {
-      await cmd.handler(args, this.buildContext());
+      await cmd.handler(args, this.buildContext(cmd.extensionPath));
     } catch (err) {
       this.emitError({
         extensionPath: cmd.extensionPath,
@@ -184,12 +224,28 @@ export class ExtensionHostController {
   }
 
   /** Build a fresh `ExtensionContext` per call so handlers see live state. */
-  buildContext(): ExtensionContext {
+  buildContext(extensionPath?: string): ExtensionContext {
+    const ui = this.buildUIContextFor(extensionPath);
     return {
       cwd: this.deps.isVaultAttached() ? this.deps.getVaultMount() : undefined,
       isIdle: () => !this.deps.session.isStreaming(),
       abort: () => this.deps.session.abort(),
+      ui,
+      hasUI: true,
     };
+  }
+
+  /**
+   * Build a UI context. When an extension path is supplied, route UI
+   * calls through a per-extension channel so `setStatus` / notify
+   * attributions are correct; for hook dispatch where the per-extension
+   * path isn't readily available (e.g. chained `context` across
+   * handlers), fall back to the root controller with an anonymous
+   * path. The runner sees the current path at the call site when it
+   * needs to discriminate.
+   */
+  private buildUIContextFor(extensionPath?: string): ExtensionUIContext {
+    return this.deps.uiController.createContextFor(extensionPath ?? 'anonymous');
   }
 
   // --------------------------------------------------------------------------
@@ -233,6 +289,76 @@ export class ExtensionHostController {
       if (override.details !== undefined) out.details = override.details;
       if (override.isError !== undefined) out.isError = override.isError;
       return out;
+    });
+  }
+
+  /**
+   * Install `setBeforeToolCall` exactly once per host so the runner
+   * can observe + mutate tool arguments and emit a block when an
+   * extension returns `{ block: true }`. Wrapping runs on every
+   * tool invocation; the closure short-circuits when no extensions
+   * subscribe.
+   */
+  private ensureBeforeToolCallHook(): void {
+    if (this.beforeToolCallHookInstalled) return;
+    this.beforeToolCallHookInstalled = true;
+    this.deps.session.setBeforeToolCall(
+      async (ctx: BeforeToolCallContext): Promise<BeforeToolCallResult | undefined> => {
+        if (!this.runner.hasExtensions()) return undefined;
+        if (!this.runner.hasHandlers('tool_call')) return undefined;
+        const input = (ctx.args ?? {}) as Record<string, unknown>;
+        const outcome = await this.runner.emitToolCall(
+          {
+            type: 'tool_call',
+            toolCallId: ctx.toolCall.id,
+            toolName: ctx.toolCall.name,
+            input,
+          },
+          this.buildContext()
+        );
+        // Mutations on `input` are visible to the executor because
+        // pi-agent-core uses the same `args` reference when it invokes
+        // the tool — we're just the first observer in the chain.
+        if (outcome.blocked) {
+          return { block: true, reason: outcome.reason };
+        }
+        return undefined;
+      }
+    );
+  }
+
+  /**
+   * Install `setTransformContext` exactly once per host. The transform
+   * runs on every LLM call; the closure short-circuits when no
+   * `context` handlers are subscribed so the happy path is a straight
+   * pass-through.
+   */
+  private ensureTransformContextHook(): void {
+    if (this.transformContextHookInstalled) return;
+    this.transformContextHookInstalled = true;
+    this.deps.session.setTransformContext(async (messages: AgentMessage[]) => {
+      if (!this.runner.hasExtensions()) return messages;
+      if (!this.runner.hasHandlers('context')) return messages;
+      const override = await this.runner.emitContext(messages, this.buildContext());
+      return override ?? messages;
+    });
+  }
+
+  /**
+   * Fan out `turn_start` / `message_end` pi-agent-core events to the
+   * extension runner. The subscription is attached once per host; the
+   * dispatch short-circuits when no handlers are subscribed.
+   */
+  private attachLifecycleSubscribers(): void {
+    this.lifecycleUnsubscribe = this.deps.session.subscribe((event: AgentEvent) => {
+      if (event.type === 'turn_start') {
+        void this.runner.emitTurnStart(this.buildContext());
+        return;
+      }
+      if (event.type === 'message_end') {
+        void this.runner.emitMessageEnd(event.message, this.buildContext());
+        return;
+      }
     });
   }
 

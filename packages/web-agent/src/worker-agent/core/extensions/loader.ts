@@ -15,11 +15,34 @@ import type {
   ExtensionEventHandler,
   ExtensionFactory,
   ExtensionManifest,
+  ExtensionUIContext,
   RegisteredCommand,
   RegisteredTool,
   ToolDefinition,
 } from './types';
 import { defineTool } from './types';
+
+/**
+ * Factory used to build the `pi.ui` channel for a specific extension.
+ *
+ * The controller (main host) owns request lifecycle; the loader just
+ * forwards the already-closed-over channel object to the factory so
+ * `pi.ui.*` calls work at both factory-time and handler-time. Returning
+ * a no-op channel is acceptable for headless / test contexts that
+ * don't wire a main-thread renderer.
+ */
+export type ExtensionUIContextBuilder = (extensionPath: string) => ExtensionUIContext;
+
+const NOOP_UI: ExtensionUIContext = {
+  notify: () => {},
+  setStatus: () => {},
+  select: async () => undefined,
+  confirm: async () => false,
+  input: async () => undefined,
+};
+
+/** Default UI builder — returns a no-op channel. Tests can supply their own. */
+export const defaultUIContextBuilder: ExtensionUIContextBuilder = () => NOOP_UI;
 
 const DECODER = new TextDecoder();
 
@@ -62,6 +85,12 @@ export interface LoadExtensionsOptions {
    * doesn't force the test runner into a browser environment.
    */
   importModule?: ModuleImporter;
+  /**
+   * Supply the per-extension `pi.ui` channel. Defaults to a no-op
+   * implementation (appropriate for jsdom tests); the worker-host
+   * injects the real `ExtensionUIController`-backed builder.
+   */
+  buildUIContext?: ExtensionUIContextBuilder;
 }
 
 /**
@@ -171,7 +200,7 @@ async function importFromVault(code: string): Promise<Record<string, unknown>> {
  * calls mutate the `Extension` record returned by the caller so the
  * loader doesn't need a separate post-processing pass.
  */
-function buildExtensionAPI(record: Extension): ExtensionAPI {
+function buildExtensionAPI(record: Extension, ui: ExtensionUIContext): ExtensionAPI {
   return {
     on(event, handler) {
       const bucket = record.handlers.get(event) ?? [];
@@ -195,6 +224,7 @@ function buildExtensionAPI(record: Extension): ExtensionAPI {
       };
       record.commands.set(name, registered);
     },
+    ui,
     Type,
     defineTool,
   };
@@ -209,7 +239,8 @@ async function loadOneExtension(
   extDir: string,
   ops: ExtensionLoaderOps,
   defaultName: string,
-  importer: ModuleImporter
+  importer: ModuleImporter,
+  buildUI: ExtensionUIContextBuilder
 ): Promise<{ extension: Extension } | { error: string; manifest?: ExtensionManifest }> {
   const resolved = await resolveEntryPath(extDir, ops);
   if ('error' in resolved) {
@@ -257,7 +288,7 @@ async function loadOneExtension(
     };
   }
 
-  const api = buildExtensionAPI(record);
+  const api = buildExtensionAPI(record, buildUI(record.path));
   try {
     await (factory as ExtensionFactory)(api);
   } catch (err) {
@@ -286,6 +317,7 @@ export async function loadExtensionsFromVault(
 ): Promise<LoadExtensionsResult> {
   const enabledState = options.enabledState ?? {};
   const importer = options.importModule ?? importFromVault;
+  const buildUI = options.buildUIContext ?? defaultUIContextBuilder;
   const trimmed = vaultMount.endsWith('/') ? vaultMount.slice(0, -1) : vaultMount;
   const root = `${trimmed}/${EXTENSIONS_DIR_SEGMENT}`;
 
@@ -332,7 +364,7 @@ export async function loadExtensionsFromVault(
       continue;
     }
 
-    const result = await loadOneExtension(extDir, ops, entry, importer);
+    const result = await loadOneExtension(extDir, ops, entry, importer, buildUI);
     if ('error' in result) {
       descriptors.push({
         name: result.manifest?.name ?? entry,
@@ -371,6 +403,7 @@ export async function loadExtensionFromSource(
     path?: string;
     manifest?: ExtensionManifest;
     importModule?: ModuleImporter;
+    buildUIContext?: ExtensionUIContextBuilder;
   } = {}
 ): Promise<{ extension: Extension } | { error: string }> {
   const manifest = options.manifest ?? { name };
@@ -398,7 +431,8 @@ export async function loadExtensionFromSource(
     return { error: 'extension module does not export a default function' };
   }
 
-  const api = buildExtensionAPI(record);
+  const buildUI = options.buildUIContext ?? defaultUIContextBuilder;
+  const api = buildExtensionAPI(record, buildUI(record.path));
   try {
     await (factory as ExtensionFactory)(api);
   } catch (err) {

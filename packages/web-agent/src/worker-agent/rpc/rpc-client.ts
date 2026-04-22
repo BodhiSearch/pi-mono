@@ -5,6 +5,7 @@ import type { SessionMeta, SessionSummary } from '../core/session/types';
 import { deserializeError, serializeError } from './error';
 import type {
   ExtensionDescriptor,
+  ExtensionUIRequestEvent,
   McpToolDescriptor,
   RpcAgentEventEnvelope,
   RpcCommand,
@@ -52,6 +53,13 @@ export class RpcClient {
   private readonly compactionListeners = new Set<(event: RpcCompactionEvent) => void>();
   private readonly extensionStatesListeners = new Set<(event: RpcExtensionStatesEvent) => void>();
   private readonly extensionErrorListeners = new Set<(event: RpcExtensionErrorEvent) => void>();
+  /**
+   * Main-thread subscribers for extension UI requests. The webapp
+   * registers its dialog renderer here so the worker's
+   * `pi.ui.select / confirm / input / notify / setStatus` calls render
+   * as actual UI and flow back through `sendExtensionUIResponse`.
+   */
+  private readonly extensionUIListeners = new Set<(event: ExtensionUIRequestEvent) => void>();
   private readonly transport: Transport;
   private readonly unsubscribe: () => void;
   private idCounter = 0;
@@ -262,6 +270,29 @@ export class RpcClient {
     return () => this.extensionErrorListeners.delete(listener);
   }
 
+  /**
+   * Subscribe to `pi.ui.*` requests originating in the worker. The
+   * webapp's renderer hooks in here, produces UI (toast / dialog),
+   * then calls `sendExtensionUIResponse` with the user's answer.
+   */
+  onExtensionUIRequest(listener: (event: ExtensionUIRequestEvent) => void): () => void {
+    this.extensionUIListeners.add(listener);
+    return () => this.extensionUIListeners.delete(listener);
+  }
+
+  /**
+   * Reply to an in-flight `extension_ui_request`. Pass `error` to
+   * surface an exception instead of a resolved value.
+   */
+  sendExtensionUIResponse(requestId: string, result?: unknown, error?: string): Promise<void> {
+    return this.send({
+      type: 'extension_ui_response',
+      requestId,
+      result,
+      error,
+    }) as Promise<void>;
+  }
+
   dispose(): void {
     this.unsubscribe();
     for (const p of this.pending.values()) {
@@ -273,6 +304,7 @@ export class RpcClient {
     this.compactionListeners.clear();
     this.extensionStatesListeners.clear();
     this.extensionErrorListeners.clear();
+    this.extensionUIListeners.clear();
     this.toolCallHandler = null;
   }
 
@@ -308,6 +340,10 @@ export class RpcClient {
     }
     if (raw.type === 'extension_error') {
       for (const listener of this.extensionErrorListeners) listener(raw);
+      return;
+    }
+    if (raw.type === 'extension_ui_request') {
+      for (const listener of this.extensionUIListeners) listener(raw);
       return;
     }
     if (raw.type === 'response') {
@@ -363,6 +399,7 @@ function isEnvelope(value: unknown): value is RpcResponse | RpcEventEnvelope {
     t === 'compaction_start' ||
     t === 'compaction_end' ||
     t === 'extension_states' ||
-    t === 'extension_error'
+    t === 'extension_error' ||
+    t === 'extension_ui_request'
   );
 }

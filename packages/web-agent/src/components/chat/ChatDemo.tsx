@@ -6,6 +6,8 @@ import { useMcpSelection } from '@/hooks/useMcpSelection';
 import { useMcpAgentTools } from '@/hooks/useMcpAgentTools';
 import { useSkillSandbox } from '@/hooks/useSkillSandbox';
 import { useExtensionState } from '@/hooks/useExtensionState';
+import { useExtensionUI } from '@/hooks/useExtensionUI';
+import ExtensionUIRenderer from '@/components/extensions/ExtensionUIRenderer';
 import { SessionPicker } from '@/components/sessions/SessionPicker';
 import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 import ChatMessages from './ChatMessages';
@@ -32,6 +34,19 @@ export default function ChatDemo() {
     disableAll: disableAllExtensions,
     clearErrors: clearExtensionErrors,
   } = useExtensionState();
+
+  // `pi.ui.*` is a singleton pipeline: one subscriber drives the
+  // toast / dialog / status-chip surface. Subscribing here (not in
+  // `ExtensionUIRenderer`) ensures `notify` + `setStatus` still land
+  // even when no dialog is currently active — otherwise mounting the
+  // renderer only on demand would miss the events, and subscribing
+  // again inside the renderer would produce duplicate toasts.
+  const {
+    statusChips: extensionStatusChips,
+    activeDialog,
+    respond: respondToDialog,
+    dismissActive: dismissExtensionDialog,
+  } = useExtensionUI();
 
   // Merge MCP tools with the bash-skill shim so the worker sees one
   // flat tool list. The handler dispatches by tool name — skills go
@@ -133,6 +148,12 @@ export default function ChatDemo() {
         onToggleExtension={setExtensionEnabled}
         onDisableAllExtensions={disableAllExtensions}
         onClearExtensionErrors={clearExtensionErrors}
+        extensionStatusChips={extensionStatusChips}
+      />
+      <ExtensionUIRenderer
+        activeDialog={activeDialog}
+        respond={respondToDialog}
+        dismissActive={dismissExtensionDialog}
       />
     </>
   );

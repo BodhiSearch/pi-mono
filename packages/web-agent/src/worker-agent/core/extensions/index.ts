@@ -13,6 +13,8 @@ export type {
   AgentToolUpdateCallback,
   BeforeAgentStartEvent,
   BeforeAgentStartEventResult,
+  ContextEvent,
+  ContextEventResult,
   ContextSupplier,
   Extension,
   ExtensionAPI,
@@ -23,24 +25,39 @@ export type {
   ExtensionEventHandler,
   ExtensionFactory,
   ExtensionManifest,
+  ExtensionSelectOption,
+  ExtensionUIContext,
+  ExtensionUIDialogOptions,
+  ExtensionUINotifyType,
+  MessageEndEvent,
   RegisteredCommand,
   RegisteredTool,
+  SessionLoadedEvent,
+  ToolCallEvent,
+  ToolCallEventResult,
   ToolDefinition,
   ToolResultEvent,
   ToolResultEventResult,
+  TurnStartEvent,
 } from './types';
 
 export { defineTool } from './types';
 
-export { EXTENSIONS_DIR_SEGMENT, loadExtensionsFromVault, loadExtensionFromSource } from './loader';
+export {
+  EXTENSIONS_DIR_SEGMENT,
+  defaultUIContextBuilder,
+  loadExtensionsFromVault,
+  loadExtensionFromSource,
+} from './loader';
 export type {
   ExtensionLoaderOps,
+  ExtensionUIContextBuilder,
   LoadExtensionsOptions,
   LoadExtensionsResult,
   ModuleImporter,
 } from './loader';
 
 export { ExtensionRunner } from './runner';
-export type { ExtensionErrorListener, ToolResultOverride } from './runner';
+export type { ExtensionErrorListener, ToolCallOutcome, ToolResultOverride } from './runner';
 
 export { wrapRegisteredTool, wrapRegisteredTools } from './wrapper';

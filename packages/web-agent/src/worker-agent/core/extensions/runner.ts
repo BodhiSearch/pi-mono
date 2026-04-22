@@ -7,17 +7,25 @@
  * currently-loaded set.
  */
 
+import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type {
   BeforeAgentStartEvent,
   BeforeAgentStartEventResult,
+  ContextEvent,
+  ContextEventResult,
   Extension,
   ExtensionContext,
   ExtensionError,
   ExtensionEventHandler,
+  MessageEndEvent,
   RegisteredCommand,
   RegisteredTool,
+  SessionLoadedEvent,
+  ToolCallEvent,
+  ToolCallEventResult,
   ToolResultEvent,
   ToolResultEventResult,
+  TurnStartEvent,
 } from './types';
 
 export type ExtensionErrorListener = (err: ExtensionError) => void;
@@ -31,6 +39,17 @@ export interface ToolResultOverride {
   content?: ToolResultEvent['content'];
   details?: unknown;
   isError?: boolean;
+}
+
+/**
+ * Aggregate outcome of a `tool_call` dispatch. `blocked` is `true` when
+ * any handler returned `{ block: true }`; the reason is surfaced to the
+ * LLM as the tool result. The worker-host uses this to translate into
+ * `pi-agent-core`'s `{ action: 'block', content }` reply.
+ */
+export interface ToolCallOutcome {
+  blocked: boolean;
+  reason?: string;
 }
 
 export class ExtensionRunner {
@@ -215,5 +234,119 @@ export class ExtensionRunner {
       }
     }
     return override;
+  }
+
+  // --------------------------------------------------------------------------
+  // Phase 2a: context / tool_call / lifecycle dispatch
+  // --------------------------------------------------------------------------
+
+  /**
+   * Chain the `context` handlers before an LLM call. Each handler sees
+   * the previous handler's override (if any); returning `{ messages }`
+   * replaces the array wholesale. `undefined` return means no override.
+   */
+  async emitContext(
+    messages: AgentMessage[],
+    ctx: ExtensionContext
+  ): Promise<AgentMessage[] | undefined> {
+    if (!this.hasHandlers('context')) return undefined;
+    let current = messages;
+    let overridden = false;
+    for (const ext of this.extensions) {
+      const bucket = ext.handlers.get('context') ?? [];
+      for (const raw of bucket) {
+        const handler = raw as ExtensionEventHandler<ContextEvent, ContextEventResult>;
+        try {
+          const res = await handler({ type: 'context', messages: current }, ctx);
+          if (
+            res &&
+            typeof res === 'object' &&
+            Array.isArray((res as ContextEventResult).messages)
+          ) {
+            current = (res as ContextEventResult).messages!;
+            overridden = true;
+          }
+        } catch (err) {
+          this.reportError(this.toExtensionError(ext.path, 'context', err));
+        }
+      }
+    }
+    return overridden ? current : undefined;
+  }
+
+  /**
+   * Dispatch the `tool_call` handlers. Handlers mutate `event.input` in
+   * place; the first `{ block: true }` short-circuits subsequent
+   * handlers and captures the reason. The caller observes the mutated
+   * `event.input` on the returned outcome semantics — the tool executor
+   * will see the same object reference.
+   */
+  async emitToolCall(event: ToolCallEvent, ctx: ExtensionContext): Promise<ToolCallOutcome> {
+    if (!this.hasHandlers('tool_call')) return { blocked: false };
+    for (const ext of this.extensions) {
+      const bucket = ext.handlers.get('tool_call') ?? [];
+      for (const raw of bucket) {
+        const handler = raw as ExtensionEventHandler<ToolCallEvent, ToolCallEventResult>;
+        try {
+          const res = await handler(event, ctx);
+          if (res && typeof res === 'object' && (res as ToolCallEventResult).block === true) {
+            const reason = (res as ToolCallEventResult).reason ?? 'blocked by extension';
+            return { blocked: true, reason };
+          }
+        } catch (err) {
+          this.reportError(this.toExtensionError(ext.path, 'tool_call', err));
+        }
+      }
+    }
+    return { blocked: false };
+  }
+
+  /** Observer-only fan-out for `turn_start`. Errors isolated, return values ignored. */
+  async emitTurnStart(ctx: ExtensionContext): Promise<void> {
+    if (!this.hasHandlers('turn_start')) return;
+    const event: TurnStartEvent = { type: 'turn_start' };
+    await this.emitObserverEvent('turn_start', event, ctx);
+  }
+
+  /** Observer-only fan-out for `message_end`. Errors isolated, return values ignored. */
+  async emitMessageEnd(message: AgentMessage, ctx: ExtensionContext): Promise<void> {
+    if (!this.hasHandlers('message_end')) return;
+    const event: MessageEndEvent = { type: 'message_end', message };
+    await this.emitObserverEvent('message_end', event, ctx);
+  }
+
+  /** Observer-only fan-out for `session_loaded`. Errors isolated, return values ignored. */
+  async emitSessionLoaded(event: SessionLoadedEvent, ctx: ExtensionContext): Promise<void> {
+    if (!this.hasHandlers('session_loaded')) return;
+    await this.emitObserverEvent('session_loaded', event, ctx);
+  }
+
+  /**
+   * Shared observer fan-out: invoke every registered handler for the
+   * event, swallow per-handler throws, and wait for all to settle so a
+   * slow subscriber can't starve the rest of the host's microtasks.
+   */
+  private async emitObserverEvent<E extends { type: string }>(
+    eventType: string,
+    event: E,
+    ctx: ExtensionContext
+  ): Promise<void> {
+    const pending: Promise<void>[] = [];
+    for (const ext of this.extensions) {
+      const bucket = ext.handlers.get(eventType) ?? [];
+      for (const raw of bucket) {
+        const handler = raw as ExtensionEventHandler<E, void>;
+        pending.push(
+          (async () => {
+            try {
+              await handler(event, ctx);
+            } catch (err) {
+              this.reportError(this.toExtensionError(ext.path, eventType, err));
+            }
+          })()
+        );
+      }
+    }
+    await Promise.all(pending);
   }
 }

@@ -1,7 +1,15 @@
 import { describe, expect, test, vi } from 'vitest';
 import { Type } from '@sinclair/typebox';
-import type { RegisteredTool, ExtensionContext } from './types';
+import type { ExtensionContext, ExtensionUIContext, RegisteredTool } from './types';
 import { wrapRegisteredTool, wrapRegisteredTools } from './wrapper';
+
+const noopUI: ExtensionUIContext = {
+  notify: () => {},
+  setStatus: () => {},
+  select: async () => undefined,
+  confirm: async () => false,
+  input: async () => undefined,
+};
 
 function makeRegistered(): RegisteredTool {
   return {
@@ -29,6 +37,8 @@ describe('wrapRegisteredTool', () => {
       cwd: '/vault',
       isIdle: () => true,
       abort: () => {},
+      ui: noopUI,
+      hasUI: true,
     };
     const wrapped = wrapRegisteredTool(makeRegistered(), () => current);
 
@@ -38,7 +48,7 @@ describe('wrapRegisteredTool', () => {
     const first = await wrapped.execute('call-1', { name: 'Alice' }, undefined, undefined);
     expect(first.content[0]).toMatchObject({ text: 'call-1:Alice:/vault' });
 
-    current = { cwd: '/other', isIdle: () => false, abort: () => {} };
+    current = { cwd: '/other', isIdle: () => false, abort: () => {}, ui: noopUI, hasUI: true };
     const second = await wrapped.execute('call-2', { name: 'Bob' }, undefined, undefined);
     expect(second.content[0]).toMatchObject({ text: 'call-2:Bob:/other' });
   });
@@ -48,6 +58,8 @@ describe('wrapRegisteredTool', () => {
       cwd: undefined,
       isIdle: () => true,
       abort: () => {},
+      ui: noopUI,
+      hasUI: true,
     };
     const a = makeRegistered();
     const b = makeRegistered();
@@ -68,6 +80,8 @@ describe('wrapRegisteredTool', () => {
       cwd: undefined,
       isIdle: () => true,
       abort: () => {},
+      ui: noopUI,
+      hasUI: true,
     }));
     expect(wrapped.prepareArguments).toBe(prepare);
     expect(wrapped.executionMode).toBe('sequential');

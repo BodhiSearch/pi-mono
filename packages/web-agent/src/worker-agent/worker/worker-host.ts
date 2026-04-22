@@ -31,8 +31,14 @@ import { createVaultTools } from '../core/tools';
 import { createZenfsVaultOperations, type VaultOperations } from '../fs/zenfs-operations';
 import { VAULT_MOUNT } from '../fs/zenfs-provider';
 import type { AgentSessionHost, HostEventSink, ToolUpcallInvoker } from '../rpc/rpc-server';
-import type { McpToolDescriptor, RpcEventEnvelope, RpcSessionState } from '../rpc/rpc-types';
+import type {
+  ExtensionUIResponseCommand,
+  McpToolDescriptor,
+  RpcEventEnvelope,
+  RpcSessionState,
+} from '../rpc/rpc-types';
 import { ExtensionHostController } from './extension-host';
+import { ExtensionUIController } from './extension-ui-controller';
 import type { InMemoryVaultSeed } from './init-protocol';
 
 export interface WorkerAgentHostOptions {
@@ -117,6 +123,12 @@ export class WorkerAgentHost implements AgentSessionHost {
    * tool wrapping, enable-state reconciliation, error surfacing.
    */
   private readonly extensions: ExtensionHostController;
+  /**
+   * Owns in-flight `pi.ui.*` requests — main-thread replies are
+   * dispatched here via `extension_ui_response`; session resets cancel
+   * everything in flight.
+   */
+  private readonly extensionUIController: ExtensionUIController;
 
   constructor(
     session: AgentSession,
@@ -131,6 +143,9 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.provider = provider;
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
     this.compactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, ...options.compactionSettings };
+    this.extensionUIController = new ExtensionUIController({
+      emitEvent: (event: RpcEventEnvelope) => this.hostEventSink?.(event),
+    });
     this.extensions = new ExtensionHostController(
       {
         session: this.session,
@@ -140,6 +155,7 @@ export class WorkerAgentHost implements AgentSessionHost {
         isVaultAttached: () => this.attachedFs !== null,
         refreshTools: () => this.refreshTools(),
         emitEvent: (event: RpcEventEnvelope) => this.hostEventSink?.(event),
+        uiController: this.extensionUIController,
       },
       options.initialExtensionEnabledState
     );
@@ -451,6 +467,11 @@ export class WorkerAgentHost implements AgentSessionHost {
       this.refreshTools();
       this.rebuildSystemPrompt();
       this.extensions.emitStates();
+      // Phase 2a: `session_loaded` fires only on explicit reload. We
+      // deliberately do NOT emit it from `loadSession / newSession /
+      // forkSession / navigateToLeaf` — Phase 2b will revisit the full
+      // lifecycle story.
+      await this.extensions.emitSessionLoaded('reload');
     }
     return this.commands.list();
   }
@@ -472,6 +493,10 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.refreshTools();
   }
 
+  handleExtensionUIResponse(response: ExtensionUIResponseCommand): void {
+    this.extensionUIController.handleResponse(response);
+  }
+
   // ==========================================================================
   // M5 — session persistence (Dexie-backed)
   // ==========================================================================
@@ -488,6 +513,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
+    this.extensionUIController.cancelAllForSession('session switch');
     const sm = await SessionManager.load(this.store, sessionId);
     this.sessionManager = sm;
     this.session.reset();
@@ -501,6 +527,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
+    this.extensionUIController.cancelAllForSession('new session');
     const sm = await SessionManager.create(this.store, {
       parentSession,
       cwd: this.vaultMount,
@@ -520,6 +547,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
+    this.extensionUIController.cancelAllForSession('fork session');
     const forked = await current.fork(fromEntryId);
     this.sessionManager = forked;
     this.session.reset();
@@ -536,6 +564,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.compactionAbort?.abort();
     await this.writeChain;
     this.session.abort();
+    this.extensionUIController.cancelAllForSession('navigate leaf');
     sm.navigateToLeaf(entryId);
     this.session.reset();
     const ctx = sm.buildSessionContext();

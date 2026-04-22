@@ -1,8 +1,10 @@
 # M8 — Extensions
 
-**Status:** ✅ Phase 1 landed. Phases 2 + 3 deferred.
+**Status:** ✅ Phases 1 + 2a landed. Phase 2b + Phase 3 deferred.
 
-Phase 1 ships a browser-native extension runtime: `.pi/extensions/<name>/index.js` is discovered from the vault, loaded inside the agent Worker via Blob-URL dynamic `import()`, and surfaces the `before_agent_start` / `tool_result` hooks plus `registerTool` / `registerCommand`. The main-thread `ExtensionsPanel` provides per-extension toggles, a global "Disable all" trip switch (the M8 gate), and surfaces both load-time and runtime errors. See [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md) for the full technical reference and [`../extension-impl/phase-1-report.md`](../extension-impl/phase-1-report.md) for the change log.
+Phase 1 shipped the browser-native extension runtime foundation: `.pi/extensions/<name>/index.js` is discovered from the vault, loaded inside the agent Worker via Blob-URL dynamic `import()`, and surfaces the `before_agent_start` / `tool_result` hooks plus `registerTool` / `registerCommand`. The main-thread `ExtensionsPanel` provides per-extension toggles, a global "Disable all" trip switch (the M8 gate), and surfaces both load-time and runtime errors.
+
+Phase 2a widened the hook surface to every context/lifecycle event coding-agent exposes except compaction (`context`, `tool_call`, `turn_start`, `message_end`, `session_loaded` — reload-only) and introduced a modal `pi.ui.*` channel (`notify`, `setStatus`, `select`, `confirm`, `input`) backed by a dedicated `extension_ui_request` / `extension_ui_response` RPC pair, an `ExtensionUIController` worker-side, and an `ExtensionUIRenderer` + `ExtensionStatusChips` main-side. See [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md) for the full technical reference, [`../extension-impl/phase-1-report.md`](../extension-impl/phase-1-report.md) for the Phase 1 change log, and [`../extension-impl/phase-2a-report.md`](../extension-impl/phase-2a-report.md) for Phase 2a.
 
 The spike archive under [`ai-docs/extension-spike/`](../extension-spike/) is retained for historical context; the Phase 1 implementation superseded its open questions with the `inline_worker` / `minimal` / `per_ext_toggle` decisions captured in the plan.
 
@@ -53,8 +55,11 @@ Additional genres considered in scope for consideration but deferred from v1: to
 
 ## References
 
-- [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md) — authoritative Phase 1 technical reference (types, loader, runner, wrapper, worker-host wiring, RPC, main-thread store + panel).
-- [`../extension-impl/phase-1-report.md`](../extension-impl/phase-1-report.md) — what shipped, known gaps, open questions carried into Phase 2.
-- [`../extension-impl/phase-2-prompt.md`](../extension-impl/phase-2-prompt.md), [`../extension-impl/phase-3-prompt.md`](../extension-impl/phase-3-prompt.md) — handoff prompts for the deferred phases (UI channel + widgets; iframe sandbox, TS sources, marketplace).
-- [`ai-docs/extension-spike/`](../extension-spike/) — spike archive retained for context; superseded by the Phase 1 implementation.
+- [`../specs/worker-agent/extensions.md`](../specs/worker-agent/extensions.md) — authoritative Phase 1 + Phase 2a technical reference (types, loader, runner, wrapper, UI controller, worker-host wiring, RPC, main-thread store + panel + UI renderer).
+- [`../extension-impl/phase-1-report.md`](../extension-impl/phase-1-report.md) — what shipped in Phase 1, known gaps, open questions carried into Phase 2.
+- [`../extension-impl/phase-2a-report.md`](../extension-impl/phase-2a-report.md) — what shipped in Phase 2a, known gaps, open questions carried into Phase 2b.
+- [`../extension-impl/phase-2-prompt.md`](../extension-impl/phase-2-prompt.md) — original Phase 2 prompt (superseded by Phase 2a + Phase 2b split).
+- [`../extension-impl/phase-2b-prompt.md`](../extension-impl/phase-2b-prompt.md) — Phase 2b handoff (widgets, editor, `setTitle`, `registerProvider`, `registerSkill`, session-manager access, compaction hooks).
+- [`../extension-impl/phase-3-prompt.md`](../extension-impl/phase-3-prompt.md) — Phase 3 handoff (iframe sandbox, TS sources, marketplace).
+- [`ai-docs/extension-spike/`](../extension-spike/) — spike archive retained for context; superseded by the Phase 1 / 2a implementation.
 - [`ai-docs/decisions/m8-extensions.md`](../decisions/m8-extensions.md) — spike-era decisions (D20, D21); treat as historical.

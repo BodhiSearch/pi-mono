@@ -19,5 +19,29 @@ tiny extension packages that exercise the Phase 1 surface:
   every turn. Verifies the runner's error isolation and the
   `extension_error` RPC event.
 
+Phase 2a adds five more fixtures exercising the new context / tool_call /
+lifecycle hooks and the `pi.ui.*` channel:
+
+- `context-injector` — subscribes to `on('context')`, prepends a synthetic
+  user preamble on every LLM call, and surfaces the last observed
+  `messages` count via the `/ctx-show` command so the e2e spec can
+  assert on the hook's effect without LLM output.
+- `tool-gate` — registers a `gated` tool and subscribes to
+  `on('tool_call')`. The hook mutates `event.input.tag` in place and
+  short-circuits with `{ block: true }` when the caller sets
+  `input.block = true`. The `/gate-run` command drives the tool so the
+  test doesn't depend on the LLM choosing it.
+- `notifier` — subscribes to the observer-only `on('turn_start')` and
+  `on('message_end')` hooks (Phase 2a fan-out). `/notify-test` emits a
+  toast through `pi.ui.notify`; `/notify-stats` reports the observed
+  counts.
+- `asker` — registers `/ask-select`, `/ask-confirm`, `/ask-input`, and
+  `/ask-status` so the spec can open each dialog kind (plus the
+  `setStatus` chip surface) and assert the round-tripped answer through
+  `pi.ui.notify`.
+- `reload-observer` — subscribes to `on('session_loaded')`, which Phase 2a
+  dispatches only from `/reload`. Increments a counter on every fire;
+  `/reload-count` surfaces the counter as a toast.
+
 Each extension ships a single `index.js` entry — TypeScript source loading
 is a Phase 3 concern (see `ai-docs/extension-impl/phase-3-prompt.md`).
