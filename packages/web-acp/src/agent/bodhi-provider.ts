@@ -53,7 +53,6 @@ export class BodhiProvider implements LlmProvider {
   }
 
   async getApiKeyAndHeaders(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _model: Model<Api>
   ): Promise<{ apiKey: string; headers?: Record<string, string> }> {
     return { apiKey: this.token ?? '' };
