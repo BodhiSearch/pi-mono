@@ -38,8 +38,8 @@ gate file lands with the first real milestone if the rules diverge.
 | #   | Milestone                                                              | Status  | File |
 | --- | ---------------------------------------------------------------------- | ------- | ---- |
 | M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
-| M1  | ACP sessions: create, persist, reload, list, switch                    | next    | [m1-sessions.md](m1-sessions.md) |
-| M2  | Filesystem tools via ACP `fs/*` delegation (M2.1 vault / M2.2 fs tools / M2.3 MCP) | planned | [m2-tools.md](m2-tools.md) |
+| M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
+| M2  | Filesystem tools via ACP `fs/*` delegation (M2.1 vault / M2.2 fs tools / M2.3 MCP) | next    | [m2-tools.md](m2-tools.md) |
 | M3  | Session tree: fork, branch, navigate (likely needs ACP extension)      | planned | [m3-session-tree.md](m3-session-tree.md) |
 | M4  | Compaction: auto + manual + summary persistence                        | planned | [m4-compaction.md](m4-compaction.md) |
 | M5  | Resources: slash commands, prompt templates, skills                    | planned | [m5-resources.md](m5-resources.md) |
@@ -68,9 +68,11 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   cut from the M0 diff. **For current code-level reference,
   read [`../specs/web-acp/`](../specs/web-acp/) — especially
   [`startup-sequence.md`](../specs/web-acp/startup-sequence.md).**
-- **[m1-sessions.md](m1-sessions.md)** — load when picking up
-  session persistence / reload / list / switch. This is the
-  next milestone after M0 shipped.
+- **[m1-sessions.md](m1-sessions.md)** — **shipped.** Load for
+  historical reference on the worker-owned Dexie store,
+  `session/load` replay, and the `bodhi/getSession` snapshot
+  companion that restores the per-session model selector.
+  Delivery plan at [`../plans/m1-sessions.md`](../plans/m1-sessions.md).
 - **[m2-tools.md](m2-tools.md)** — load when moving tools onto
   ACP `fs/*` delegation. Ships in three slices: M2.1 vault
   mount (FSA + ZenFS + dev seed, deferred out of M0), M2.2

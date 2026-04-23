@@ -39,6 +39,7 @@ todo.md
 plans/
 !.cursor/plans/
 !ai-docs/plans/
+!ai-docs/web-acp/plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
