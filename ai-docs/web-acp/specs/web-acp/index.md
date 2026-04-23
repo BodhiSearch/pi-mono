@@ -50,7 +50,7 @@ drill into the per-module specs:
 | [`sessions.md`](./sessions.md) | `src/agent/session-store.ts` — Dexie-backed worker-owned session persistence (schema, CRUD, invariants, replay contract with `session/load`). |
 | [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
 | [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` — the React hook that drives the main-thread side of the ACP connection, owns the singleton worker, and surfaces chat state to `ChatDemo`. |
-| [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, and the worker-side `VolumeRegistry` (M2). |
+| [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/`, `src/acp/fs-handlers.ts` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, the worker-side `VolumeRegistry`, and the main-thread `fs/*` IDE-integration seam (M2). |
 | [`tools.md`](./tools.md) | `src/agent/tools/` — the `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation (M2). |
 | [`features.md`](./features.md) | `src/features/`, `src/components/features/` — per-session feature-toggle store (Dexie v2 `features` table), `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). |
 
@@ -143,7 +143,9 @@ drill into the per-module specs:
 packages/web-acp/src/
 ├── acp/
 │   ├── index.ts           # public constants + SDK re-exports
+│   ├── methods.ts         # `_bodhi/*` extension method name barrel (M2)
 │   ├── client.ts          # AcpClient (main-thread wrapper over ClientSideConnection)
+│   ├── fs-handlers.ts     # main-thread `fs/readTextFile` / `fs/writeTextFile` handlers (M2.3)
 │   └── agent-adapter.ts   # AcpAgentAdapter (agent-side: Agent implementation)
 ├── agent/
 │   ├── agent-worker.ts    # Web Worker entry; wires AcpAgentAdapter
@@ -155,7 +157,8 @@ packages/web-acp/src/
 │   ├── volume-channel.ts  # raw-postMessage volume-control bridge (M2)
 │   └── system-prompt.ts   # composeSystemPrompt(volumes) (M2)
 ├── vault/
-│   └── fsa-handle-store.ts # idb-keyval-backed FSA handle persistence (M2)
+│   ├── fsa-handle-store.ts # idb-keyval-backed FSA handle persistence (M2)
+│   └── main-zenfs.ts      # main-thread ZenFS duplicate-mount manager (M2.3)
 ├── features/
 │   └── feature-store.ts   # per-session feature toggles (Dexie v2) (M2)
 ├── agent/tools/

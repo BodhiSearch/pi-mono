@@ -126,13 +126,16 @@ Public surface:
   return this.#conn.initialize({
     protocolVersion: 1,
     clientCapabilities: {
-      fs: { readTextFile: false, writeTextFile: false }
+      fs: { readTextFile: true, writeTextFile: true }
     }
   });
   ```
   The response carries the agent's capabilities + `authMethods`
   array. M0 does not use the response beyond ordering; `useAcp`
-  awaits the resulting promise before issuing other calls.
+  awaits the resulting promise before issuing other calls. M2.3
+  flips the `fs` capabilities to `true`; the built-in `bash` tool
+  never calls `fs/*` — the handlers live on the main thread as an
+  IDE-integration seam for external ACP agents (see `vault.md`).
 - **`authenticate(args: BodhiAuthenticateMeta)`.**
   ```
   await this.#conn.authenticate({

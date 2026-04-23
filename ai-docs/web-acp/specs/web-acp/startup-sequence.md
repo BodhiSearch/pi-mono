@@ -98,9 +98,9 @@ subscription) runs these steps:
 9. **Initialize promise.** `client.initialize()` kicks off a
    `initialize` JSON-RPC call with
    `protocolVersion: 1, clientCapabilities: { fs: { readTextFile:
-   false, writeTextFile: false } }`. The returned promise is
-   stored in `_runtime.initialize` — every later call that
-   depends on the connection awaits it.
+   true, writeTextFile: true } }` (flipped on in M2.3). The returned
+   promise is stored in `_runtime.initialize` — every later call
+   that depends on the connection awaits it.
 
 Concurrently, on the worker side:
 

@@ -5,6 +5,7 @@ import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
+import { buildFsHandlers } from '@/acp/fs-handlers';
 import type { BodhiFeatureBag, BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
 import { createMessagePortStream } from '@/transport/worker-stream';
 import { createVolumeControl, type VolumeControl } from '@/transport/volume-control';
@@ -12,6 +13,7 @@ import { getErrorMessage } from '@/lib/utils';
 import { getServerUrlOrThrow } from '@/lib/agent-model';
 import type { BodhiModelInfo } from '@/lib/bodhi-models';
 import type { VolumeInit } from '@/agent/volume-mount';
+import { MainZenfs } from '@/vault/main-zenfs';
 import { useVolumes, type UseVolumesResult } from '@/hooks/useVolumes';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
@@ -35,6 +37,7 @@ interface AcpRuntime {
   worker: Worker;
   client: AcpClient;
   volumeControl: VolumeControl;
+  mainZenfs: MainZenfs;
   initialize: Promise<void>;
   resolveInit: (volumes: VolumeInit[]) => void;
 }
@@ -60,10 +63,18 @@ function ensureRuntime(): AcpRuntime {
   // into a worker that hasn't constructed the agent yet.
   let resolveInit!: (volumes: VolumeInit[]) => void;
   let initPosted = false;
+  const mainZenfs = new MainZenfs();
   const initPromise = new Promise<void>(resolve => {
     resolveInit = (volumes: VolumeInit[]) => {
       if (initPosted) return;
       initPosted = true;
+      // Mount duplicate backends on the main thread for the fs/*
+      // client handler seam. We don't block ACP init on this — the
+      // worker owns the source of truth and the handlers defensively
+      // check membership on every call — but we do start mounting
+      // immediately so handlers see the right entries by the time
+      // an external ACP agent calls fs/readTextFile.
+      void mainZenfs.mountAll(volumes);
       worker.postMessage({ type: 'init', agentPort: channel.port2, volumes }, [channel.port2]);
       resolve();
     };
@@ -72,6 +83,7 @@ function ensureRuntime(): AcpRuntime {
   const stream = ndJsonStream(writable, readable);
 
   const holder: { client?: AcpClient } = {};
+  const fsHandlers = buildFsHandlers({ view: { list: () => mainZenfs.list() } });
   const handler: Client = {
     async requestPermission() {
       throw new Error('requestPermission: not supported in web-acp M0');
@@ -79,15 +91,52 @@ function ensureRuntime(): AcpRuntime {
     async sessionUpdate(params: SessionNotification) {
       holder.client?.dispatchSessionUpdate(params);
     },
+    async readTextFile(params) {
+      return fsHandlers.readTextFile(params);
+    },
+    async writeTextFile(params) {
+      return fsHandlers.writeTextFile(params);
+    },
   };
   const conn = new ClientSideConnection(() => handler, stream);
   const client = new AcpClient(conn);
   holder.client = client;
 
   const initialize = initPromise.then(() => client.initialize()).then(() => undefined);
-  const volumeControl = createVolumeControl(worker);
-  _runtime = { worker, client, volumeControl, initialize, resolveInit };
+  const volumeControl = wrapVolumeControl(createVolumeControl(worker), mainZenfs);
+  _runtime = { worker, client, volumeControl, mainZenfs, initialize, resolveInit };
   return _runtime;
+}
+
+/**
+ * Mirror worker-side mount/unmount onto the main-thread ZenFS so the
+ * `fs/*` handlers stay in sync with the volume registry. Worker-side
+ * mount is authoritative — main-thread failures are logged but never
+ * surfaced to the caller since the handler falls through to a
+ * membership check anyway.
+ */
+function wrapVolumeControl(inner: VolumeControl, mainZenfs: MainZenfs): VolumeControl {
+  return {
+    async mount(init) {
+      await inner.mount(init);
+      try {
+        await mainZenfs.mount(init);
+      } catch (err) {
+        console.warn('[useAcp] main-zenfs mount failed:', err);
+      }
+    },
+    async unmount(mountName) {
+      await inner.unmount(mountName);
+      try {
+        await mainZenfs.unmount(mountName);
+      } catch (err) {
+        console.warn('[useAcp] main-zenfs unmount failed:', err);
+      }
+    },
+    dispose() {
+      inner.dispose();
+    },
+  };
 }
 
 function authKeyOf(token: string, baseUrl: string): string {

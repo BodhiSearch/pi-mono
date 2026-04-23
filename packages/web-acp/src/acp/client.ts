@@ -54,7 +54,10 @@ export class AcpClient {
     return this.#conn.initialize({
       protocolVersion: 1,
       clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
+        // M2.3: advertise `fs/*` as an IDE-integration seam. Built-in
+        // `bash` never calls these — external ACP agents do (see
+        // `specs/web-acp/vault.md`).
+        fs: { readTextFile: true, writeTextFile: true },
       },
     });
   }

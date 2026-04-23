@@ -6,7 +6,9 @@
 `packages/web-acp/src/agent/system-prompt.ts`,
 `packages/web-acp/src/transport/volume-control.ts`,
 `packages/web-acp/src/hooks/useVolumes.ts`,
-`packages/web-acp/src/components/volumes/`.
+`packages/web-acp/src/components/volumes/`,
+`packages/web-acp/src/vault/main-zenfs.ts`,
+`packages/web-acp/src/acp/fs-handlers.ts`.
 
 ## Purpose
 
@@ -130,12 +132,64 @@ LLM call without a session reset. The system prompt is appended to
 whatever `AgentState.systemPrompt` carries — M2 leaves the rest of the
 prompt empty; M4 (skills / commands) will layer richer content on top.
 
+## IDE-integration seam: `fs/*` client handlers (M2.3)
+
+`web-acp` advertises `fs.readTextFile` + `fs.writeTextFile` in
+`initialize` as part of `clientCapabilities`. These are implemented on
+the **main thread** (`packages/web-acp/src/acp/fs-handlers.ts`) and
+never called by the built-in `bash` tool. They exist so external ACP
+agents — or a future editor-buffer bridge — can read/write the same
+mounted volumes without going through the worker's bash surface.
+
+To let the main-thread handlers read the same bytes the worker reads,
+`packages/web-acp/src/vault/main-zenfs.ts` keeps a *duplicate* ZenFS
+context on the main thread and mounts the **same**
+`FileSystemDirectoryHandle`s at `/mnt/<name>`. FSA handles are
+structured-cloneable and the storage underneath is shared by the OS,
+so both realms see the same files.
+
+### Duplicate-mount caveat
+
+Two backends sharing one handle do not coordinate writes. Since the
+built-in `bash` tool doesn't use `fs/*`, concurrent writes from inside
+and outside the worker don't happen in practice today. Once an
+external ACP agent starts exercising `fs/*` alongside `bash`, it
+should coordinate with the bash tool — a later milestone may add a
+proper lease / versioning layer (deferred, tracked in
+`milestones/deferred.md`).
+
+For dev/test **seed** volumes, the main-thread and worker-side
+`InMemory` backends are two independent allocations. Seeds are
+re-applied on both sides, so `fs/readTextFile` sees the staged content;
+writes from the worker's `bash` tool do **not** propagate to the
+main-thread seed. This is acceptable because Playwright stages
+fixtures on both sides via `addInitScript`, and production paths never
+use seeds.
+
+### Path safety
+
+`fs-handlers` validates every `params.path` against four rules before
+touching ZenFS:
+
+1. Path is absolute under `/mnt/` — anything else rejects.
+2. First segment after `/mnt/` matches a registered mount (queried via
+   `MainZenfs.list()`), else reject.
+3. POSIX-normalised path stays inside `/mnt/<mountName>/` (catches
+   `..` escape, e.g. `/mnt/wiki/../../etc/passwd`).
+4. `fs.promises.realpath` of the canonical path must still start with
+   `/mnt/<mountName>` (catches symlink escape).
+
+Writes additionally `mkdir -p` the parent directory before
+`writeFile`; the parent's realpath is checked the same way to prevent
+symlink escapes through the target directory.
+
 ## Deferred in M2
 
 - **Permission bridge.** `session/request_permission` + allow-always
   persistence stay on `deferred.md`. A later milestone reinstates them.
-- **Real `fs/*` handlers.** Added in M2.3 phase C as an IDE seam; the
-  built-in bash tool never calls them.
+- **Bash ↔ `fs/*` write coordination.** External agents using `fs/*`
+  alongside the built-in bash tool have no arbitration today; a lease
+  or versioning layer is deferred.
 - **Cross-volume move/copy semantics.** `bash mv` across mount points
   falls back to read+write in ZenFS — acceptable given the scale we
   target in M2.
@@ -144,7 +198,9 @@ prompt empty; M4 (skills / commands) will layer richer content on top.
 
 - Vitest: `packages/web-acp/src/agent/system-prompt.test.ts`,
   `packages/web-acp/src/vault/fsa-handle-store.test.ts`,
-  `packages/web-acp/src/agent/volume-mount.test.ts`.
+  `packages/web-acp/src/agent/volume-mount.test.ts`,
+  `packages/web-acp/src/acp/fs-handlers.test.ts`,
+  `packages/web-acp/src/acp/fs-handlers.integration.test.ts`.
 - Playwright: `packages/web-acp/e2e/volumes.spec.ts` — seeds two
   volumes, removes one, reloads, and prompts the LLM to verify the
   description-laden system prompt reached the model.
@@ -153,6 +209,7 @@ prompt empty; M4 (skills / commands) will layer richer content on top.
 
 Any change to `packages/web-acp/src/vault/*`,
 `packages/web-acp/src/agent/volume-*.ts`,
+`packages/web-acp/src/acp/fs-handlers.ts`,
 `packages/web-acp/src/hooks/useVolumes.ts`, or
 `packages/web-acp/src/components/volumes/*` must update this file in
 the same commit.
