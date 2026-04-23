@@ -5,6 +5,7 @@ const isCI = !!process.env.CI;
 const isHeadless =
   process.env.HEADLESS === 'false' ? false : process.env.HEADLESS === 'true' || isCI;
 const baseURL = 'http://localhost:5173/';
+const reuseExistingServer = process.env.PW_TEST_REUSE_EXISTING_SERVER === 'true';
 
 function buildUserAgent(): string {
   const platform = os.platform();
@@ -44,6 +45,6 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: baseURL,
-    reuseExistingServer: false,
+    reuseExistingServer,
   },
 });

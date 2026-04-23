@@ -6,8 +6,8 @@
 
 ## Functional scope
 
-The `src/agent/` subtree is the **worker-side runtime**. Five
-files, each with a narrowly-scoped responsibility:
+The `src/agent/` subtree is the **worker-side runtime**. Seven
+files today, each with a narrowly-scoped responsibility:
 
 - **`agent-worker.ts`** — Web Worker entry. Listens for the
   one-shot `init` message, stands up the ACP agent, and binds
@@ -24,6 +24,16 @@ files, each with a narrowly-scoped responsibility:
 - **`stream-fn.ts`** — `createStreamFn(provider)`, a factory
   that adapts a `LlmProvider` into the `StreamFn` signature
   `pi-agent-core` expects.
+- **`volume-mount.ts`** — `VolumeRegistry` (M2.1), the worker-
+  side owner of ZenFS `/mnt/<name>` mounts. Full contract in
+  [`./vault.md`](./vault.md).
+- **`volume-channel.ts`** — `attachVolumeChannel(scope,
+  registry)` (M2.1), the raw `postMessage` bridge that runs in
+  parallel with the ACP wire to carry `FileSystemDirectoryHandle`
+  transfers. Full contract in [`./vault.md`](./vault.md).
+- **`system-prompt.ts`** — `composeSystemPrompt(volumes)` (M2.1),
+  pure function that renders the `/mnt/<name>` list into the
+  LLM's system prompt on each turn.
 
 The split mirrors the `worker-agent` / `worker-bodhi` split in
 the reference spike (see
@@ -50,10 +60,13 @@ properties:
   init message; ignoring.` This matches the invariant in
   [`./index.md`](./index.md).
 - **Init payload.** `AgentWorkerInitMessage = {type: 'init';
-  agentPort: MessagePort}`. M0's init has no other fields. When
-  future milestones add options (e.g. a dev-seed for `/vault` at
-  M2.1, or a persistence db name at M1), they extend this
-  interface — **not** the ACP wire protocol.
+  agentPort: MessagePort; volumes?: VolumeInit[]}`. M2 adds the
+  optional `volumes` array carrying the initial set of
+  `/mnt/<name>` entries to mount (FSA handles and / or in-memory
+  seeds). See [`./vault.md`](./vault.md) for the
+  `VolumeInit` shape. Future milestones extending this interface
+  — **not** the ACP wire protocol — remains the pattern for
+  bootstrap concerns.
 - **Boot sequence (`startAgent`).**
   1. `createMessagePortStream(port)` → `{readable, writable}`.
      See [`./transport.md`](./transport.md).
@@ -64,11 +77,21 @@ properties:
      engine.
   5. `createSessionStore()` — opens (or creates) the Dexie
      `web-acp` database. See [`./sessions.md`](./sessions.md).
-  6. `new AgentSideConnection(conn => new AcpAgentAdapter(conn,
-     inline, provider, store), stream)`. The factory is invoked
-     synchronously by the SDK; the returned adapter is the
-     `Agent` dispatch target for inbound requests.
-  7. The return value of `new AgentSideConnection(...)` is held
+  6. `new VolumeRegistry()` and `await registry.mountAll(volumes
+     ?? [])` (M2.1) — mounts every initial `/mnt/<name>` entry
+     supplied in the `init` payload before any ACP request is
+     served. See [`./vault.md`](./vault.md).
+  7. `attachVolumeChannel(self, registry)` (M2.1) — attaches the
+     raw `postMessage` listener that handles runtime
+     `volumes/mount` / `volumes/unmount` requests in parallel
+     with the ACP wire.
+  8. `new AgentSideConnection(conn => new AcpAgentAdapter(conn,
+     inline, provider, store, registry), stream)`. The factory
+     is invoked synchronously by the SDK; the returned adapter
+     is the `Agent` dispatch target for inbound requests and
+     holds a reference to the registry so the system prompt
+     stays in sync with the current mount list.
+  9. The return value of `new AgentSideConnection(...)` is held
      in a `_connection` local only to prevent the module-level
      linter from flagging the assignment as unused. The SDK
      retains it internally; the reference is not read again.
@@ -121,12 +144,12 @@ const agent = new Agent({
 
 #### Method behaviour
 
-- **`setModel(model)`** — `agent.state.model = model; agent.state.tools = [];
-  agent.state.systemPrompt = ''`. The tool list and system prompt
-  reset is deliberate: M0's agent has no tools and no system
-  prompt. When M2 introduces tools, this becomes a tool-list
-  seed; when M5 introduces skills, this becomes a system-prompt
-  seed.
+- **`setModel(model, opts?)`** —
+  `agent.state.model = model; agent.state.tools = opts?.tools ?? [];
+  agent.state.systemPrompt = opts?.systemPrompt ?? ''`. M2.1 adds
+  the optional `opts` so the adapter can inject the current
+  volume-aware system prompt (and, from M2.2, the bash tool) on
+  every turn. Passing no `opts` preserves M0/M1 behaviour.
 - **`subscribe(cb)`** — passthrough to `agent.subscribe(cb)`. The
   return value is the `pi-agent-core` unsubscribe closure.
 - **`getMessages()`** — returns a **shallow copy** of

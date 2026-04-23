@@ -4,6 +4,7 @@ import { useAcp } from '@/hooks/useAcp';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import SessionPicker from './SessionPicker';
+import VolumesPanel from '@/components/volumes/VolumesPanel';
 
 export default function ChatDemo() {
   const {
@@ -22,6 +23,7 @@ export default function ChatDemo() {
     sessions,
     loadSession,
     currentSessionId,
+    volumes,
   } = useAcp();
 
   useEffect(() => {
@@ -40,11 +42,16 @@ export default function ChatDemo() {
 
   return (
     <div className="flex flex-1 min-h-0">
-      <SessionPicker
-        sessions={sessions}
-        activeSessionId={currentSessionId}
-        onSelect={handleSelectSession}
-      />
+      <div className="flex flex-col w-64 shrink-0 border-r overflow-y-auto bg-gray-50">
+        <VolumesPanel volumes={volumes} />
+        <div className="flex-1 min-h-0">
+          <SessionPicker
+            sessions={sessions}
+            activeSessionId={currentSessionId}
+            onSelect={handleSelectSession}
+          />
+        </div>
+      </div>
       <div className="flex flex-col flex-1 min-w-0">
         <ChatMessages
           messages={messages}

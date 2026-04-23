@@ -69,9 +69,15 @@ subscription) runs these steps:
    worker chunk.
 2. **Channel.** `new MessageChannel()` yields `port1` (stays on
    the main thread) and `port2` (transferred to the worker).
-3. **Init post.** `worker.postMessage({type: 'init', agentPort:
-   port2}, [port2])`. This is the **only** non-ACP message that
-   ever crosses the boundary.
+3. **Init post — deferred.** M2 makes the `init` post **lazy**. The
+   hook builds a `resolveInit(volumes: VolumeInit[])` closure and
+   returns without messaging the worker. `useVolumes` (M2) resolves
+   the persisted FSA handles + dev seeds and calls `resolveInit`,
+   which then fires:
+   `worker.postMessage({type: 'init', agentPort: port2, volumes},
+   [port2])`. The init message is still **one-shot** and is the
+   only non-ACP, non-volume-control message that ever crosses the
+   boundary. See [`vault.md`](./vault.md).
 4. **Main-side byte-streams.** `createMessagePortStream(port1)`
    returns `{readable, writable}`. `port1.start()` is called
    inside `createMessagePortStream`; callers must not call it
@@ -107,14 +113,20 @@ Concurrently, on the worker side:
    `{readable, writable}` pair, calling `port.start()`.
 3. **Worker-side ACP stream.** `ndJsonStream(writable, readable)`
    produces the stream the SDK needs.
-4. **Singletons.** `new BodhiProvider()`,
+4. **Volume registry (M2).** Creates a `VolumeRegistry`, calls
+   `registry.mountAll(initMsg.volumes ?? [])` so `/mnt/<name>`
+   entries are ready before any ACP request, and attaches the
+   volume-control `postMessage` channel via
+   `attachVolumeChannel(self, registry)`. See
+   [`vault.md`](./vault.md) for the control-plane split.
+5. **Singletons.** `new BodhiProvider()`,
    `createInlineAgent(createStreamFn(provider))`.
-5. **Agent connection.** `new AgentSideConnection(conn => new
-   AcpAgentAdapter(conn, inline, provider), stream)`. The SDK
-   invokes the factory with the connection it will use for
-   outgoing notifications; the factory constructs the adapter and
-   returns it as the `Agent` implementation for inbound
-   dispatch.
+6. **Agent connection.** `new AgentSideConnection(conn => new
+   AcpAgentAdapter(conn, inline, provider, registry), stream)`.
+   The SDK invokes the factory with the connection it will use
+   for outgoing notifications; the factory constructs the adapter
+   (now registry-aware) and returns it as the `Agent`
+   implementation for inbound dispatch.
 
 At this point **one** JSON-RPC `initialize` request is in flight:
 the main thread is awaiting the response, and the adapter's
@@ -146,6 +158,25 @@ the main thread is awaiting the response, and the adapter's
 the Bodhi auth method id is a compile-time constant
 (`BODHI_AUTH_METHOD_ID = 'bodhi-token'` in `src/acp/index.ts`),
 shared by both sides. The response is awaited for ordering only.
+
+## Phase 1.5 — Volume resolution (M2)
+
+Runs in parallel with Phase 1 on the main thread and gates the
+worker's `init` post. Detail in [`vault.md`](./vault.md).
+
+1. `useVolumes` loads persisted handles from `idb-keyval`
+   (`web-acp:volumes`).
+2. `requestPermissions(records)` partitions them into `ready`
+   (auto-regranted) and `prompt` (awaiting user gesture).
+3. `readDevSeeds()` reads `window.__zenfsSeed` (Playwright /
+   dev-only) and appends in-memory volumes.
+4. The hook calls `onInitialVolumes(VolumeInit[])` which runs
+   `runtime.resolveInit(volumes)` to fire the worker `init` post
+   described in Phase 1, step 3.
+5. After boot, user interactions (add, remove, regrant) go through
+   the **volume-control channel** (`volumes/mount`,
+   `volumes/unmount`) rather than ACP; only the read-only
+   `_bodhi/volumes/list` method rides on JSON-RPC.
 
 ## Phase 2 — Bodhi authenticate + catalog fetch
 

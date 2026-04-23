@@ -50,6 +50,7 @@ drill into the per-module specs:
 | [`sessions.md`](./sessions.md) | `src/agent/session-store.ts` — Dexie-backed worker-owned session persistence (schema, CRUD, invariants, replay contract with `session/load`). |
 | [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
 | [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` — the React hook that drives the main-thread side of the ACP connection, owns the singleton worker, and surfaces chat state to `ChatDemo`. |
+| [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, and the worker-side `VolumeRegistry` (M2). |
 
 ## Overview
 
@@ -147,12 +148,19 @@ packages/web-acp/src/
 │   ├── inline-agent.ts    # pi-agent-core wrapper
 │   ├── bodhi-provider.ts  # BodhiProvider (LlmProvider implementation)
 │   ├── session-store.ts   # Dexie-backed SessionStore (M1)
-│   └── stream-fn.ts       # createStreamFn(provider) → pi-ai bridge
+│   ├── stream-fn.ts       # createStreamFn(provider) → pi-ai bridge
+│   ├── volume-mount.ts    # VolumeRegistry (worker-side ZenFS mounts, M2)
+│   ├── volume-channel.ts  # raw-postMessage volume-control bridge (M2)
+│   └── system-prompt.ts   # composeSystemPrompt(volumes) (M2)
+├── vault/
+│   └── fsa-handle-store.ts # idb-keyval-backed FSA handle persistence (M2)
 ├── transport/
-│   └── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream
+│   ├── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream
+│   └── volume-control.ts  # main-thread client for the volume-control channel (M2)
 ├── hooks/
-│   └── useAcp.ts          # React hook; owns the singleton worker + ACP client
-├── components/            # shadcn/ui + ChatDemo (unchanged contract)
+│   ├── useAcp.ts          # React hook; owns the singleton worker + ACP client
+│   └── useVolumes.ts      # React hook; manages multi-volume state (M2)
+├── components/            # shadcn/ui + ChatDemo + volumes/VolumesPanel (M2)
 ├── lib/                   # bodhi-models, agent-model, utils
 ├── types/                 # UI-level types
 └── App.tsx, main.tsx, env.ts

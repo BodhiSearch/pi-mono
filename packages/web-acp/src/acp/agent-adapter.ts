@@ -24,16 +24,20 @@ import type { BodhiProvider } from '@/agent/bodhi-provider';
 import { apiFormatOfModel } from '@/agent/bodhi-provider';
 import type { InlineAgent } from '@/agent/inline-agent';
 import type { SessionStore } from '@/agent/session-store';
+import { composeSystemPrompt } from '@/agent/system-prompt';
+import type { VolumeRegistry } from '@/agent/volume-mount';
 import {
   BODHI_AUTH_METHOD_ID,
   BODHI_GET_SESSION_METHOD,
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
+  BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiGetSessionRequest,
   type BodhiGetSessionResponse,
   type BodhiListModelsResponse,
   type BodhiListSessionsResponse,
+  type BodhiVolumesListResponse,
 } from './index';
 
 interface SessionState {
@@ -62,6 +66,7 @@ export class AcpAgentAdapter implements Agent {
   readonly #inline: InlineAgent;
   readonly #bodhi: BodhiProvider;
   readonly #store: SessionStore | undefined;
+  readonly #registry: VolumeRegistry | undefined;
   readonly #sessions = new Map<string, SessionState>();
   #models: Model<Api>[] = [];
   #cancelled = false;
@@ -79,12 +84,14 @@ export class AcpAgentAdapter implements Agent {
     conn: AgentSideConnection,
     inline: InlineAgent,
     bodhi: BodhiProvider,
-    store?: SessionStore
+    store?: SessionStore,
+    registry?: VolumeRegistry
   ) {
     this.#conn = conn;
     this.#inline = inline;
     this.#bodhi = bodhi;
     this.#store = store;
+    this.#registry = registry;
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
@@ -206,7 +213,8 @@ export class AcpAgentAdapter implements Agent {
       await this.#rehydrateInlineFromStore(params.sessionId);
     }
 
-    this.#inline.setModel(model);
+    const systemPrompt = this.#registry ? composeSystemPrompt(this.#registry.list()) : '';
+    this.#inline.setModel(model, { tools: [], systemPrompt });
 
     const cursor: StreamCursor = { messageId: undefined, emittedLength: 0 };
     this.#cancelled = false;
@@ -252,6 +260,16 @@ export class AcpAgentAdapter implements Agent {
     if (method === BODHI_LIST_SESSIONS_METHOD) {
       const summaries = this.#store ? await this.#store.listSummaries() : [];
       const response: BodhiListSessionsResponse = { sessions: summaries };
+      return response;
+    }
+    if (method === BODHI_VOLUMES_LIST_METHOD) {
+      const volumes = this.#registry?.list() ?? [];
+      const response: BodhiVolumesListResponse = {
+        volumes: volumes.map(v => ({
+          mountName: v.mountName,
+          ...(v.description ? { description: v.description } : {}),
+        })),
+      };
       return response;
     }
     if (method === BODHI_GET_SESSION_METHOD) {

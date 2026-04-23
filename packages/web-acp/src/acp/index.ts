@@ -23,6 +23,39 @@ export const BODHI_LIST_MODELS_METHOD = 'bodhi/listModels';
 export const BODHI_LIST_SESSIONS_METHOD = 'bodhi/listSessions';
 export const BODHI_GET_SESSION_METHOD = 'bodhi/getSession';
 
+// M2 extension methods use the spec-blessed `_`-prefix; the older
+// `bodhi/*` constants above stay unchanged to preserve M1 client-side
+// contracts (a rename is tracked as a deferred cleanup item).
+export const BODHI_VOLUMES_LIST_METHOD = '_bodhi/volumes/list';
+export const BODHI_FEATURES_LIST_METHOD = '_bodhi/features/list';
+export const BODHI_FEATURES_SET_METHOD = '_bodhi/features/set';
+
+export interface BodhiVolumeDescriptor {
+  mountName: string;
+  description?: string;
+}
+
+export interface BodhiVolumesListResponse extends Record<string, unknown> {
+  volumes: BodhiVolumeDescriptor[];
+}
+
+export type BodhiFeatureBag = Record<string, boolean>;
+
+export interface BodhiFeaturesListResponse extends Record<string, unknown> {
+  features: BodhiFeatureBag;
+  defaults: BodhiFeatureBag;
+}
+
+export interface BodhiFeaturesSetRequest extends Record<string, unknown> {
+  sessionId: string;
+  key: string;
+  value: boolean;
+}
+
+export interface BodhiFeaturesSetResponse extends Record<string, unknown> {
+  features: BodhiFeatureBag;
+}
+
 export interface BodhiAuthenticateMeta {
   token: string;
   baseUrl: string;

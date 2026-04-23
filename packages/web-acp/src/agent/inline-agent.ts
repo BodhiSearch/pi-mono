@@ -1,11 +1,16 @@
 import { Agent } from '@mariozechner/pi-agent-core';
-import type { AgentEvent, AgentMessage, StreamFn } from '@mariozechner/pi-agent-core';
+import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 
 const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
 
+export interface InlineAgentSetModelOptions {
+  tools?: AgentTool<never>[];
+  systemPrompt?: string;
+}
+
 export interface InlineAgent {
-  setModel(model: Model<Api>): void;
+  setModel(model: Model<Api>, opts?: InlineAgentSetModelOptions): void;
   subscribe(cb: (event: AgentEvent) => void): () => void;
   getMessages(): AgentMessage[];
   getErrorMessage(): string | undefined;
@@ -27,10 +32,10 @@ export function createInlineAgent(streamFn: StreamFn): InlineAgent {
   });
 
   return {
-    setModel(model) {
+    setModel(model, opts) {
       agent.state.model = model;
-      agent.state.tools = [];
-      agent.state.systemPrompt = '';
+      agent.state.tools = opts?.tools ?? [];
+      agent.state.systemPrompt = opts?.systemPrompt ?? '';
     },
     subscribe(cb) {
       return agent.subscribe(cb);

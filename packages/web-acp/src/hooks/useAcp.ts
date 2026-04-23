@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
@@ -7,9 +7,12 @@ import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
 import type { BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
 import { createMessagePortStream } from '@/transport/worker-stream';
+import { createVolumeControl, type VolumeControl } from '@/transport/volume-control';
 import { getErrorMessage } from '@/lib/utils';
 import { getServerUrlOrThrow } from '@/lib/agent-model';
 import type { BodhiModelInfo } from '@/lib/bodhi-models';
+import type { VolumeInit } from '@/agent/volume-mount';
+import { useVolumes, type UseVolumesResult } from '@/hooks/useVolumes';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
@@ -18,7 +21,9 @@ const EMPTY_SESSIONS: BodhiSessionSummary[] = [];
 interface AcpRuntime {
   worker: Worker;
   client: AcpClient;
+  volumeControl: VolumeControl;
   initialize: Promise<void>;
+  resolveInit: (volumes: VolumeInit[]) => void;
 }
 
 // StrictMode double-mounts every effect; keep the worker + client at
@@ -36,7 +41,20 @@ function ensureRuntime(): AcpRuntime {
     type: 'module',
   });
   const channel = new MessageChannel();
-  worker.postMessage({ type: 'init', agentPort: channel.port2 }, [channel.port2]);
+  // `init` is posted lazily once the main thread has resolved the
+  // initial volume list (FSA handles + dev/test seeds). The
+  // `ClientSideConnection` below would otherwise dispatch requests
+  // into a worker that hasn't constructed the agent yet.
+  let resolveInit!: (volumes: VolumeInit[]) => void;
+  let initPosted = false;
+  const initPromise = new Promise<void>(resolve => {
+    resolveInit = (volumes: VolumeInit[]) => {
+      if (initPosted) return;
+      initPosted = true;
+      worker.postMessage({ type: 'init', agentPort: channel.port2, volumes }, [channel.port2]);
+      resolve();
+    };
+  });
   const { readable, writable } = createMessagePortStream(channel.port1);
   const stream = ndJsonStream(writable, readable);
 
@@ -53,8 +71,9 @@ function ensureRuntime(): AcpRuntime {
   const client = new AcpClient(conn);
   holder.client = client;
 
-  const initialize = client.initialize().then(() => undefined);
-  _runtime = { worker, client, initialize };
+  const initialize = initPromise.then(() => client.initialize()).then(() => undefined);
+  const volumeControl = createVolumeControl(worker);
+  _runtime = { worker, client, volumeControl, initialize, resolveInit };
   return _runtime;
 }
 
@@ -135,6 +154,18 @@ export function useAcp() {
   useEffect(() => {
     ensureRuntime();
   }, []);
+
+  const runtime = useMemo(() => ensureRuntime(), []);
+  const volumeControl = runtime.volumeControl;
+
+  const handleInitialVolumes = useCallback(
+    (initial: VolumeInit[]) => {
+      runtime.resolveInit(initial);
+    },
+    [runtime]
+  );
+
+  const volumes = useVolumes({ volumeControl, onInitialVolumes: handleInitialVolumes });
 
   // Route session/update → streaming message state.
   useEffect(() => {
@@ -459,5 +490,8 @@ export function useAcp() {
     loadSession,
     currentSessionId: isAuthenticated ? currentSessionId : null,
     isLoadingSession: isAuthenticated ? isLoadingSession : false,
+    volumes,
   };
 }
+
+export type { UseVolumesResult };
