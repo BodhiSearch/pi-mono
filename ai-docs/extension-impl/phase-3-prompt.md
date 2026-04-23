@@ -33,7 +33,13 @@ compaction (`on('context')`, `on('tool_call')`, `on('turn_start')`,
 the modal-only `pi.ui.*` channel (`notify`, `setStatus`, `select`,
 `confirm`, `input`).
 
-Phase 2b closed the remaining feature-level gap (isolation excepted):
+Phase 2b closed the remaining hook / registration / UI surface gap
+against coding-agent. What is **not** landed: extension isolation
+(everything still runs inline in the agent Worker), TypeScript / bundler
+support, the `registerKeybinding` hook, and a name-collision UX for
+overlapping skill / command / provider ids. Phase 3 picks those up.
+
+Phase 2b landed:
 
 - Widened `session_loaded.reason` to
   `'mount' | 'reload' | 'switch' | 'fork' | 'new' | 'navigate'`, fired
@@ -59,11 +65,18 @@ Phase 2b closed the remaining feature-level gap (isolation excepted):
 - Added six new fixtures (`title-marker`, `progress-widget`, `note-editor`,
   `echo-provider`, `compaction-nudger`, `skill-nudge`) and a dedicated
   `e2e/extensions-ui-2b.spec.ts` covering DOM witnesses.
+- Split the Phase 1 e2e vault: the original `extensions.spec.ts` now uses
+  `e2e/data/sample-phase-1-extensions/` (minimal — 4 fixtures) so the one
+  LLM-coupled step is not perturbed by Phase 2a/2b hook noise;
+  `sample-with-extensions/` (15 fixtures) continues to back the UI specs.
+- Published [`ai-docs/extension-guide/`](../extension-guide/README.md) —
+  user-facing walkthrough per fixture so the test extensions double as
+  discoverable capability demos.
 
 Phase 3 is the **isolation / runtime expansion** phase. The web-agent
-extension feature surface now matches coding-agent; what's left is the
-trust model, the bundler story, and the final missing `pi-tui`-only
-features (keybindings, marketplace, richer editors).
+extension feature surface now matches coding-agent on hooks, registration,
+and UI; what's left is the trust model, the bundler story, and the final
+missing `pi-tui`-only features (keybindings, marketplace, richer editors).
 
 ## Goals for Phase 3
 
@@ -125,9 +138,11 @@ encode the web-agent-specific invariants every subsequent file relies on.
 9. `packages/web-agent/src/hooks/useExtensionUI.ts`,
    `src/components/extensions/**` — main-thread surface.
 10. `packages/web-agent/src/sandbox/**` — **the isolation precedent** (iframe + Worker for SKILL.md scripts). Your Phase 3 design will almost certainly reuse this pattern or explicitly diverge from it.
-11. `packages/web-agent/e2e/data/sample-with-extensions/**` — every fixture.
-12. `packages/web-agent/e2e/extensions-ui.spec.ts`, `extensions-ui-2b.spec.ts` — DOM-only assertion style (keep it).
-13. `packages/coding-agent/src/core/extensions/**` — reference for hook / UI semantics, keybinding signatures.
+11. `packages/web-agent/e2e/data/sample-with-extensions/**` — every Phase 1 + 2a + 2b fixture (backs `extensions-ui.spec.ts` + `extensions-ui-2b.spec.ts`).
+12. `packages/web-agent/e2e/data/sample-phase-1-extensions/**` — minimal vault (backs `extensions.spec.ts`; isolates the LLM-coupled step from Phase 2a/2b hooks).
+13. `packages/web-agent/e2e/{extensions,extensions-ui,extensions-ui-2b}.spec.ts` — DOM-only assertion style (keep it).
+14. [`ai-docs/extension-guide/README.md`](../extension-guide/README.md) — user-facing capability index for every fixture (handy sanity-check when adding / removing hooks).
+15. `packages/coding-agent/src/core/extensions/**` — reference for hook / UI semantics, keybinding signatures.
 
 ## Landed API shapes (Phase 2b)
 
@@ -226,7 +241,7 @@ Mandatory (matches the Phase 2b gate):
 
 1. `npm run check` at the repo root — green.
 2. `npx vitest run` in `packages/web-agent` — green.
-3. Two back-to-back `npm run test:e2e` passes in `packages/web-agent`. Pre-existing compaction flake tracked separately.
+3. Two back-to-back `npm run test:e2e` passes in `packages/web-agent`. Pre-existing `e2e/compaction.spec.ts` manual-compaction flake (summariser returns empty bubble) is tracked as known gap #9 in `phase-2b-report.md` and must not block Phase 3 unless the run surfaces *new* failures.
 
 If Phase 3 introduces sandboxed-extension lifecycles, add a third e2e spec
 pair exercising the new isolation plumbing (one happy-path, one
