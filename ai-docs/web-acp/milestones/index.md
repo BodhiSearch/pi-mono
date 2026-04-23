@@ -37,14 +37,22 @@ gate file lands with the first real milestone if the rules diverge.
 
 | #   | Milestone                                                              | Status  | File |
 | --- | ---------------------------------------------------------------------- | ------- | ---- |
-| M0  | Foundation: scaffold + ZenFS `/vault` + real-LLM e2e, then Worker + ACP framing | planned | [m0-foundation.md](m0-foundation.md) |
-| M1  | ACP sessions: create, persist, reload, list, switch                    | planned | [m1-sessions.md](m1-sessions.md) |
-| M2  | Filesystem tools via ACP `fs/*` delegation                             | planned | [m2-tools.md](m2-tools.md) |
+| M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
+| M1  | ACP sessions: create, persist, reload, list, switch                    | next    | [m1-sessions.md](m1-sessions.md) |
+| M2  | Filesystem tools via ACP `fs/*` delegation (M2.1 vault / M2.2 fs tools / M2.3 MCP) | planned | [m2-tools.md](m2-tools.md) |
 | M3  | Session tree: fork, branch, navigate (likely needs ACP extension)      | planned | [m3-session-tree.md](m3-session-tree.md) |
 | M4  | Compaction: auto + manual + summary persistence                        | planned | [m4-compaction.md](m4-compaction.md) |
 | M5  | Resources: slash commands, prompt templates, skills                    | planned | [m5-resources.md](m5-resources.md) |
 | M6  | Extensions: runtime re-entry, starting from "how does ACP extend?"     | planned | [m6-extensions.md](m6-extensions.md) |
 | M7  | Polish + extract: diagnostics, HTML export, library package            | planned | [m7-polish-and-extract.md](m7-polish-and-extract.md) |
+
+**Scope adjustments vs. original plan.** The phased M0 rework
+dropped the `/vault` mount + second test-double transport out
+of M0 and the MCP surface out of the pre-rework runtime. Those
+requirements now live as sub-milestones under M2 — see
+[m2-tools.md](m2-tools.md) § M2.1 (vault) / M2.3 (MCP) and
+[m0-foundation.md](m0-foundation.md) § M0 hardening follow-up
+for the deferred transport test-double.
 
 ## Load-when hooks
 
@@ -53,15 +61,22 @@ do. Previews are deliberately non-committal — they capture
 **intent and sequencing**, not **plan-level detail**. Plan-level
 detail lives in `ai-docs/web-acp/plans/` per-milestone.
 
-- **[m0-foundation.md](m0-foundation.md)** — load when picking up
-  the first coding turn. Two parts: M0.a scaffold + vault + inline
-  agent + real-LLM e2e; M0.b agent behind Worker + ACP framing over
-  `MessageChannel`. Two transport implementations (real +
-  test-double) gate M0.b to prove swappability.
+- **[m0-foundation.md](m0-foundation.md)** — **shipped.** Load
+  for historical reference on what the rework delivered across
+  phases A–D and for the "M0 hardening follow-up" items
+  (second transport, worker-boundary e2e assertion) that were
+  cut from the M0 diff. **For current code-level reference,
+  read [`../specs/web-acp/`](../specs/web-acp/) — especially
+  [`startup-sequence.md`](../specs/web-acp/startup-sequence.md).**
 - **[m1-sessions.md](m1-sessions.md)** — load when picking up
-  session persistence / reload / list / switch.
-- **[m2-tools.md](m2-tools.md)** — load when moving tools onto ACP
-  `fs/*` delegation.
+  session persistence / reload / list / switch. This is the
+  next milestone after M0 shipped.
+- **[m2-tools.md](m2-tools.md)** — load when moving tools onto
+  ACP `fs/*` delegation. Ships in three slices: M2.1 vault
+  mount (FSA + ZenFS + dev seed, deferred out of M0), M2.2
+  built-in fs-tools + `tool_call` permission flow, M2.3 MCP
+  proxy tools over ACP (re-entering after being dropped in the
+  M0 rework).
 - **[m3-session-tree.md](m3-session-tree.md)** — load when picking
   up fork / branch. Flag: likely needs an ACP extension.
 - **[m4-compaction.md](m4-compaction.md)** — load when picking up
@@ -93,6 +108,9 @@ answer them speculatively in milestone previews.
 
 ## Cross-cutting references
 
+- **`ai-docs/web-acp/specs/web-acp/`** — living specs for what
+  M0 shipped. Start with
+  [`startup-sequence.md`](../specs/web-acp/startup-sequence.md).
 - **`ai-docs/web-acp/steering/00-vision.md`** — north star.
 - **`ai-docs/web-acp/steering/01-goals.md`** — capability checklist
   with test seams.
