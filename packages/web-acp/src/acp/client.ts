@@ -63,10 +63,11 @@ export class AcpClient {
     return this.#conn.newSession({ cwd: '/', mcpServers: [] });
   }
 
-  async prompt(sessionId: string, text: string): Promise<PromptResponse> {
+  async prompt(sessionId: string, text: string, modelId: string): Promise<PromptResponse> {
     return this.#conn.prompt({
       sessionId,
       prompt: [{ type: 'text', text }],
+      _meta: { bodhi: { modelId } },
     });
   }
 

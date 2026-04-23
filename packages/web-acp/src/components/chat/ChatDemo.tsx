@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { useAgent } from '@/hooks/useAgent';
+import { useAcp } from '@/hooks/useAcp';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 
@@ -18,7 +18,7 @@ export default function ChatDemo() {
     models,
     isLoadingModels,
     loadModels,
-  } = useAgent();
+  } = useAcp();
 
   useEffect(() => {
     if (chatError) {

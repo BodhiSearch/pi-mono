@@ -11,6 +11,7 @@ import type {
   PromptRequest,
   PromptResponse,
 } from '@agentclientprotocol/sdk';
+import type { AgentEvent, AgentMessage as CoreMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { BodhiProvider } from '@/agent/bodhi-provider';
 import { apiFormatOfModel } from '@/agent/bodhi-provider';
@@ -24,13 +25,24 @@ import {
 
 interface SessionState {
   id: string;
-  model?: Model<Api>;
+}
+
+interface BodhiPromptMeta {
+  bodhi?: {
+    modelId?: string;
+  };
+}
+
+interface StreamCursor {
+  messageId: string | undefined;
+  emittedLength: number;
 }
 
 /**
  * ACP agent handler that bridges the inline pi-agent-core runtime to the
- * protocol. Phase C only defines the skeleton surface; phase D fills in
- * the `prompt` / session-update translation.
+ * protocol. Translates pi-agent-core `AgentEvent`s into `session/update`
+ * notifications and returns a `StopReason` for each `session/prompt`
+ * request.
  */
 export class AcpAgentAdapter implements Agent {
   readonly #conn: AgentSideConnection;
@@ -38,16 +50,12 @@ export class AcpAgentAdapter implements Agent {
   readonly #bodhi: BodhiProvider;
   readonly #sessions = new Map<string, SessionState>();
   #models: Model<Api>[] = [];
-  #unsubscribe: (() => void) | null = null;
+  #cancelled = false;
 
   constructor(conn: AgentSideConnection, inline: InlineAgent, bodhi: BodhiProvider) {
     this.#conn = conn;
     this.#inline = inline;
     this.#bodhi = bodhi;
-    void this.#conn;
-    void this.#inline;
-    void this.#sessions;
-    void this.#unsubscribe;
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
@@ -80,6 +88,9 @@ export class AcpAgentAdapter implements Agent {
       throw new Error('authenticate: _meta must include { token, baseUrl }');
     }
     this.#bodhi.setAuthToken({ provider: 'bodhi', token: meta.token, baseUrl: meta.baseUrl });
+    // Reset cached catalog so next listModels re-fetches under the new token.
+    this.#models = [];
+    this.#inline.clearMessages();
     return {};
   }
 
@@ -89,12 +100,48 @@ export class AcpAgentAdapter implements Agent {
     return { sessionId };
   }
 
-  async prompt(_params: PromptRequest): Promise<PromptResponse> {
-    // Filled in during phase D.
-    throw new Error('AcpAgentAdapter.prompt not yet implemented (phase D)');
+  async prompt(params: PromptRequest): Promise<PromptResponse> {
+    const session = this.#sessions.get(params.sessionId);
+    if (!session) {
+      throw new Error(`Unknown session: ${params.sessionId}`);
+    }
+
+    const model = this.#resolveModel(params);
+    if (!model) {
+      throw new Error('No model selected: send session/prompt with _meta.bodhi.modelId');
+    }
+
+    const text = this.#extractPromptText(params);
+    if (!text) {
+      throw new Error('session/prompt payload must contain at least one text block');
+    }
+
+    this.#inline.setModel(model);
+
+    const cursor: StreamCursor = { messageId: undefined, emittedLength: 0 };
+    this.#cancelled = false;
+
+    const unsubscribe = this.#inline.subscribe(event => {
+      void this.#forwardEvent(params.sessionId, event, cursor);
+    });
+
+    try {
+      await this.#inline.prompt(text);
+      if (this.#cancelled) {
+        return { stopReason: 'cancelled' };
+      }
+      const errorMessage = this.#inline.getErrorMessage();
+      if (errorMessage) {
+        throw new Error(errorMessage);
+      }
+      return { stopReason: 'end_turn' };
+    } finally {
+      unsubscribe();
+    }
   }
 
   async cancel(_params: CancelNotification): Promise<void> {
+    this.#cancelled = true;
     this.#inline.cancel();
   }
 
@@ -111,4 +158,70 @@ export class AcpAgentAdapter implements Agent {
     }
     throw new Error(`Unknown extension method: ${method}`);
   }
+
+  #resolveModel(params: PromptRequest): Model<Api> | undefined {
+    const meta = (params._meta ?? {}) as BodhiPromptMeta;
+    const modelId = meta.bodhi?.modelId;
+    if (!modelId) return undefined;
+    return this.#models.find(m => m.id === modelId);
+  }
+
+  #extractPromptText(params: PromptRequest): string {
+    const parts: string[] = [];
+    for (const block of params.prompt ?? []) {
+      if (block && block.type === 'text' && typeof block.text === 'string') {
+        parts.push(block.text);
+      }
+    }
+    return parts.join('');
+  }
+
+  async #forwardEvent(sessionId: string, event: AgentEvent, cursor: StreamCursor): Promise<void> {
+    if (event.type !== 'message_update') return;
+    const msg = event.message;
+    if (msg.role !== 'assistant') return;
+
+    const messageId = extractMessageId(msg);
+    if (messageId !== cursor.messageId) {
+      cursor.messageId = messageId;
+      cursor.emittedLength = 0;
+    }
+
+    const text = extractAssistantText(msg);
+    if (text.length <= cursor.emittedLength) return;
+    const delta = text.slice(cursor.emittedLength);
+    cursor.emittedLength = text.length;
+
+    await this.#conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: delta },
+        ...(messageId ? { messageId } : {}),
+      },
+    });
+  }
+}
+
+function extractAssistantText(msg: CoreMessage): string {
+  if (typeof msg.content === 'string') return msg.content;
+  if (!Array.isArray(msg.content)) return '';
+  const out: string[] = [];
+  for (const part of msg.content) {
+    if (
+      part &&
+      typeof part === 'object' &&
+      'type' in part &&
+      part.type === 'text' &&
+      'text' in part
+    ) {
+      out.push(part.text as string);
+    }
+  }
+  return out.join('');
+}
+
+function extractMessageId(msg: CoreMessage): string | undefined {
+  const anyMsg = msg as unknown as { id?: unknown };
+  return typeof anyMsg.id === 'string' ? anyMsg.id : undefined;
 }
