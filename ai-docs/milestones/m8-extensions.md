@@ -1,6 +1,13 @@
 # M8 — Extensions
 
-**Status:** ✅ Phases 1 + 2a + 2b landed. Phase 3 (isolation / TS sources / marketplace) deferred.
+**Status:** ✅ Done. Phases 1 + 2a + 2b landed. Phase 3 deferred by
+product decision — installed extensions are **fully trusted** and run
+inline in the agent Worker with full core capabilities. No isolation /
+sandboxing is planned; the current Blob-URL `import()` loader is the
+permanent design. See [`deferred.md`](deferred.md) §
+*Extension sandboxing* for the rationale, and
+[`../extension-impl/phase-3-prompt.md`](../extension-impl/phase-3-prompt.md)
+(archived with a DEFERRED banner) for the original Phase 3 scope.
 
 Phase 1 shipped the browser-native extension runtime foundation: `.pi/extensions/<name>/index.js` is discovered from the vault, loaded inside the agent Worker via Blob-URL dynamic `import()`, and surfaces the `before_agent_start` / `tool_result` hooks plus `registerTool` / `registerCommand`. The main-thread `ExtensionsPanel` provides per-extension toggles, a global "Disable all" trip switch (the M8 gate), and surfaces both load-time and runtime errors.
 
@@ -65,6 +72,6 @@ Additional genres considered in scope for consideration but deferred from v1: to
 - [`../extension-impl/phase-2b-report.md`](../extension-impl/phase-2b-report.md) — what shipped in Phase 2b, known gaps, open questions carried into Phase 3.
 - [`../extension-impl/phase-2-prompt.md`](../extension-impl/phase-2-prompt.md) — original Phase 2 prompt (superseded by Phase 2a + Phase 2b split).
 - [`../extension-impl/phase-2b-prompt.md`](../extension-impl/phase-2b-prompt.md) — Phase 2b handoff (widgets, editor, `setTitle`, `registerProvider`, `registerSkill`, session-manager access, compaction hooks).
-- [`../extension-impl/phase-3-prompt.md`](../extension-impl/phase-3-prompt.md) — Phase 3 handoff (iframe sandbox, TS sources, marketplace).
+- [`../extension-impl/phase-3-prompt.md`](../extension-impl/phase-3-prompt.md) — **archived** (Phase 3 deferred by decision; file carries a DEFERRED banner but the landed API shapes and hard constraints in its lower half remain ground truth).
 - [`ai-docs/extension-spike/`](../extension-spike/) — spike archive retained for context; superseded by the Phase 1 / 2a implementation.
 - [`ai-docs/decisions/m8-extensions.md`](../decisions/m8-extensions.md) — spike-era decisions (D20, D21); treat as historical.

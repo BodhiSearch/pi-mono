@@ -121,7 +121,7 @@ New under `packages/web-agent/e2e/data/sample-with-extensions/.pi/extensions/`:
 
 ## Known gaps (intentional — carried into Phase 3)
 
-1. **No iframe / Worker-per-extension isolation.** Extensions still run inline in the agent Worker. Cross-extension interference is prevented only by the runner's `try/catch` wrappers and the deduplication rules; CPU / memory hogs still degrade the agent Worker.
+1. **No iframe / Worker-per-extension isolation — closed by product decision.** Installed extensions are fully trusted and execute inline in the agent Worker with core capabilities. Cross-extension interference is prevented by the runner's `try/catch` wrappers and deduplication rules; CPU / memory hogs still degrade the agent Worker, and that is accepted. This is the permanent design, not a Phase 3 carry-over. See [`../milestones/deferred.md`](../milestones/deferred.md) § *Extension sandboxing*.
 2. **No TypeScript sources / bundler.** Still single-file ESM `index.js`; bare-specifier imports remain unresolvable.
 3. **No keybinding hook.** `pi-tui`'s `registerKeybinding` has no browser equivalent; the web host owns keyboard shortcuts globally.
 4. **Editor UX is modal, not inline.** Deliberate divergence (see [`../specs/coding-vs-web-agent/divergence.md`](../specs/coding-vs-web-agent/divergence.md) § "Editor surface"). Revisit once UX testing reveals real demand for an inline editor.
@@ -131,13 +131,14 @@ New under `packages/web-agent/e2e/data/sample-with-extensions/.pi/extensions/`:
 8. **Dialog timeout countdown not rendered.** The worker honours `opts.timeout`; the main-thread renderer still doesn't surface a visible countdown.
 9. **Pre-existing compaction.spec.ts flake.** `e2e/compaction.spec.ts` occasionally fails its manual-compaction step because the summariser LLM call returns an empty bubble; tracked independently of Phase 2b (two back-to-back local runs reproduced only this spec).
 
-## Open questions for Phase 3
+## Open questions (originally for Phase 3 — most are now moot)
 
-- **Isolation model.** Iframe per extension? Worker per extension? Shared Worker with a capability broker? The answer drives the TypeScript / bundler story too.
-- **Capability surface for sandboxed extensions.** Re-export today's `pi` API over a structured-clone channel, or narrow it to a subset that's safe to expose outside the agent Worker?
-- **Name-collision UX.** Should the host surface a warning when two extensions register the same skill / command / provider id? Currently silent first-wins.
-- **Extension marketplace story.** Out of scope for Phase 3 but a dependent decision for the isolation model.
-- **Inline editor.** If we revisit it, does it share the composer focus/keyboard story or carve out its own surface?
+- ~~**Isolation model.** Iframe per extension? Worker per extension? Shared Worker with a capability broker?~~ **Closed.** Product decision: no isolation; extensions are fully trusted.
+- ~~**Capability surface for sandboxed extensions.**~~ **Closed.** Extensions see the same `pi` API as today, directly (no structured-clone channel).
+- ~~**Extension marketplace story.**~~ **Out of scope.** With a trust-based model, any distribution story is a separate post-v1 discussion, not an M8 question.
+- **Name-collision UX (still open).** Should the host surface a warning when two extensions register the same skill / command / provider id? Currently silent first-wins. Would ship as a small UX polish ticket under M10 if/when it becomes a real-user complaint.
+- **TypeScript sources / bundler support (still open, decoupled from isolation).** Would land as its own milestone if demand appears.
+- **Inline editor (still open).** If we revisit it, does it share the composer focus/keyboard story or carve out its own surface?
 
 ## Cross-links
 

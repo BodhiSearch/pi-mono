@@ -1,6 +1,6 @@
 # M9 — Resources (commands, prompts, skills, themes)
 
-**Status:** 🟡 partial. Vault-sourced slash commands, prompt templates, and skills are **done** (landed ahead of the extension runtime, vault-only by design). Extension-registered commands, themes, and multi-tier (user + CLI) discovery are **still pending**.
+**Status:** 🟡 partial. Vault-sourced slash commands, prompt templates, and skills are **done** (landed ahead of the extension runtime, vault-only by design). Extension-registered commands + skills landed with M8 Phase 1 / Phase 2b respectively — `SlashCommandInfo.source` now uses the `'extension'` and `'extension-skill'` tags in production. **Still pending:** themes, and multi-tier (user + CLI) discovery.
 
 Test seam: vitest + Playwright e2e.
 
@@ -30,9 +30,10 @@ Spec: [`ai-docs/specs/worker-agent/skills.md`](../specs/worker-agent/skills.md) 
 
 ## Still pending (blocks "done")
 
-- **Extension-registered commands.** Source tag `extension` in `SlashCommandInfo.source` is reserved but unused; lands with M8 runtime.
-- **Themes.** No theme registration yet; UI ships with built-ins. Deferred until a concrete user need appears.
-- **Multi-tier discovery.** coding-agent also walks `~/.pi/agent/` and CLI-flagged paths; web-agent is vault-only. Add when host code has a place to store user-scoped resources.
+- ~~**Extension-registered commands.**~~ ✅ landed with M8 Phase 1 — `pi.registerCommand` + `CommandRegistry` `extension` source. Exercised end-to-end by the `fancy-prompt` fixture in `e2e/extensions.spec.ts`.
+- ~~**Extension-registered skills.**~~ ✅ landed with M8 Phase 2b — `pi.registerSkill` + `ExtensionSkillController` + `extension-skill` source, with an inline-script resolver hook on `bash-skill.ts`. Exercised by the `skill-nudge` fixture in `e2e/extensions-ui-2b.spec.ts`.
+- **Themes.** No theme registration yet; UI ships with built-ins. Deferred until a concrete user need appears. Candidate surface: `pi.registerTheme({ id, tokens })` + a CSS-vars bridge on the main thread. Not planned for this pass.
+- **Multi-tier discovery.** coding-agent walks `~/.pi/agent/` and CLI-flagged paths; web-agent is vault-only. In-browser there is no `~` — the equivalent would be a per-origin IndexedDB-backed "user resources" tier layered below the vault tier (resolution order: builtin → user-IDB → vault). Needs a UX for users to import resources into that tier. Plan pending — see [`../plans/m9-finish.md`](../plans/m9-finish.md).
 - **Prompt images / multimodal input.** Orthogonal to M9 but often requested alongside prompts — tracked separately under `feature-gaps.md`.
 
 ---
@@ -47,5 +48,7 @@ Spec: [`ai-docs/specs/worker-agent/skills.md`](../specs/worker-agent/skills.md) 
 
 - **[done]** vitest covering builtin `/help` dispatch, prompt-template frontmatter + argument substitution, skill loading + `/skill:<name>` expansion, sandboxed script execution, `list_commands` enumeration.
 - **[done]** e2e (`packages/web-agent/e2e/slash-commands.spec.ts`, `skills.spec.ts`) covering palette, prompt-template substitution into the user message, skill run via sandboxed `bash`, vault-write round-trip, `/reload` transient.
-- **[pending]** extension-registered `/echo-extension` round-trips through `list_commands` and dispatch.
-- **[pending]** theme registration + switch (scope TBD).
+- **[done]** extension-registered `/fancy-prompt` round-trips through `list_commands` and dispatch (`e2e/extensions.spec.ts`).
+- **[done]** extension-registered `/skill:nudge` round-trips via `ExtensionSkillController` (`e2e/extensions-ui-2b.spec.ts`).
+- **[pending]** theme registration + switch (scope TBD; optional — deferred until a concrete user need appears).
+- **[pending]** multi-tier discovery (user tier via per-origin IndexedDB) — plan file to be authored under `ai-docs/plans/m9-finish.md`.
