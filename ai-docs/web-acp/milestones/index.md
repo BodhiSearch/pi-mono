@@ -49,7 +49,7 @@ gate file lands with the first real milestone if the rules diverge.
 | --- | ---------------------------------------------------------------------- | ------- | ---- |
 | M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
 | M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
-| M2  | Vault mount + just-bash shell tool (agent-owned FS)                    | next    | [m2-tools.md](m2-tools.md) |
+| M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | next    | [m2-tools.md](m2-tools.md) |
 | M3  | MCP over HTTP + provider-native tool passthrough                       | planned | [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md) |
 | M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
@@ -63,8 +63,8 @@ gate file lands with the first real milestone if the rules diverge.
 | -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- | ------ |
 | Tool execution       | Agent executes; reports via `session/update (tool_call)`      | Agent executes; single `bash` tool registered with the LLM (M2)        | compliant |
 | Tool reporting       | `session/update (tool_call)` + `tool_call_update`             | Same; CommandCollector maps bash sub-commands when useful              | compliant |
-| Permission           | `session/request_permission`                                  | Same; just-bash transform plugin bridges destructive commands          | compliant |
-| Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
+| Permission           | `session/request_permission`                                  | Bridge from destructive bash commands is **deferred** to post-M2; see [deferred.md](deferred.md) | **deferred (see deferred.md)** |
+| Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
 | MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; HTTP transport only (M3)                          | compliant |
 | Provider-native tools | Reported as standard `tool_call` notifications                | Same — OpenAI `web_search` etc. surface via `tool_call` (M3)           | compliant |
 | Slash commands       | Advertised via `available_commands_update`; expanded client-side | Same (M4)                                                              | compliant |
@@ -83,17 +83,25 @@ advertising `fs/*` as a future IDE-integration seam.
 **Scope adjustments vs. original plan.**
 
 - The phased M0 rework dropped the `/vault` mount + second
-  test-double transport out of M0; vault re-enters as M2.1.
+  test-double transport out of M0; vault re-enters as M2.1,
+  now as **Linux-style multi-volume mounts at `/mnt/<name>`**
+  rather than a single `/vault`.
 - **M2 has been rescoped** from "six hand-rolled FS tools over
-  ACP `fs/*`" to "vault mount + just-bash shell tool". Driver:
-  the `vercel-labs/just-bash` browser-native bash sandbox
-  collapses the six-tool surface into a single `bash` tool with
-  a strictly richer capability set (pipes, redirects, `jq`,
-  `rg`, scripting). This requires the filesystem to live on the
-  agent because ACP `fs/*` cannot transport just-bash's
-  `IFileSystem`. ACP `fs/*` is still advertised for future IDE
-  integration; built-ins do not use it. See
-  [m2-tools.md](m2-tools.md).
+  ACP `fs/*`" to "multi-volume mount + just-bash shell tool +
+  generic feature toggles". Driver: the `vercel-labs/just-bash`
+  browser-native bash sandbox collapses the six-tool surface
+  into a single `bash` tool with a strictly richer capability
+  set (pipes, redirects, `jq`, `rg`, scripting). This requires
+  the filesystem to live on the agent because ACP `fs/*`
+  cannot transport just-bash's `IFileSystem`. ACP `fs/*` is
+  still advertised for future IDE integration; built-ins do
+  not use it. See [m2-tools.md](m2-tools.md).
+- **Permission bridge + allow-always persistence deferred out
+  of M2.** Originally scoped as M2.3; carved out to
+  [deferred.md](deferred.md). M2's `bash` tool runs commands
+  as-is; the destructive-command gate layers on later without
+  reshaping the tool-call wire. Re-enters at the milestone
+  kickoff following M2 exit.
 - **M3 is now MCP + provider-native tools**, not session tree.
   Rationale: in the web-agent spike, MCP was the hard part; we
   tackle it early while the tool surface is minimal and the
@@ -130,13 +138,20 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   companion that restores the per-session model selector.
   Delivery plan at [`../plans/m1-sessions.md`](../plans/m1-sessions.md).
 - **[m2-tools.md](m2-tools.md)** — load when standing up the
-  vault mount and the just-bash shell tool. Ships in four
-  slices: M2.1 vault mount (FSA + ZenFS worker-side), M2.2
-  just-bash integration + single `bash` tool registration,
-  M2.3 permission bridge (just-bash transform →
-  `session/request_permission`), M2.4 `fs/*` client handlers
-  as a future IDE-integration seam (advertised, not used by
-  built-ins).
+  multi-volume mount and the just-bash shell tool. Ships in
+  four slices: M2.1 multi-volume mount (FSA + ZenFS worker-
+  side, `/mnt/<name>` naming, per-volume descriptions), M2.2
+  just-bash integration + single `bash` tool registration +
+  generic `_bodhi/features/*` toggle surface, M2.3 `fs/*`
+  client handlers as a future IDE-integration seam
+  (advertised, not used by built-ins), M2.4 polish + exit.
+  The permission bridge that used to live as M2.3 is
+  **deferred** to post-M2 — see [deferred.md](deferred.md).
+- **[deferred.md](deferred.md)** — load whenever a deferral
+  decision gets carved out of an in-flight milestone, or when
+  the scope of a future milestone needs to pick up a deferred
+  item. Currently tracks the permission bridge + allow-always
+  persistence carried out of M2.
 - **[m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md)** —
   load when adding MCP servers to the worker and surfacing
   provider-native tools. Agent is the MCP client (HTTP only).

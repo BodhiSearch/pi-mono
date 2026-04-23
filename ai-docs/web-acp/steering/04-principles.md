@@ -133,6 +133,25 @@ consumer-visible behaviour.
   `import.meta.env.DEV`-gated `useDevSeedBoot` seam **is allowed**:
   feeds inputs in before the app runs, doesn't sidestep the app's
   paths.
+- **Testable internal state via `data-testid` + `data-test-state`.**
+  Components that carry runtime state expose a `data-testid` for
+  selection and a `data-test-state="…"` attribute for state
+  assertions (e.g. `data-test-state="idle|mounting|mounted|error"`
+  on a volumes panel; `data-test-state="running|completed|failed"`
+  on a tool-call bubble). This is how internal state becomes
+  observable without `page.evaluate`.
+- **No `page.waitForTimeout` in new specs.** Wait on observable
+  state via `expect(locator).toHaveAttribute('data-test-state',
+  '<value>')` or equivalent assertions. If you reach for
+  `waitForTimeout`, either the product is missing a
+  `data-test-state` hook (add one) or the test is over-reaching
+  (tighten the assertion).
+- **DEV-only deterministic test toggles are allowed** when they
+  replace a `page.evaluate` workaround. The `forceToolCall`
+  feature in M2 is the canonical example: a DEV-gated toggle
+  that passes `tool_choice: 'required'` to pi-ai so a benign
+  prompt reliably triggers a tool call. Production builds
+  hide the toggle; the e2e harness stays black-box.
 - Unit tests (vitest) may go deeper — they test pieces. Framing
   round-trips, transport double, tool-operation adapters,
   session-store behaviour.

@@ -1,12 +1,20 @@
-# web-acp — 003 — M2 Vault Mount + just-bash Shell Tool
+# web-acp — 003 — M2 Multi-volume Mount + just-bash Shell Tool
 
 > **Purpose of this prompt.** Drive
 > [`../milestones/m2-tools.md`](../milestones/m2-tools.md) to
 > completion. The agent gains a real tool surface — a single
 > `bash` tool backed by
-> [`vercel-labs/just-bash`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash) —
-> running over a worker-mounted `/vault` with per-command
-> permission gating and stable ACP reporting.
+> [`just-bash`](https://www.npmjs.com/package/just-bash)
+> (published browser build; local clone at
+> `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/`
+> is read-only reference) — running over worker-mounted user
+> folders under `/mnt/<name>` with stable ACP reporting.
+>
+> **Deferred in M2.** Per-command permission gating and
+> allow-always persistence are carried to
+> [`../milestones/deferred.md`](../milestones/deferred.md). The
+> bash tool in M2 runs commands as-is. The destructive-command
+> bridge layers on later without reshaping the tool-call wire.
 >
 > This is the **executable brief** for M2. Treat it as the
 > authoritative scope; clarifying questions go through
@@ -26,9 +34,9 @@
 3. Mark to-dos `in_progress` as you work (one at a time). Don't
    stop until every exit-criteria box below is ticked.
 4. Ask questions via `AskUserQuestion` **only** for decisions
-   that change the plan's shape (e.g. which MCP transport, how
-   to classify a specific command). Cosmetic preferences: pick
-   the obvious thing and move on.
+   that change the plan's shape (e.g. handle-transfer shape,
+   feature-flag wire details). Cosmetic preferences: pick the
+   obvious thing and move on.
 
 ---
 
@@ -43,48 +51,60 @@ e2e specs prove it (`sessions-persist.spec.ts`,
 
 M2 builds on that. The LLM gains workspace tools — `cat`, `ls`,
 `grep`, `find`, `rg`, `sed`, `jq`, pipes, redirects — via a
-single `bash` tool. The vault lives in the worker. Destructive
-commands prompt via `session/request_permission`. ACP `fs/*`
-handlers are implemented on the client but unused by the default
-bash tool (future IDE-integration seam).
+single `bash` tool. The user mounts one or more real folders
+under `/mnt/<name>` (Linux-style) via the File System Access API;
+the worker owns the mounts. ACP `fs/*` handlers are implemented
+on the client but unused by the default bash tool (future
+IDE-integration seam).
 
 ## Decisions already made (do not re-ask these)
 
-1. **Filesystem is agent-owned.** Worker mounts `/vault` via
-   ZenFS `WebAccess` over a transferred FSA handle. just-bash's
-   `IFileSystem` wraps it. The default bash tool does not
-   round-trip through ACP `fs/*`. Justified by just-bash's 25-
-   method FS interface vs. ACP `fs/*`'s 2; see
+1. **Filesystem is agent-owned.** Worker mounts `/mnt/<name>`
+   via ZenFS `WebAccess` over transferred FSA handles. just-bash's
+   `IFileSystem` wraps each mount. The default bash tool does
+   not round-trip through ACP `fs/*`. Justified by just-bash's
+   25-method FS interface vs. ACP `fs/*`'s 2; see
    [`../steering/02-architecture.md § just-bash integration`](../steering/02-architecture.md#just-bash-integration).
 2. **Single LLM-facing tool: `bash`.** Collapses the original
    six-tool plan. Input:
    `{ script: string; cwd?: string; timeout_ms?: number; stdin?: string }`.
    Output:
    `{ stdout: string; stderr: string; exitCode: number; truncated?: boolean }`.
-3. **Permission via `session/request_permission`.** A
-   `BashTransformPipeline` plugin classifies each script
-   pre-execution (allow-list / confirm-list / deny-by-default)
-   and bridges the confirm-list to the stable ACP permission
-   primitive. No bespoke confirm RPC.
-4. **Allow-always is session-scoped.** Persists with the session
-   record; does not cross sessions. Settings UI exposes a reset.
-5. **`fs/*` handlers implemented, advertised, but unused by
+3. **Linux-style multi-mount.** Users may mount multiple folders;
+   each lands at `/mnt/<folder-name>`. Name collisions get a
+   `-1`, `-2`, … suffix. Each volume carries an optional
+   description that the worker folds into the system prompt so
+   the LLM knows what's in each mount. Default `cwd` is the
+   first-mounted volume; if none are mounted yet, the `bash`
+   tool is not registered.
+4. **Generic feature toggles via `_bodhi/features/*`.** A small
+   extension surface (`_bodhi/features/list`, `_bodhi/features/set`)
+   backed by a session-scoped `features: Record<string, boolean>`
+   slot on the session record. M2 ships two flags:
+   `bashEnabled` (default `true`) and `forceToolCall` (DEV-only,
+   default `false`). Flags are readable on reload via
+   `bodhi/getSession`.
+5. **Permission bridge deferred.** No pre-execution classifier,
+   no `session/request_permission` calls from the bash tool, no
+   allow-always UI. Captured in
+   [`../milestones/deferred.md`](../milestones/deferred.md).
+6. **`fs/*` handlers implemented, advertised, but unused by
    built-ins.** Client handlers validate path + read/write
-   through the same ZenFS store. `clientCapabilities.fs.readTextFile`
-   and `writeTextFile` flip to `true` in
-   `AcpClient.initialize()`. Documented as IDE-integration
-   seam.
-6. **Text-focused tool surface.** just-bash handles binary
+   through the same ZenFS store.
+   `clientCapabilities.fs.readTextFile` and `writeTextFile` flip
+   to `true` in `AcpClient.initialize()`. Documented as
+   IDE-integration seam.
+7. **Text-focused tool surface.** just-bash handles binary
    internally (`base64`, `od`, `tar`); the LLM sees text.
-7. **No `curl`, no `js-exec`, no `python3` in v1.** Network is
+8. **No `curl`, no `js-exec`, no `python3` in v1.** Network is
    disabled by default; JS/Python are Node-only in just-bash
    and not available in the browser bundle. M3 revisits MCP +
    network.
-8. **No stdio MCP, no ACP `terminal/*`.** Browsers can't spawn
+9. **No stdio MCP, no ACP `terminal/*`.** Browsers can't spawn
    processes; just-bash is our shell.
-9. **Command classifier lives in the worker.** The main thread
-   only sees `session/request_permission` requests and renders
-   them; it does not parse scripts.
+10. **Published library, local clone is reference-only.** `npm
+    install just-bash@<pinned>`; import from `just-bash/browser`.
+    Do not vendor, do not copy source.
 
 ## Read before planning
 
@@ -94,7 +114,8 @@ All paths relative to repo root unless otherwise noted.
 
 1. [`../steering/`](../steering/) — all four files. Principle 14
    (agent owns tools, FS follows the richest tool's interface),
-   principle 15 (extension-method naming).
+   principle 15 (extension-method naming), principle 7
+   (testable state via `data-test*`, no `waitForTimeout`).
 2. [`../specs/web-acp/index.md`](../specs/web-acp/index.md) —
    start here; follow to:
    - [`startup-sequence.md`](../specs/web-acp/startup-sequence.md)
@@ -105,46 +126,60 @@ All paths relative to repo root unless otherwise noted.
    - [`sessions.md`](../specs/web-acp/sessions.md)
 3. [`../milestones/m2-tools.md`](../milestones/m2-tools.md) —
    scope + sub-milestones + gate items.
-4. [`../milestones/index.md`](../milestones/index.md) — the
+4. [`../milestones/deferred.md`](../milestones/deferred.md) —
+   what's explicitly out of M2 (permission bridge +
+   allow-always).
+5. [`../milestones/index.md`](../milestones/index.md) — the
    ACP-compliance-at-a-glance table and the scope-adjustments
    section explaining why M2 looks like it does.
-5. `packages/web-acp/src/acp/*.ts`,
+6. `packages/web-acp/src/acp/*.ts`,
    `packages/web-acp/src/agent/*.ts`,
    `packages/web-acp/src/hooks/useAcp.ts` — current shape.
-6. `packages/web-acp/e2e/` — e2e idioms the new specs must
+7. `packages/web-acp/e2e/` — e2e idioms the new specs must
    match (global-setup, page objects, helpers).
 
-### Reference sources (read, don't copy)
+### Reference sources (port, don't copy)
 
-7. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/README.md`
-   — feature overview and `Bash` / `MountableFs` / `IFileSystem`
-   shapes.
-8. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/browser.ts`
-   — browser entry + exports. This is what we import.
-9. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/fs/interface.ts`
-   — full `IFileSystem` interface we implement over ZenFS.
-10. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/transform/`
-    — `BashTransformPipeline`, `CommandCollectorPlugin`, custom
-    plugin shape. Reference for the permission classifier.
-11. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/THREAT_MODEL.md`
+The source trees below are **crib sheets, not modules**. Copy
+the pattern, re-derive the types.
+
+8. `packages/coding-agent/src/` — turn loop, tool registry,
+   extension hooks, schema-agnostic tool operations.
+9. `packages/web-agent/src/providers/VaultProvider.tsx`,
+   `packages/web-agent/src/vault/` (via
+   `packages/web-agent/src/components/vault/`) — FSA handle
+   persistence, `requestPermission` re-grant flow.
+10. `packages/web-agent/e2e/helpers/install-vault.ts`,
+    `packages/web-agent/e2e/vault-fs.spec.ts`,
+    `packages/web-agent/e2e/tests/pages/VaultPage.ts` — dev-seed
+    testing seam + page-object shape. M2 extends these for
+    multi-volume.
+11. `/Users/amir36/Documents/workspace/src/github.com/svkozak/pi-acp/src/`
+    — ACP-shaped `agent.ts`, `session.ts`, `session-store.ts`,
+    `slash-commands.ts`. Stdio plumbing does not port; ACP
+    shapes do.
+12. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/README.md`
+    — feature overview and `Bash` / `MountableFs` /
+    `IFileSystem` shapes.
+13. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/browser.ts`
+    — browser entry + exports. Mirrors the `just-bash/browser`
+    export we import from npm.
+14. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/fs/interface.ts`
+    — full `IFileSystem` interface we implement over ZenFS.
+15. `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/THREAT_MODEL.md`
     — sandbox guarantees; what the agent-owned FS posture
     assumes.
-12. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/docs/protocol/tool-calls.mdx`
-    — canonical tool-call lifecycle and `session/request_permission`
-    shape.
-13. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/docs/protocol/file-system.mdx`
+16. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/docs/protocol/tool-calls.mdx`
+    — canonical tool-call lifecycle.
+17. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/docs/protocol/file-system.mdx`
     — why `fs/*` is an editor-buffer bridge, not a general VFS.
-14. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/schema/schema.json`
+18. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/schema/schema.json`
     — ground-truth types for `tool_call`, `tool_call_update`,
-    `RequestPermissionRequest`, `fs/*`.
-15. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/claude-agent-acp/src/acp-agent.ts`
-    — reference thick-agent impl. Useful for the permission
-    flow even though their FS posture is Variation A (we chose
-    Variation B — see principle 14).
-16. `packages/web-agent/src/vault/` +
-    `packages/web-agent/e2e/tests/vault-*.spec.ts` — FSA handle
-    persistence + e2e seeding pattern we re-derive (don't
-    import).
+    `fs/*`.
+19. `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/claude-agent-acp/src/acp-agent.ts`
+    — reference thick-agent impl. Useful even though their FS
+    posture is Variation A (we chose Variation B — see
+    principle 14).
 
 ---
 
@@ -154,50 +189,73 @@ Every deliverable lands inside the phase commit that produces
 it. Spec updates share the commit with the code that motivates
 them.
 
-### Phase A — M2.1 — Vault mount (worker-side)
+### Phase A — M2.1 — Multi-volume mount (worker-side)
 
 - `packages/web-acp/src/vault/fsa-handle-store.ts` — main-thread
-  handle persistence via `idb-keyval`, same pattern as web-agent
-  (re-derived, not imported).
-- Directory-picker UI in `src/components/` — minimal, reusable,
-  `data-testid="btn-pick-vault"`.
-- `packages/web-acp/src/agent/agent-worker.ts` — accept an
-  additional `vaultPort` / `vaultHandle` inside the `init`
-  payload (second `MessageChannel` or structured-cloned handle;
-  plan picks).
-- Worker-side `src/agent/vault-mount.ts` — ZenFS `WebAccess`
-  mount from the transferred handle; falls back to
-  `window.__zenfsSeed` when no handle is available (dev/test).
-- `packages/web-acp/e2e/helpers/install-vault.ts` —
-  `page.addInitScript` that forwards the seed into the worker
-  boot path.
+  persistence of an **array** of
+  `{ handle: FileSystemDirectoryHandle; mountName: string; description?: string }`
+  via `idb-keyval`. Mount-name is derived from the handle's
+  `name` with `-1`, `-2`, … collision suffixes. Re-derived from
+  the web-agent pattern, not imported.
+- Volumes panel UI in `src/components/volumes/` — add volume,
+  list mounted volumes, remove volume, optional description
+  input. `data-testid="btn-add-volume"`,
+  `data-testid="volumes-panel"`, per-row
+  `data-testid="volume-row-<mountName>"`. The panel surfaces
+  `data-test-state="idle|mounting|mounted|error"` so Playwright
+  waits on observable state, never on timeouts.
+- `packages/web-acp/src/agent/agent-worker.ts` — `init` payload
+  carries `VolumeInit[] = Array<{ handle, mountName, description? }>`
+  (structured-cloned) instead of a single `vaultHandle`.
+- Worker-side `src/agent/volume-mount.ts` — for each
+  `VolumeInit`, mount ZenFS `WebAccess` at `/mnt/<mountName>`.
+  Falls back to `window.__zenfsSeed` (a `VolumeSeed[]`) when no
+  handles are available (dev/test).
+- `packages/web-acp/src/agent/system-prompt.ts` — composes a
+  `Volumes:\n- /mnt/<name> — <description>` block and appends
+  it to the system prompt so the LLM knows each mount's
+  purpose. Mounts without a description render as
+  `- /mnt/<name>` only.
+- `packages/web-acp/e2e/helpers/install-volumes.ts` —
+  `installVolumes(page, seeds[])` helper. Supersedes the
+  single-vault helper; each seed is
+  `{ name: string; description?: string; files: Record<string, string> }`
+  rooted below `/mnt/<name>`. Walks Node-side dirs when `files`
+  is omitted and a `dataDir` is given.
 - Spec updates: new
   [`../specs/web-acp/vault.md`](../specs/web-acp/vault.md) —
-  mount lifecycle, handle transfer shape, dev-seed protocol.
-  Edits to `startup-sequence.md` (init payload now carries the
-  vault handle), `agent.md` (vault-mount module).
+  multi-mount lifecycle, handle-array transfer shape, dev-seed
+  protocol, system-prompt descriptor injection. Edits to
+  `startup-sequence.md` (init payload carries `VolumeInit[]`),
+  `agent.md` (volume-mount + system-prompt modules).
 - Deps: `@zenfs/core`, `@zenfs/dom`, `idb-keyval` added to
   `packages/web-acp/package.json`.
 
 **Phase A gate:** `npm run check` + vitest + all M1 e2e specs
-green. New spec: `vault.spec.ts` — pick + seed + reload round-
-trip (UI only; vault not yet used by the prompt path). Commit
-`web-acp: M2 phase A — vault mount (worker-side)`.
+green. New spec: `volumes.spec.ts` — add-volume, add-second
+volume with name-collision suffix (`wiki` + `wiki` →
+`wiki` + `wiki-1`), remove-volume, reload round-trip (handles
+persisted, mounts restored), and "system prompt references the
+description" verified by a follow-up prompt that the LLM must
+answer referencing the description text. Commit
+`web-acp: M2 phase A — multi-volume mount (worker-side)`.
 
-### Phase B — M2.2 — just-bash integration + `bash` tool
+### Phase B — M2.2 — just-bash integration + `bash` tool + feature toggles
 
 - Deps: `just-bash` added at the pinned version; import from
-  `just-bash/browser`.
-- `packages/web-acp/src/agent/tools/vault-filesystem.ts` —
-  `VaultFileSystem` class implementing
-  `IFileSystem` from
-  `just-bash/src/fs/interface.ts`, backed by the ZenFS
-  `/vault` mount from Phase A.
+  `just-bash/browser`. No local vendoring.
+- `packages/web-acp/src/agent/tools/volume-filesystem.ts` —
+  `VolumeFileSystem` class implementing `IFileSystem` from
+  `just-bash`, backed by a ZenFS mount at `/mnt/<name>` from
+  Phase A. One adapter instance per volume.
 - `packages/web-acp/src/agent/tools/bash-tool.ts` — registers
   the `bash` tool with `pi-agent-core`'s tool registry;
   constructs a `Bash` instance with a `MountableFs` composing
-  `/vault` over `VaultFileSystem` and `InMemoryFs` for `/tmp`
-  and `/home/user`; default `cwd = /vault`.
+  each `/mnt/<name>` over `VolumeFileSystem` plus `InMemoryFs`
+  for `/tmp` and `/home/user`; default `cwd` is the first
+  mounted volume. If no volumes are mounted, the `bash` tool
+  is not registered (and `features.bashEnabled` reads as
+  effectively `false`).
 - `packages/web-acp/src/acp/agent-adapter.ts` — emit
   `session/update (tool_call)` with `kind: 'execute'` before
   invoking `bash.exec`; stream `tool_call_update` with
@@ -206,85 +264,87 @@ trip (UI only; vault not yet used by the prompt path). Commit
   KB with `truncated: true`.
 - `session/cancel` wired to a per-turn `AbortController`;
   cancelling aborts the bash script cooperatively.
-- `packages/web-acp/src/agent/tools/bash-tool.test.ts` — vitest
-  coverage: VaultFileSystem round-trip, bash stdout/stderr
-  split, exitCode propagation, abort plumbing, truncation.
+- `packages/web-acp/src/features/feature-store.ts` —
+  session-scoped `features: Record<string, boolean>` persisted
+  in the session record. Default values:
+  `{ bashEnabled: true, forceToolCall: false }`.
+- `packages/web-acp/src/acp/methods.ts` — constants for
+  `_bodhi/features/list` (returns `{ features, defaults }`) and
+  `_bodhi/features/set` (accepts `{ key, value }`), per
+  principle 15.
+- `packages/web-acp/src/agent/session-loop.ts` — when
+  `features.forceToolCall === true`, the pi-ai prompt request is
+  sent with `tool_choice: 'required'` so the LLM must invoke a
+  tool. The flag is only writable when
+  `import.meta.env.DEV` is true; writes are rejected in
+  production with a structured error.
+- `packages/web-acp/src/components/settings/FeaturePanel.tsx` —
+  renders one toggle per feature with
+  `data-testid="feature-toggle-<key>"` and
+  `data-test-state="on|off"`. `forceToolCall` is hidden in
+  production builds.
+- `packages/web-acp/src/components/tool-calls/BashToolCall.tsx` —
+  renders a bash tool-call bubble with
+  `data-testid="tool-call-bash"` and
+  `data-test-state="running|completed|failed"`.
+- Tests (vitest): `bash-tool.test.ts` covers
+  `VolumeFileSystem` round-trip (single + multi mount),
+  stdout/stderr split, exitCode propagation, abort plumbing,
+  truncation. `feature-store.test.ts` covers defaults, write
+  gating in non-DEV, persistence across reload.
 - Spec updates: new
   [`../specs/web-acp/tools.md`](../specs/web-acp/tools.md) —
-  `bash` tool schema, `VaultFileSystem` adapter, streaming
-  protocol. Edits to `acp.md` (tool-call emission),
-  `agent.md` (tool registry).
+  `bash` tool schema, `VolumeFileSystem` adapter, streaming
+  protocol; new
+  [`../specs/web-acp/features.md`](../specs/web-acp/features.md)
+  — `_bodhi/features/*` shape, defaults, DEV-only writes,
+  session persistence. Edits to `acp.md` (tool-call emission,
+  feature method constants), `agent.md` (tool registry,
+  feature store), `sessions.md` (session record gains
+  `features`).
 
 **Phase B gate:** `npm run check` + vitest + M1 e2e + new
-`bash-smoke.spec.ts` — LLM runs `bash {"script": "cat
-/vault/README.md"}` and the response contains vault bytes. No
-permission prompt yet (classifier lands in Phase C). Commit
-`web-acp: M2 phase B — just-bash integration + bash tool`.
+`bash-smoke.spec.ts` — seed a volume, run a representative
+command subset (`cat`, `ls | grep`, `find`, one pipe, one
+redirect into `/tmp`); each asserted via observable state
+(`data-test-state="completed"`) rather than timeouts — plus
+`features.spec.ts` (toggle `bashEnabled` off; reload; verify
+bash tool no longer advertised in the LLM's tool list; toggle
+`forceToolCall` on in DEV; verify a benign prompt triggers a
+bash call). Commit
+`web-acp: M2 phase B — just-bash integration + bash tool + feature toggles`.
 
-### Phase C — M2.3 — Permission bridge
-
-- `packages/web-acp/src/agent/tools/bash-classifier.ts` —
-  `BashTransformPipeline` plugin that parses each script and
-  classifies commands:
-  - allow-list: `cat`, `ls`, `grep`, `rg`, `find`, `head`,
-    `tail`, `wc`, `stat`, `file`, `tree`, `diff`, `which`,
-    `echo`, `printf`, `basename`, `dirname`, `jq`, `yq`,
-    `sort`, `uniq`, `cut`, `awk` (patterns without `system`),
-    `sed -n`, pipes, `cd`, variable assignment.
-  - confirm-list: `rm`, `rmdir`, `mv`, `cp`, `mkdir`, `touch`,
-    `chmod`, `ln`, `sed -i`, redirect writes (`>`, `>>`, `2>`),
-    `tee`.
-  - deny-by-default: unknown custom commands; surface a
-    structured tool-call error.
-- `bash-tool.ts` — before `exec`, run the classifier; for
-  confirm-list commands, emit ACP `session/request_permission`
-  with the script text + the specific destructive commands
-  flagged; wait for the user's response; either proceed or
-  emit a `cancelled` tool-call status.
-- `SessionStore` extension — add per-session
-  `allowAlwaysCommands: string[]`; classifier consults it on
-  subsequent scripts. `bodhi/getSession` surfaces this on
-  reload.
-- `packages/web-acp/src/components/` — permission prompt UI
-  rendering the script excerpt + destructive commands; buttons
-  `allow once`, `allow always`, `reject once`. Reset button in
-  settings UI.
-- New spec: `permission.spec.ts` — destructive prompt UX;
-  reject + cancelled tool-call; accept-once + allow-always
-  flow; unknown-command deny-by-default.
-- Spec updates: `tools.md` (classifier + permission wiring),
-  `sessions.md` (allowAlwaysCommands field).
-
-**Phase C gate:** `npm run check` + vitest + M1 e2e + bash-
-smoke + permission. Commit
-`web-acp: M2 phase C — bash permission bridge`.
-
-### Phase D — M2.4 — `fs/*` client handlers (advertised, unused by built-ins)
+### Phase C — M2.3 — `fs/*` client handlers (advertised, unused by built-ins)
 
 - `packages/web-acp/src/acp/client.ts` — add handlers for
   `fs/read_text_file` and `fs/write_text_file`; validate paths
-  are under `/vault`, reject `..` escapes, deny symlinks that
-  point outside. Read/write via the **same ZenFS `/vault` mount**
-  that backs the worker's `VaultFileSystem` (the main thread
-  keeps a duplicate handle; both sides see the same bytes).
+  are under some `/mnt/<name>` (iterate the mounted volumes),
+  reject `..` escapes, deny symlinks that point outside. Read/
+  write via the **same ZenFS `/mnt/<name>` mounts** that back
+  the worker's `VolumeFileSystem` adapters (the main thread
+  keeps duplicate handles; both sides see the same bytes).
 - `clientCapabilities.fs.readTextFile` + `writeTextFile` =
   `true` in `initialize()`.
-- Unit tests: path-safety (`..` escape, absolute escape, symlink
-  escape); content equivalence with the bash tool's `cat` output;
-  large-file handling.
+- Unit tests: path-safety (`..` escape, absolute escape,
+  symlink escape, cross-mount escape); content equivalence with
+  the bash tool's `cat` output; large-file handling.
 - Spec updates: `vault.md` gains an "IDE-integration seam"
   section documenting the advertisement + non-use by the
   default `bash` tool.
 
-**Phase D gate:** `npm run check` + vitest + full web-acp e2e
-(M1 + bash-smoke + permission) green. Commit
-`web-acp: M2 phase D — fs/* client handlers as IDE seam`.
+**Phase C gate:** `npm run check` + vitest + full web-acp e2e
+(M1 + volumes + bash-smoke + features) green. Commit
+`web-acp: M2 phase C — fs/* client handlers as IDE seam`.
 
-### Phase E — Polish + M2 exit
+### Phase D — M2.4 — Polish + M2 exit
 
 - Audit: no agent-side code imports from the main-thread client
   (`@/*` or `src/components/` paths), enforcing principle 5.
   CI grep for `packages/web-acp/src/{acp,agent,transport}/**`.
+- Audit: no permission-bridge code landed
+  (`rg "request_permission|allow_always|bash-classifier"
+  packages/web-acp/src/` returns empty). Deferred entry intact
+  in [`../milestones/deferred.md`](../milestones/deferred.md).
 - Finalise
   [`../milestones/m2-tools.md`](../milestones/m2-tools.md)
   with status "shipped", decision log, tests inventory.
@@ -292,67 +352,79 @@ smoke + permission. Commit
   (skeleton). Point back to
   [`../milestones/m3-mcp-and-native-tools.md`](../milestones/m3-mcp-and-native-tools.md).
 - Spec consistency audit: `index.md` nav table references every
-  spec file (`vault.md`, `tools.md` now live there); no
-  dangling links; change procedure followed on every commit.
+  spec file (`vault.md`, `tools.md`, `features.md` now live
+  there); no dangling links; change procedure followed on every
+  commit.
 
-**Phase E gate:** `npm run check` + full web-acp e2e suite
-green (chat, sessions-persist, sessions-resume, vault, bash-
-smoke, permission). Commit
-`web-acp: M2 phase E — M2 exit gate`.
+**Phase D gate:** `npm run check` + full web-acp e2e suite
+green (chat, sessions-persist, sessions-resume, volumes, bash-
+smoke, features). Commit `web-acp: M2 phase D — M2 exit gate`.
 
 ---
 
 ## Hard constraints
 
-1. **Do not edit `packages/web-acp/e2e/chat.spec.ts`.** New
-   surfaces get new specs. `chat.spec.ts` stays green verbatim
-   at every commit.
-2. **Do not edit existing M1 e2e specs** unless M2 changes the
-   session wire shape (it shouldn't — M2 extends the session
-   record, it doesn't reshape prior fields).
+1. **Specs co-commit with code.** Non-negotiable. Any spec
+   update lands in the same commit as the code it documents.
+2. **Existing specs may be updated** to add `data-testid` /
+   `data-test-state` hooks or to reflect new testable
+   surfaces; the change rides in the commit that adds the
+   hook.
 3. **Do not renumber milestones.** If scope needs to slip,
    carve an `M2.x` sub-milestone or add a follow-up section in
    [`../milestones/m2-tools.md`](../milestones/m2-tools.md).
-4. **Same-commit spec updates.** Non-negotiable.
-5. **No `any`.** House rules from root `AGENTS.md` +
+4. **No `any`.** House rules from root `AGENTS.md` +
    `CLAUDE.md` apply.
-6. **Worker owns state.** Main thread never touches Dexie or
-   ZenFS directly for the vault's bash path. Main thread
-   *does* own the ZenFS mount for the M2.4 `fs/*` handlers —
-   that's a duplicate mount, documented explicitly in
+5. **Worker owns state.** Main thread never touches Dexie or
+   ZenFS directly for the per-volume bash path. Main thread
+   *does* own the ZenFS mounts for the M2.3 `fs/*` handlers —
+   those are duplicate mounts, documented explicitly in
    `vault.md`.
-7. **Stable ACP schema only.** No dependency on
+6. **Stable ACP schema only.** No dependency on
    `schema.unstable.json` methods in M2. Fork (unstable) lands
    in M6 behind a feature flag.
-8. **All extension methods prefixed `_bodhi/*`** per principle
-   15. None added in M2 by default — all planned M2 surfaces
-   ride stable ACP methods (`session/update`,
-   `session/request_permission`, `fs/*`, `session/cancel`).
-9. **Cite, don't reproduce.** Spec docs use repo-relative paths
+7. **All extension methods prefixed `_bodhi/*`** per principle
+   15. M2 adds `_bodhi/features/list` and
+   `_bodhi/features/set`; declare them as constants in
+   `acp/methods.ts`, never inlined at call sites.
+8. **Cite, don't reproduce.** Spec docs use repo-relative paths
    and symbol names; inline code excerpts only where genuinely
-   illuminating.
-10. **Your task manager reflects reality.** One item in-progress
-    at a time. Don't declare phase gates passed without the
-    commands actually green.
+   illuminating. Reference sources at
+   `/Users/amir36/Documents/workspace/src/github.com/...` are
+   port-don't-copy.
+9. **Your task manager reflects reality.** One item in-progress
+   at a time. Don't declare phase gates passed without the
+   commands actually green.
+10. **No timeouts in new e2e.** No `page.waitForTimeout`. Wait
+    on observable state via
+    `expect(locator).toHaveAttribute('data-test-state', '<value>')`.
+    No `page.evaluate` into ZenFS, the transport, or the
+    session store — priming is only allowed via
+    `page.addInitScript` + the DEV-gated seed seam.
+11. **Permission-bridge code stays out of M2.** No classifier
+    plugin, no `session/request_permission` calls from the
+    bash path, no allow-always UI. If a prompt reaches for
+    one, reread
+    [`../milestones/deferred.md`](../milestones/deferred.md).
 
 ---
 
 ## Open questions to raise (only if needed)
 
-1. **Handle transfer shape.** Structured-clone the FSA handle
-   into the worker, or send a `MessagePort` that the main
-   thread uses to serve handle operations? Recommendation:
-   structured-clone — handles are cloneable, serving them
-   over a port re-creates the exact MessageChannel-tunnel
-   mess we're trying to avoid. Confirm during Phase A planning.
-2. **Classifier granularity.** Is `sed -i` always destructive,
-   or do we allow `sed -i '' 's/x/y/' /tmp/foo` (under `/tmp`
-   only)? Recommendation: treat all `-i` as confirm-list for
-   v1; revisit if prompts become annoying. Decide during
-   Phase C.
-3. **MCP / native tools in M2.** Do not add them. They're M3.
-   If a prompt seems to need them, surface as a follow-up and
-   finish M2 first.
+1. **Handle-array transfer shape.** Structured-clone each FSA
+   handle in the `VolumeInit[]` array, or route each through a
+   `MessagePort`? Recommendation: structured-clone — handles
+   are cloneable and the array is small. Confirm during Phase
+   A planning.
+2. **Volume-name collision policy edge cases.** If the user
+   adds `wiki`, removes it, then re-adds `wiki`, does the new
+   mount re-use `wiki` or get `wiki-1`? Recommendation: re-use
+   the base name when no live collision exists. Decide during
+   Phase A.
+3. **Feature-toggle write path from main thread.** The UI
+   toggle sends `_bodhi/features/set` over ACP; the worker
+   persists and echoes a `session/update` so other tabs (if
+   any) sync. Confirm during Phase B.
 4. **Anything else** your research surfaces that materially
    changes sequencing.
 
@@ -364,16 +436,22 @@ Before declaring this prompt complete:
 
 - [ ] Plan at `ai-docs/web-acp/plans/m2-tools.md` exists and is
       approved by the invoker.
-- [ ] All five phase commits landed, each with matching spec
+- [ ] All four phase commits landed, each with matching spec
       updates.
 - [ ] `npm run check` green at every commit.
 - [ ] e2e: `chat.spec.ts`, `sessions-persist.spec.ts`,
-      `sessions-resume.spec.ts`, `vault.spec.ts`,
-      `bash-smoke.spec.ts`, `permission.spec.ts` all green at
+      `sessions-resume.spec.ts`, `volumes.spec.ts`,
+      `bash-smoke.spec.ts`, `features.spec.ts` all green at
       the final commit.
+- [ ] All new e2e waits on `data-test-state` attributes; grep
+      gate:
+      `rg "waitForTimeout" packages/web-acp/e2e/` returns empty.
 - [ ] Milestone doc at
       [`../milestones/m2-tools.md`](../milestones/m2-tools.md)
       marked "shipped" with decision rationale.
+- [ ] [`../milestones/deferred.md`](../milestones/deferred.md)
+      still carries the permission-bridge + allow-always
+      entries (untouched or extended, never removed).
 - [ ] Next prompt `004-m3-mcp-and-native-tools.md` drafted
       (skeleton is fine).
 - [ ] Grep gate:
@@ -383,6 +461,9 @@ Before declaring this prompt complete:
       `rg "fs/read_text_file|fs/write_text_file" packages/web-acp/src/agent/tools/`
       returns empty (the default bash tool does not use
       `fs/*`).
+- [ ] Grep gate:
+      `rg "request_permission|allow_always|bash-classifier" packages/web-acp/src/`
+      returns empty (permission bridge stayed deferred).
 - [ ] Two-report compatibility analysis drafted as a follow-up
       under `ai-docs/web-acp/web-acp-vs-standard-acp/` and
       `ai-docs/web-acp/web-acp-vs-coding-agent/` — both
@@ -399,5 +480,8 @@ Before declaring this prompt complete:
 After M2 exits, `004-m3-mcp-and-native-tools.md` drives M3 —
 HTTP MCP client in the worker, provider-native tool passthrough,
 and unified tool-catalog presentation. M2's tool registry +
-permission surface are hard dependencies; MCP tools and
-provider-native tools both ride them unchanged.
+feature-toggle surface are hard dependencies; MCP tools and
+provider-native tools both ride them unchanged. The deferred
+permission bridge re-enters in a later milestone (likely M3 or
+M4, decided at that milestone's kickoff) and layers over the
+M2 tool wire without reshaping it.

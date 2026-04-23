@@ -21,8 +21,9 @@
 │  ├─ Session loop — prompt → tool_call loop → turn_end            │
 │  ├─ Tool execution — built-in bash tool over just-bash +         │
 │  │   agent-side MCP client + provider-native tool observation    │
-│  ├─ Vault mount — ZenFS WebAccess over transferred FSA handle    │
-│  │   wrapped as just-bash IFileSystem                            │
+│  ├─ Volume mounts — ZenFS WebAccess over transferred FSA         │
+│  │   handles (one per /mnt/<name>), each wrapped as a just-bash  │
+│  │   IFileSystem; system prompt carries per-volume descriptors   │
 │  └─ Extension host (late milestone)                              │
 ├──────────────────────────────────────────────────────────────────┤
 │  LLM providers via @mariozechner/pi-ai                           │
@@ -142,32 +143,52 @@ compliance-at-a-glance table at
 
 ## just-bash integration
 
+Published as `just-bash` on npm (browser build at
+`just-bash/browser`). Local clone at
 [`vercel-labs/just-bash`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash)
-is our LLM-facing tool surface from M2 onward. It provides a
-browser-native virtual bash environment with an in-memory VFS and
-command coverage that spans the six hand-rolled tools the
-original plan enumerated (`read`, `write`, `edit`, `ls`, `glob`,
-`grep`) plus pipes, redirects, `jq`, `rg`, `sed`, `awk`, `find`,
-and scripting.
+is read-only reference — we depend on the published package,
+do not vendor source.
+
+just-bash is our LLM-facing tool surface from M2 onward. It
+provides a browser-native virtual bash environment with an
+in-memory VFS and command coverage that spans the six
+hand-rolled tools the original plan enumerated (`read`,
+`write`, `edit`, `ls`, `glob`, `grep`) plus pipes, redirects,
+`jq`, `rg`, `sed`, `awk`, `find`, and scripting.
 
 - **Single LLM-facing tool: `bash`.** Replaces the six hand-rolled
   tools with one strictly-richer surface.
-- **Mounted in the worker.** `MountableFs` composes `/vault`
-  (over a ZenFS-backed `IFileSystem` adapter) with `/tmp` +
-  `/home/user` (`InMemoryFs` base). `cwd` defaults to `/vault`.
-- **Vault FSA handle transferred to the worker at init** via a
-  second `MessageChannel` inside the worker `init` payload. The
-  main thread keeps a reference too — but the default bash tool
-  never round-trips through it.
-- **Permission gating** via a `BashTransformPipeline` plugin that
-  classifies each script's commands at parse time (allow-list /
-  confirm-list / deny-by-default) and bridges the confirm-list
-  to ACP `session/request_permission`. See
-  [`../milestones/m2-tools.md`](../milestones/m2-tools.md) § M2.3.
+- **Mounted in the worker.** `MountableFs` composes each
+  `/mnt/<name>` volume (over a ZenFS-backed `IFileSystem`
+  adapter, one instance per mount) with `/tmp` + `/home/user`
+  (`InMemoryFs` base). `cwd` defaults to the first mounted
+  volume; if no volumes are mounted, the `bash` tool is not
+  registered.
+- **FSA handles transferred to the worker at init** as an array
+  of `{ handle, mountName, description? }` entries inside the
+  worker `init` payload (structured-cloned). The main thread
+  keeps duplicate handles too — but the default bash tool
+  never round-trips through them.
+- **System-prompt volume descriptors.** The worker appends a
+  `Volumes:\n- /mnt/<name> — <description>` block to the
+  system prompt so the LLM knows each mount's purpose.
+- **Permission gating is deferred.** The bash tool in M2 runs
+  commands as-is. The `BashTransformPipeline` classifier +
+  `session/request_permission` bridge + allow-always
+  persistence are carved out to
+  [`../milestones/deferred.md`](../milestones/deferred.md) and
+  re-enter at a post-M2 milestone kickoff.
+- **Generic feature toggles.** M2 ships `_bodhi/features/list`
+  and `_bodhi/features/set` (session-scoped, persisted with
+  the session record). Two initial flags:
+  `bashEnabled` (default `true`) gates tool registration;
+  `forceToolCall` (DEV-only, default `false`) passes
+  `tool_choice: 'required'` to pi-ai so e2e can drive tool
+  calls deterministically.
 - **`fs/*` advertised, not used by built-ins.** Client handlers
-  implemented against the same ZenFS store so any ACP-compliant
-  agent can still read / write the vault through us. The default
-  bash tool does not use `fs/*`.
+  implemented against the same ZenFS mounts so any ACP-
+  compliant agent can still read / write mounted volumes
+  through us. The default bash tool does not use `fs/*`.
 
 The structural argument against routing bash through `fs/*`:
 just-bash's `IFileSystem` interface
@@ -185,23 +206,36 @@ designed as an editor-buffer bridge, not a general VFS — see
 
 Reusing web-agent's mount structure because the concurrency
 reasoning still holds. What changes from the original plan:
-`/vault` mounts **inside the worker**, not on the main thread.
-The main thread still runs the FSA directory-picker UX.
+user volumes mount **inside the worker** at Linux-style
+`/mnt/<name>` paths, not on the main thread and not under a
+single `/vault` root. The main thread still runs the FSA
+directory-picker UX.
 
-### `/vault` — user's local folder, worker-mounted
+### `/mnt/<name>` — user's local folders, worker-mounted, multi-volume
 
 - Backend: `@zenfs/dom` `WebAccess` wrapping a
   `FileSystemDirectoryHandle` from `window.showDirectoryPicker()`.
-- Handle acquired on the main thread, persisted in IndexedDB via
-  `idb-keyval`, and **transferred to the worker** at init via a
-  second `MessageChannel` or structured-clone of the handle
-  itself (FSA handles are cloneable).
-- The worker mounts at `/vault`, wraps the mount as a just-bash
-  `IFileSystem`, and composes it into the `MountableFs` the
-  `bash` tool sees.
-- The main thread keeps a duplicate handle so the M2.4 `fs/*`
-  client handlers can serve IDE-integration reads/writes against
-  the same bytes.
+  One mount per volume.
+- Mount-name derivation: the handle's `name` with `-1`, `-2`,
+  … suffixes when a live mount already uses the base name.
+- Each volume carries an optional user-provided description
+  stored alongside the handle; the worker folds the full set
+  into the system prompt (`Volumes:\n- /mnt/wiki — Notes\n-
+  /mnt/code`) so the LLM knows each mount's purpose.
+- Handles acquired on the main thread, persisted as a
+  `VolumeInit[]` in IndexedDB via `idb-keyval`, and
+  **transferred to the worker** at init by structured-cloning
+  the array into the worker `init` payload (FSA handles are
+  cloneable).
+- The worker mounts each `VolumeInit` at its
+  `/mnt/<mountName>`, wraps the mount as a just-bash
+  `IFileSystem`, and composes the full set into the
+  `MountableFs` the `bash` tool sees. Default `cwd` is the
+  first mounted volume; if none are mounted, the `bash` tool
+  is not registered.
+- The main thread keeps duplicate handles so the M2.3 `fs/*`
+  client handlers can serve IDE-integration reads/writes
+  against the same bytes.
 
 ### `/sessions` and `/extensions` — main-thread, app-owned
 
@@ -226,36 +260,46 @@ a new decision entry explaining what changed.
 
 ## Filesystem posture (post just-bash)
 
-- **Agent owns `/vault` I/O.** The bash tool calls `IFileSystem`
-  methods directly against ZenFS inside the worker. Zero ACP
-  wire traffic for vault bulk ops.
+- **Agent owns `/mnt/<name>` I/O.** The bash tool calls
+  `IFileSystem` methods directly against ZenFS inside the
+  worker. Zero ACP wire traffic for mounted-volume bulk ops.
 - **`fs/*` is an advertised seam.** `clientCapabilities.fs.readTextFile`
-  and `writeTextFile` both advertise `true` from M2.4 onward.
-  Client handlers validate paths and read/write through the same
-  ZenFS store. The default bash tool does not use them; external
-  ACP agents connecting to the same client can.
+  and `writeTextFile` both advertise `true` from M2.3 onward.
+  Client handlers validate paths against the mounted volume
+  set and read/write through the same ZenFS store. The default
+  bash tool does not use them; external ACP agents connecting
+  to the same client can.
 - **Remote-agent future.** When the agent eventually runs
-  server-side, `/vault` doesn't live in the user's browser.
-  Options for that deployment (decided at M8): cloud-mounted
-  vault, user-uploaded vault, or text-only mode with `fs/*`
-  as the sole FS surface. Do not design for this in M2–M7.
+  server-side, `/mnt/<name>` volumes don't live in the user's
+  browser. Options for that deployment (decided at M8):
+  cloud-mounted volumes, user-uploaded volumes, or text-only
+  mode with `fs/*` as the sole FS surface. Do not design for
+  this in M2–M7.
 
 ## Permission flow
 
-ACP's `session/request_permission` carries the permission primitive
-for destructive actions. The `bash` tool's pre-execution classifier
-(M2.3) routes confirm-list commands through this method; the client
-prompts the user; the response flows back and the bash script
-either executes or returns a `cancelled` tool-call status.
+**Deferred in M2.** The pre-execution classifier + ACP
+`session/request_permission` bridge + allow-always persistence
+are carved out to
+[`../milestones/deferred.md`](../milestones/deferred.md) and
+re-enter at a post-M2 milestone kickoff. The `bash` tool in M2
+runs commands as-is.
 
-Allow-always scopes are session-scoped and persist with the session
-record; settings UI exposes them for reset. MCP tools and
-extension-registered tools ride the same permission surface
-(first-call prompt per server/extension per session with
-`allow_always` memory).
+When the bridge re-enters, it rides the stable ACP permission
+primitive (`session/request_permission`). The classifier plugin
+inspects each script's parsed AST at the `BashTransformPipeline`
+layer; confirm-list commands issue the permission request with
+a `ToolCallUpdate` describing the script excerpt; the user's
+`allow_once` / `allow_always` / `reject_once` response flows
+back through ACP and the bash script either executes or returns
+a `cancelled` tool-call status. Allow-always scopes persist
+with the session record (already provisioned by M1 +
+extensible via M2's `features` slot). MCP tools and extension-
+registered tools ride the same permission surface once it
+lands.
 
-This replaces web-agent's `extension_ui_request` side-channel for
-the subset of UI that was really "confirm this action".
+This replaces web-agent's `extension_ui_request` side-channel
+for the subset of UI that was really "confirm this action".
 
 ## Testing seam
 
@@ -263,16 +307,30 @@ Carried from web-agent unchanged in spirit:
 
 - Playwright cannot click through `showDirectoryPicker` (user-gesture
   gated native dialog).
-- Pattern: `e2e/helpers/install-vault.ts` walks a seed directory,
-  builds a `Record<"/vault/…", utf8>`, passes it via
+- Pattern: `e2e/helpers/install-volumes.ts` builds a
+  `VolumeSeed[] = Array<{ name, description?, files }>` (walking
+  Node-side directories or from inline `files`) and passes it via
   `page.addInitScript` into `window.__zenfsSeed` **before** app code
-  runs. A `DEV`-gated `useDevSeedBoot` hook pre-mounts an `InMemory`
-  backend populated with the seed before `useDirectoryHandle` has a
-  chance to run. Production builds dead-code the branch.
+  runs. A `DEV`-gated `useDevSeedBoot` hook pre-mounts an
+  `InMemory` backend populated with each seed at its
+  `/mnt/<name>` before `useDirectoryHandles` has a chance to
+  run. Production builds dead-code the branch.
 - This is the **only** allowed way to prime filesystem state for
   tests. No `page.evaluate` into ZenFS internals.
 - Real-LLM e2e for the M0 path. DOM-witness assertions only; no
   LLM-text assertions. Same discipline as web-agent's e2e.
+- Components that carry runtime state expose `data-testid` for
+  selection and `data-test-state` for state assertions (e.g.
+  `data-test-state="idle|mounting|mounted|error"` on the
+  volumes panel, `data-test-state="running|completed|failed"`
+  on the bash tool-call bubble). Playwright waits via
+  `toHaveAttribute('data-test-state', 'mounted')` — never
+  `page.waitForTimeout`. See principle 7 in
+  [`04-principles.md`](./04-principles.md).
+- DEV-only `features.forceToolCall` toggle lets e2e send
+  `tool_choice: 'required'` to pi-ai so a benign prompt
+  deterministically triggers a tool call, keeping the e2e
+  harness black-box (no `page.evaluate` into the session loop).
 
 ## Reference sources — what we copy, what we don't
 
