@@ -7,18 +7,22 @@
 │  Host app (React, main thread)                                   │
 │  ├─ <WebAcpProvider>                                             │
 │  ├─ useAcp() — session state, stream events, sendPrompt, cancel  │
-│  ├─ ACP client — renders session/update, serves fs/*,            │
-│  │   mediates permission prompts                                 │
-│  └─ ZenFS /vault mount (FSA handle), /sessions, /extensions      │
+│  ├─ ACP client — renders session/update, serves fs/* as the      │
+│  │   IDE-integration seam, mediates permission prompts           │
+│  ├─ FSA directory picker UX                                      │
+│  └─ ZenFS /sessions, /extensions (app-owned, IndexedDB)          │
 ├──────────────────────────────────────────────────────────────────┤
 │  Transport boundary (SWAPPABLE — ACP JSON-RPC 2.0)               │
 │  v1 default:   MessageChannel  (main ↔ Worker)                   │
 │  future:       HTTP/SSE, WebSocket  (main ↔ remote agent)        │
 │  constraint:   framing code has zero MessagePort/Worker refs     │
 ├──────────────────────────────────────────────────────────────────┤
-│  ACP agent runtime                                               │
+│  ACP agent runtime (Web Worker)                                  │
 │  ├─ Session loop — prompt → tool_call loop → turn_end            │
-│  ├─ Tool execution — requests fs/* back to client for vault I/O  │
+│  ├─ Tool execution — built-in bash tool over just-bash +         │
+│  │   agent-side MCP client + provider-native tool observation    │
+│  ├─ Vault mount — ZenFS WebAccess over transferred FSA handle    │
+│  │   wrapped as just-bash IFileSystem                            │
 │  └─ Extension host (late milestone)                              │
 ├──────────────────────────────────────────────────────────────────┤
 │  LLM providers via @mariozechner/pi-ai                           │
@@ -93,30 +97,120 @@ transport becomes a new file.
   M0.b plan; this doc does not pre-commit. See
   `04-principles.md` § "Transport is swappable".
 
+## ACP architectural postures
+
+ACP leaves room for four placements of responsibility across
+agent / client for tool execution and filesystem I/O. Naming them
+explicitly because the choice drives M2+ and every subsequent
+milestone.
+
+- **Variation A — Thick agent, client-delegated FS (ACP canonical).**
+  Agent executes all tools; agent implements high-level tools
+  (`read`, `write`, `edit`, `ls`, `glob`, `grep`) by composing the
+  two ACP FS primitives (`fs/read_text_file`, `fs/write_text_file`)
+  back to the client. The client is the vault's gatekeeper.
+  Reference: [`agentclientprotocol/claude-agent-acp/src/acp-agent.ts`](/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/claude-agent-acp/src/acp-agent.ts).
+  Best when the FS needs are small (text files only, editor
+  integration).
+
+- **Variation B — Thick agent, agent-owned FS.** Agent executes
+  all tools *and* owns the filesystem directly; `fs/*` is either
+  not used or advertised as an optional IDE-integration seam.
+  Best when the agent's tool surface requires a rich FS interface
+  that ACP's two-primitive `fs/*` cannot carry (e.g. a full
+  shell sandbox like just-bash).
+
+- **Variation C — Thin agent, client-executed tools.** Client
+  implements tools; agent asks the client to invoke them via
+  extension methods. Anti-pattern for ACP: the spec puts tool
+  execution on the agent and the client on the rendering side.
+  Listed for completeness.
+
+- **Variation D — Hybrid (client-as-MCP-server).** Client runs a
+  local MCP server; agent connects to it as an MCP client to
+  reach client-local capabilities. Viable for specific cases
+  (screen capture, clipboard) but not for bulk FS access because
+  MCP round-trips are too chatty for a shell tool.
+
+**Chosen posture for web-acp: Variation B (agent-owned FS).**
+Driver: [just-bash integration](#just-bash-integration) below —
+its `IFileSystem` has ~25 methods; ACP `fs/*` has 2. `fs/*` is
+still advertised for future IDE integration; the default bash
+tool does not use it. The divergence is documented in the
+compliance-at-a-glance table at
+[`../milestones/index.md`](../milestones/index.md).
+
+## just-bash integration
+
+[`vercel-labs/just-bash`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash)
+is our LLM-facing tool surface from M2 onward. It provides a
+browser-native virtual bash environment with an in-memory VFS and
+command coverage that spans the six hand-rolled tools the
+original plan enumerated (`read`, `write`, `edit`, `ls`, `glob`,
+`grep`) plus pipes, redirects, `jq`, `rg`, `sed`, `awk`, `find`,
+and scripting.
+
+- **Single LLM-facing tool: `bash`.** Replaces the six hand-rolled
+  tools with one strictly-richer surface.
+- **Mounted in the worker.** `MountableFs` composes `/vault`
+  (over a ZenFS-backed `IFileSystem` adapter) with `/tmp` +
+  `/home/user` (`InMemoryFs` base). `cwd` defaults to `/vault`.
+- **Vault FSA handle transferred to the worker at init** via a
+  second `MessageChannel` inside the worker `init` payload. The
+  main thread keeps a reference too — but the default bash tool
+  never round-trips through it.
+- **Permission gating** via a `BashTransformPipeline` plugin that
+  classifies each script's commands at parse time (allow-list /
+  confirm-list / deny-by-default) and bridges the confirm-list
+  to ACP `session/request_permission`. See
+  [`../milestones/m2-tools.md`](../milestones/m2-tools.md) § M2.3.
+- **`fs/*` advertised, not used by built-ins.** Client handlers
+  implemented against the same ZenFS store so any ACP-compliant
+  agent can still read / write the vault through us. The default
+  bash tool does not use `fs/*`.
+
+The structural argument against routing bash through `fs/*`:
+just-bash's `IFileSystem` interface
+([`/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/fs/interface.ts`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/src/fs/interface.ts))
+requires `readdir`, `stat`, `mkdir`, `rm`, `cp`, `mv`, `symlink`,
+`chmod`, `lstat`, `readlink`, `realpath`, `utimes`, etc. — 25
+methods total. Transporting it over ACP would require ~12
+custom `_bodhi/fs/*` extension methods. Compared to that,
+mounting the vault on the agent is both *simpler in wire
+surface* and *stays closer to ACP* (since ACP's `fs/*` was
+designed as an editor-buffer bridge, not a general VFS — see
+`agent-client-protocol/docs/protocol/file-system.mdx`).
+
 ## ZenFS mount layout
 
-Reusing web-agent's mount structure because the concurrency reasoning
-still holds. What changes: `/vault` reads and writes done by agent
-tools are **proxied via ACP `fs/*` requests**, not via a second
-MessageChannel tunnel.
+Reusing web-agent's mount structure because the concurrency
+reasoning still holds. What changes from the original plan:
+`/vault` mounts **inside the worker**, not on the main thread.
+The main thread still runs the FSA directory-picker UX.
 
-### `/vault` — user's local folder
+### `/vault` — user's local folder, worker-mounted
 
 - Backend: `@zenfs/dom` `WebAccess` wrapping a
   `FileSystemDirectoryHandle` from `window.showDirectoryPicker()`.
-- Handle persisted in IndexedDB via `idb-keyval`.
-- On every load: read handle → `requestPermission({ mode: 'readwrite' })`
-  → mount at `/vault`.
-- Tools never touch ZenFS directly. They issue ACP `fs/read_text_file`
-  / `fs/write_text_file` requests; the client serves them against
-  `/vault`.
+- Handle acquired on the main thread, persisted in IndexedDB via
+  `idb-keyval`, and **transferred to the worker** at init via a
+  second `MessageChannel` or structured-clone of the handle
+  itself (FSA handles are cloneable).
+- The worker mounts at `/vault`, wraps the mount as a just-bash
+  `IFileSystem`, and composes it into the `MountableFs` the
+  `bash` tool sees.
+- The main thread keeps a duplicate handle so the M2.4 `fs/*`
+  client handlers can serve IDE-integration reads/writes against
+  the same bytes.
 
-### `/sessions` and `/extensions` — app-owned
+### `/sessions` and `/extensions` — main-thread, app-owned
 
-- Backend: `@zenfs/core` IndexedDB.
-- Not exposed to the agent via ACP `fs/*`. App-local, client-side only.
-- `/sessions` — `messages.jsonl`, `meta.json` per session.
-- `/extensions` — late-milestone; layout TBD from the extension re-entry.
+- Backend: `@zenfs/core` IndexedDB on the main thread.
+- Not exposed to the agent. `/sessions` is the Dexie store's
+  home; `/extensions` hosts extension files that the worker
+  reads at session boot via the vault-mounted `IFileSystem`
+  (extensions live at `/vault/.bodhi/extensions/` per M5).
+- App-local, never crosses the transport boundary.
 
 ### Why IndexedDB, not OPFS
 
@@ -130,27 +224,35 @@ Unchanged from web-agent's rationale:
 Binding. If a proposal reaches for OPFS, the answer is no without
 a new decision entry explaining what changed.
 
-## Filesystem delegation via ACP `fs/*`
+## Filesystem posture (post just-bash)
 
-This is the structural win over web-agent's dual-MessageChannel
-tunnel.
-
-- Agent wants to read `/vault/foo.ts`. It emits ACP `fs/read_text_file`
-  with the path.
-- Client receives the request, validates the path is under `/vault`,
-  reads it via ZenFS, returns the content in the ACP response.
-- Same for `fs/write_text_file`. Client validates + writes + ACKs.
-- Denied paths (`/sessions/*`, `/extensions/*`) return a structured
-  ACP error; the agent handles it like any other tool error.
-
-The client is the vault's gatekeeper. The agent never sees ZenFS.
+- **Agent owns `/vault` I/O.** The bash tool calls `IFileSystem`
+  methods directly against ZenFS inside the worker. Zero ACP
+  wire traffic for vault bulk ops.
+- **`fs/*` is an advertised seam.** `clientCapabilities.fs.readTextFile`
+  and `writeTextFile` both advertise `true` from M2.4 onward.
+  Client handlers validate paths and read/write through the same
+  ZenFS store. The default bash tool does not use them; external
+  ACP agents connecting to the same client can.
+- **Remote-agent future.** When the agent eventually runs
+  server-side, `/vault` doesn't live in the user's browser.
+  Options for that deployment (decided at M8): cloud-mounted
+  vault, user-uploaded vault, or text-only mode with `fs/*`
+  as the sole FS surface. Do not design for this in M2–M7.
 
 ## Permission flow
 
-ACP's `tool_call` protocol carries permission/confirmation
-primitives. For destructive tools (write, edit) the agent emits a
-`tool_call` with pending state; the client prompts the user via UI;
-the user allow/deny flows back; the agent continues or errors.
+ACP's `session/request_permission` carries the permission primitive
+for destructive actions. The `bash` tool's pre-execution classifier
+(M2.3) routes confirm-list commands through this method; the client
+prompts the user; the response flows back and the bash script
+either executes or returns a `cancelled` tool-call status.
+
+Allow-always scopes are session-scoped and persist with the session
+record; settings UI exposes them for reset. MCP tools and
+extension-registered tools ride the same permission surface
+(first-call prompt per server/extension per session with
+`allow_always` memory).
 
 This replaces web-agent's `extension_ui_request` side-channel for
 the subset of UI that was really "confirm this action".

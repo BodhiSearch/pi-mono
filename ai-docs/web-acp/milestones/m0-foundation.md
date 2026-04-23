@@ -22,7 +22,7 @@ as originally proposed):
 - **Phase A — MCP removal.** Stripped the M0-unsafe MCP surface
   (hooks, components, deps) from the pre-rework `useAgent`
   runtime. MCP requirement deferred to
-  [`m2-tools.md § M2.3`](m2-tools.md#m23--mcp-proxy-tools-over-acp).
+  [`m3-mcp-and-native-tools.md`](m3-mcp-and-native-tools.md).
 - **Phase B — Inline agent extraction.** Moved
   `BodhiProvider` + `createStreamFn` + the `pi-agent-core`
   wrapper out of the hook into `src/agent/*`. `useAgent`
@@ -74,17 +74,19 @@ small and the e2e green at every commit:
 
 | Scope removed from M0 | Moved to |
 | --- | --- |
-| Vault mount (FSA handle + ZenFS + dev seed, Playwright `installVault` seed). | [`m2-tools.md § M2.1`](m2-tools.md#m21--vault-mount-fsa--zenfs--dev-seed). |
-| `fs/*` delegation + built-in `read/write/edit/ls/glob/grep`. | [`m2-tools.md § M2.2`](m2-tools.md#m22--fs-delegation--built-in-tools). |
-| MCP proxy tools over ACP. | [`m2-tools.md § M2.3`](m2-tools.md#m23--mcp-proxy-tools-over-acp). |
+| Vault mount (FSA handle + ZenFS + dev seed, Playwright `installVault` seed). | [`m2-tools.md § M2.1`](m2-tools.md#m21--vault-mount-fsa--zenfs--dev-seed-worker-side) (now worker-mounted post just-bash adoption). |
+| Built-in filesystem tool surface (originally `read/write/edit/ls/glob/grep`). | [`m2-tools.md § M2.2`](m2-tools.md#m22--just-bash-integration--single-bash-tool) — rescoped to a single `bash` tool via [`vercel-labs/just-bash`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash); FS lives on the agent. |
+| MCP proxy tools over ACP. | [`m3-mcp-and-native-tools.md`](m3-mcp-and-native-tools.md) — promoted out of M2 to its own milestone, HTTP transport, agent is the MCP client. |
 | Second (test-double) transport + worker-boundary e2e assertion. | M0 hardening follow-up (this file, see below). |
 
 ## Out of scope (unchanged from original plan)
 
 - Session persistence — M1.
 - Permission / confirmation prompts — M2.
-- Session tree, compaction, skills, extensions — M3–M6.
-- HTTP/SSE transport — M7 or later.
+- MCP + provider-native tools — M3.
+- Commands / skills, extensions — M4 / M5.
+- Session tree, compaction — M6 / M7.
+- HTTP/SSE transport — M8 or later.
 
 ## Gate items met at phase D exit
 

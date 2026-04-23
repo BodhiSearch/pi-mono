@@ -1,4 +1,4 @@
-# M7 — Polish + Extract
+# M8 — Polish + Extract
 
 ## What this milestone delivers
 
@@ -23,7 +23,7 @@ debug production issues.
 
 ## ACP surface touched
 
-- Potentially an ACP extension for structured logs (`x-bodhiapp/log`).
+- Potentially an ACP extension for structured logs (`_bodhi/log`).
   Alternatively, logs ride on the transport adapter out-of-band
   (not ACP messages) — plan-time decision.
 - HTML export is pure client-side serialisation of the ACP
@@ -31,10 +31,13 @@ debug production issues.
 
 ## Depends on
 
-- **M6** — extraction must carry the extension runtime if we ship
-  one; if extensions land post-M7, the extraction happens twice.
-- **M1–M5** at minimum, because the extractable surface must be
-  stable.
+- **M5** — extraction must carry the extension runtime we ship;
+  if extensions land post-M8 the extraction happens twice.
+- **M1–M7** at minimum, because the extractable surface must be
+  stable. The remote-agent deployment modality is also decided
+  here (vault story for server-side agents — cloud-mounted,
+  user-uploaded, or text-only). See [index.md](index.md) §
+  "Open questions".
 
 ## Out of scope
 
@@ -66,7 +69,7 @@ consideration.
 ## Possible split
 
 If the extraction itself turns out to be substantial (most of a
-milestone's worth of work), split into **M7-polish** (diagnostics,
-logging, export) and **M8-extract** (package lift, peerDependency
+milestone's worth of work), split into **M8-polish** (diagnostics,
+logging, export) and **M9-extract** (package lift, peerDependency
 reclassification, workspace-consumer wiring). Decide during the
-M6 wrap-up.
+M7 wrap-up.

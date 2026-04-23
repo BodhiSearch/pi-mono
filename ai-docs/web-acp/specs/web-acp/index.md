@@ -79,19 +79,33 @@ drill into the per-module specs:
 ### Scope out (deferred)
 
 - Session rename / delete UI (M1.x).
-- Vault mount (FSA + ZenFS + dev seed) (**M2.1**).
-- `fs/*` delegation and the built-in `read/write/edit/ls/glob/grep`
-  tool surface (**M2.2**).
-- MCP proxy tools surfaced through ACP (**M2.3**).
-- Session tree (fork / branch / navigate) (**M3**).
-- Context compaction (**M4**).
-- Slash commands / prompt templates / skills (**M5**).
-- `.pi/extensions/` runtime (**M6**).
-- Diagnostics panel, HTML export, library extraction (**M7**).
+- Vault mount — FSA picker + worker-side ZenFS + dev seed
+  (**M2.1**).
+- just-bash integration + single `bash` tool registered with the
+  LLM (**M2.2**). Adoption of
+  [`vercel-labs/just-bash`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash)
+  as the LLM-facing tool surface collapses the original
+  `read/write/edit/ls/glob/grep` six-tool plan into one
+  strictly-richer `bash` tool and forces the agent-owned FS
+  posture. See
+  [`../../steering/02-architecture.md § ACP architectural postures`](../../steering/02-architecture.md#acp-architectural-postures)
+  for the reasoning.
+- Permission bridge — just-bash transform plugin →
+  `session/request_permission` (**M2.3**).
+- `fs/*` client handlers — advertised as an IDE-integration seam,
+  not used by the default bash tool (**M2.4**).
+- Agent-side HTTP MCP client + provider-native tool passthrough
+  (**M3**).
+- Slash commands / prompt templates / skills (**M4**).
+- `/vault/.bodhi/extensions/` runtime (**M5**).
+- Session tree — `session/fork` (unstable, flag-gated) +
+  `bodhi/listSessions` tree view (**M6**).
+- Context compaction (**M7**).
+- Diagnostics panel, HTML export, library extraction (**M8**).
 - Second (test-double) transport implementation. M0 shipped one
   transport; the swappability assertion is carried forward as a
   hardening follow-up (see
-  [`../milestones/m0-foundation.md`](../milestones/m0-foundation.md)).
+  [`../../milestones/m0-foundation.md`](../../milestones/m0-foundation.md)).
 
 ### Actors & integration points
 

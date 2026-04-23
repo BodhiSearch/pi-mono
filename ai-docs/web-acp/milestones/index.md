@@ -20,6 +20,16 @@ remote-agent deployments. Living document.
   `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/`)
   is **ground truth** for wire shapes. `schema/schema.json` +
   `docs/protocol/` + the reference TS impl under `src/`.
+- `agentclientprotocol/claude-agent-acp` (cloned at
+  `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/claude-agent-acp/`)
+  is **reference for the thick-agent posture** — in particular
+  how a compliant agent implements tools on its side and delegates
+  only FS primitives to the client. Read `src/acp-agent.ts`.
+- `vercel-labs/just-bash` (cloned at
+  `/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash/`)
+  is the **browser-native bash sandbox** we adopt as our LLM-facing
+  tool surface. `src/browser.ts` is the entry; `src/fs/interface.ts`
+  is the `IFileSystem` shape we adapt ZenFS to.
 
 **Structure.** This index carries the canonical status board + a
 one-line load-hook per milestone so a session knows which detail
@@ -39,20 +49,66 @@ gate file lands with the first real milestone if the rules diverge.
 | --- | ---------------------------------------------------------------------- | ------- | ---- |
 | M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
 | M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
-| M2  | Filesystem tools via ACP `fs/*` delegation (M2.1 vault / M2.2 fs tools / M2.3 MCP) | next    | [m2-tools.md](m2-tools.md) |
-| M3  | Session tree: fork, branch, navigate (likely needs ACP extension)      | planned | [m3-session-tree.md](m3-session-tree.md) |
-| M4  | Compaction: auto + manual + summary persistence                        | planned | [m4-compaction.md](m4-compaction.md) |
-| M5  | Resources: slash commands, prompt templates, skills                    | planned | [m5-resources.md](m5-resources.md) |
-| M6  | Extensions: runtime re-entry, starting from "how does ACP extend?"     | planned | [m6-extensions.md](m6-extensions.md) |
-| M7  | Polish + extract: diagnostics, HTML export, library package            | planned | [m7-polish-and-extract.md](m7-polish-and-extract.md) |
+| M2  | Vault mount + just-bash shell tool (agent-owned FS)                    | next    | [m2-tools.md](m2-tools.md) |
+| M3  | MCP over HTTP + provider-native tool passthrough                       | planned | [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md) |
+| M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
+| M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
+| M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
+| M7  | Compaction: auto + manual + summary persistence                        | planned | [m7-compaction.md](m7-compaction.md) |
+| M8  | Polish + extract: diagnostics, HTML export, library package            | planned | [m8-polish-and-extract.md](m8-polish-and-extract.md) |
 
-**Scope adjustments vs. original plan.** The phased M0 rework
-dropped the `/vault` mount + second test-double transport out
-of M0 and the MCP surface out of the pre-rework runtime. Those
-requirements now live as sub-milestones under M2 — see
-[m2-tools.md](m2-tools.md) § M2.1 (vault) / M2.3 (MCP) and
-[m0-foundation.md](m0-foundation.md) § M0 hardening follow-up
-for the deferred transport test-double.
+### ACP compliance at a glance
+
+| Concern              | ACP canonical                                                 | web-acp posture                                                        | Status |
+| -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- | ------ |
+| Tool execution       | Agent executes; reports via `session/update (tool_call)`      | Agent executes; single `bash` tool registered with the LLM (M2)        | compliant |
+| Tool reporting       | `session/update (tool_call)` + `tool_call_update`             | Same; CommandCollector maps bash sub-commands when useful              | compliant |
+| Permission           | `session/request_permission`                                  | Same; just-bash transform plugin bridges destructive commands          | compliant |
+| Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
+| MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; HTTP transport only (M3)                          | compliant |
+| Provider-native tools | Reported as standard `tool_call` notifications                | Same — OpenAI `web_search` etc. surface via `tool_call` (M3)           | compliant |
+| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Same (M4)                                                              | compliant |
+| Extension methods    | `_`-prefixed, namespaced                                      | `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15 | compliant |
+| Session fork         | `session/fork` (unstable schema)                              | Adopted behind a feature flag, pinned SDK version (M6)                 | unstable-with-flag |
+
+The divergent row (filesystem) is the one to understand. See
+[steering/02-architecture.md](../steering/02-architecture.md) §
+"ACP architectural postures" and § "just-bash integration" for the
+reasoning. The short form: just-bash's `IFileSystem` has ~25
+methods; ACP `fs/*` has 2. Forcing bash through `fs/*` would
+require ~12 non-standard `_bodhi/fs/*` extension methods —
+architecturally worse than mounting the vault on the agent and
+advertising `fs/*` as a future IDE-integration seam.
+
+**Scope adjustments vs. original plan.**
+
+- The phased M0 rework dropped the `/vault` mount + second
+  test-double transport out of M0; vault re-enters as M2.1.
+- **M2 has been rescoped** from "six hand-rolled FS tools over
+  ACP `fs/*`" to "vault mount + just-bash shell tool". Driver:
+  the `vercel-labs/just-bash` browser-native bash sandbox
+  collapses the six-tool surface into a single `bash` tool with
+  a strictly richer capability set (pipes, redirects, `jq`,
+  `rg`, scripting). This requires the filesystem to live on the
+  agent because ACP `fs/*` cannot transport just-bash's
+  `IFileSystem`. ACP `fs/*` is still advertised for future IDE
+  integration; built-ins do not use it. See
+  [m2-tools.md](m2-tools.md).
+- **M3 is now MCP + provider-native tools**, not session tree.
+  Rationale: in the web-agent spike, MCP was the hard part; we
+  tackle it early while the tool surface is minimal and the
+  session model is stable. See [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md).
+- **Session tree (fork / branch) has moved to M6.** Rationale:
+  the session model is already solid after M1 — fork is a
+  UX amplifier, not a blocker. Landing tools + MCP + commands +
+  extensions first means the fork operation inherits the full
+  tool + MCP + extension state on each branch, and
+  `session/fork` in the ACP unstable schema gives us a standard
+  wire shape when we need it.
+- **Compaction (M7) lands after extensions** because extensions
+  may want to hook compaction (`before_compact` / `after_compact`).
+- The MCP surface that used to live as M2.3 has moved to M3
+  proper; see [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md).
 
 ## Load-when hooks
 
@@ -73,23 +129,34 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   `session/load` replay, and the `bodhi/getSession` snapshot
   companion that restores the per-session model selector.
   Delivery plan at [`../plans/m1-sessions.md`](../plans/m1-sessions.md).
-- **[m2-tools.md](m2-tools.md)** — load when moving tools onto
-  ACP `fs/*` delegation. Ships in three slices: M2.1 vault
-  mount (FSA + ZenFS + dev seed, deferred out of M0), M2.2
-  built-in fs-tools + `tool_call` permission flow, M2.3 MCP
-  proxy tools over ACP (re-entering after being dropped in the
-  M0 rework).
-- **[m3-session-tree.md](m3-session-tree.md)** — load when picking
-  up fork / branch. Flag: likely needs an ACP extension.
-- **[m4-compaction.md](m4-compaction.md)** — load when picking up
-  compaction.
-- **[m5-resources.md](m5-resources.md)** — load when picking up
-  slash commands / prompt templates / skills.
-- **[m6-extensions.md](m6-extensions.md)** — load when extension
-  runtime re-enters. Start from ACP extensibility, not web-agent's
-  Blob-URL loader.
-- **[m7-polish-and-extract.md](m7-polish-and-extract.md)** — load
-  when preparing the extractable library.
+- **[m2-tools.md](m2-tools.md)** — load when standing up the
+  vault mount and the just-bash shell tool. Ships in four
+  slices: M2.1 vault mount (FSA + ZenFS worker-side), M2.2
+  just-bash integration + single `bash` tool registration,
+  M2.3 permission bridge (just-bash transform →
+  `session/request_permission`), M2.4 `fs/*` client handlers
+  as a future IDE-integration seam (advertised, not used by
+  built-ins).
+- **[m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md)** —
+  load when adding MCP servers to the worker and surfacing
+  provider-native tools. Agent is the MCP client (HTTP only).
+  Provider-native tools (OpenAI `web_search` etc.) surface as
+  regular `tool_call` notifications for observability.
+- **[m4-commands-and-skills.md](m4-commands-and-skills.md)** —
+  load when picking up slash commands, prompt templates, and
+  skills. Commands advertised via ACP `available_commands_update`;
+  expansion is client-side for plain commands and agent-side
+  for skill-activating commands.
+- **[m5-extensions.md](m5-extensions.md)** — load when
+  extension runtime re-enters. Vault-sourced, fully-trusted.
+  Start from ACP extensibility, not web-agent's Blob-URL loader.
+- **[m6-session-tree.md](m6-session-tree.md)** — load when
+  picking up fork / branch. Adopt `session/fork` from the ACP
+  unstable schema behind a feature flag.
+- **[m7-compaction.md](m7-compaction.md)** — load when picking
+  up compaction.
+- **[m8-polish-and-extract.md](m8-polish-and-extract.md)** —
+  load when preparing the extractable library.
 
 ## Open questions that cut across milestones
 
@@ -101,12 +168,21 @@ answer them speculatively in milestone previews.
   vendor a subset, or hand-roll. Settle at **M0**.
 - **Schema stability.** Anchor on `schema.json` only vs track
   `schema.unstable.json`. Settle at **M0**, revisit per-milestone.
+  Note: M6 (session tree) explicitly adopts an unstable method
+  behind a feature flag.
 - **Transport interface shape.** `send/onMessage/close` vs duplex
   async-iterator pair. Settle at **M0.b**.
 - **Permission policy defaults.** Auto-allow read, prompt on write
-  vs per-tool vs configurable. Settle at **M0.a**.
+  vs per-tool vs configurable. Settle at **M0.a**; per-command
+  granularity revisited in **M2.3** given the just-bash tool
+  surface.
+- **Remote-agent deployment modality.** Agent-owned FS and
+  just-bash live in the user's browser. Remote-agent deployment
+  therefore requires a different vault story (cloud-mounted,
+  user-uploaded, or text-only). Document during **M8**; do not
+  design here.
 - **Library name.** `@bodhiapp/bodhi-web-acp` is a placeholder.
-  Settle at **M7**.
+  Settle at **M8**.
 
 ## Cross-cutting references
 
@@ -117,7 +193,8 @@ answer them speculatively in milestone previews.
 - **`ai-docs/web-acp/steering/01-goals.md`** — capability checklist
   with test seams.
 - **`ai-docs/web-acp/steering/02-architecture.md`** — layer cake,
-  transport boundary, ZenFS layout.
+  transport boundary, ZenFS layout, ACP architectural postures,
+  just-bash integration.
 - **`ai-docs/web-acp/steering/04-principles.md`** — the rules that
   survive plans. Read before every design decision.
 - **`ai-docs/web-agent/README.md`** — frozen archive marker.

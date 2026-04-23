@@ -228,7 +228,69 @@ is: what ACP extension mechanism carries tool registration,
 lifecycle hooks, custom providers? Blob-URL loading is an
 implementation detail of web-agent, not a requirement we inherit.
 
-## 14. When evidence surprises you, write it down
+## 14. Agent owns all tool surfaces; filesystem ownership follows the richest tool's interface
+
+**Why.** ACP puts tool execution on the agent by design. Moving
+tool execution to the client (Variation C in
+[`02-architecture.md`](./02-architecture.md#acp-architectural-postures))
+inverts the spec and forces a non-ACP wire for every tool
+invocation.
+
+Filesystem ownership is a corollary, not an independent choice.
+ACP's `fs/*` surface defines only two primitives
+(`fs/read_text_file`, `fs/write_text_file`) — an editor-buffer
+bridge, not a general VFS. If the agent's richest tool needs an
+FS interface that `fs/*` cannot carry — as just-bash's `IFileSystem`
+(~25 methods) demonstrably does — then the agent owns the
+filesystem directly. Forcing a rich shell tool through 12 custom
+`_bodhi/fs/*` extension methods is worse for ACP compliance than
+mounting the FS on the agent and advertising `fs/*` as an
+IDE-integration seam.
+
+**How to apply.**
+
+- Every LLM-facing tool lives in the agent. Clients render and
+  gate; they do not execute. If a proposal reaches for
+  client-side execution of a generic tool, revisit this principle
+  first.
+- Filesystem primitives (`fs/read_text_file`, `fs/write_text_file`)
+  stay advertised from M2.4 onward even when the default agent
+  tools don't use them. The advertisement preserves compliance;
+  the non-use is documented.
+- When a new tool's FS needs exceed what `fs/*` can carry, do not
+  add `_bodhi/fs/readdir`, `_bodhi/fs/stat`, etc. Mount the FS on
+  the agent and document the divergence in
+  [`02-architecture.md`](./02-architecture.md).
+
+## 15. Extension methods are `_`-prefixed and namespaced
+
+**Why.** ACP 0.6+ reserves `_`-prefixed method names for
+application-specific extensions per
+`agent-client-protocol/docs/protocol/extensibility.mdx`. Collisions
+with future upstream method names are prevented by namespacing
+under a vendor prefix.
+
+**How to apply.**
+
+- All web-acp extension methods start with `_bodhi/` and use
+  slash-separated sub-namespaces, e.g. `_bodhi/mcp/setServers`,
+  `_bodhi/skills/activate`, `_bodhi/providers/nativeTools`,
+  `_bodhi/log`.
+- `_meta` fields on standard ACP methods follow the same prefix
+  rule for custom keys (`_meta._bodhi/*`).
+- Extension methods declared constants in `acp/index.ts` —
+  never inlined at the call site — so a single rename sweep
+  fixes them when an upstream ACP method covers the same
+  ground.
+- When upstream ACP adds a native method for something we
+  currently ship as `_bodhi/*`, the migration is:
+  1. Advertise both for one milestone (capability-gated on
+     the client).
+  2. Switch to upstream.
+  3. Remove the `_bodhi/*` in the next release after a
+     decision entry documenting the swap.
+
+## 16. When evidence surprises you, write it down
 
 **Why.** Non-obvious discoveries rot the moment the session ends.
 "ACP schema field X is actually required" / "`MessageChannel`
