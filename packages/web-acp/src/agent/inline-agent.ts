@@ -12,6 +12,12 @@ export interface InlineAgent {
   prompt(text: string): Promise<void>;
   cancel(): void;
   clearMessages(): void;
+  /**
+   * Seed the agent's conversation with an existing message history
+   * without firing `AgentEvent`s. Used by `session/load` replay so
+   * follow-up prompts on a restored session use the persisted context.
+   */
+  restoreMessages(messages: AgentMessage[]): void;
 }
 
 export function createInlineAgent(streamFn: StreamFn): InlineAgent {
@@ -44,6 +50,9 @@ export function createInlineAgent(streamFn: StreamFn): InlineAgent {
     clearMessages() {
       agent.abort();
       agent.state.messages = [];
+    },
+    restoreMessages(messages) {
+      agent.state.messages = [...messages];
     },
   };
 }

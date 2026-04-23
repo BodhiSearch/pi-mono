@@ -10,12 +10,14 @@ import type {
   NewSessionResponse,
   PromptRequest,
   PromptResponse,
+  SessionNotification,
 } from '@agentclientprotocol/sdk';
 import type { AgentEvent, AgentMessage as CoreMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { BodhiProvider } from '@/agent/bodhi-provider';
 import { apiFormatOfModel } from '@/agent/bodhi-provider';
 import type { InlineAgent } from '@/agent/inline-agent';
+import type { SessionStore } from '@/agent/session-store';
 import {
   BODHI_AUTH_METHOD_ID,
   BODHI_LIST_MODELS_METHOD,
@@ -48,14 +50,21 @@ export class AcpAgentAdapter implements Agent {
   readonly #conn: AgentSideConnection;
   readonly #inline: InlineAgent;
   readonly #bodhi: BodhiProvider;
+  readonly #store: SessionStore | undefined;
   readonly #sessions = new Map<string, SessionState>();
   #models: Model<Api>[] = [];
   #cancelled = false;
 
-  constructor(conn: AgentSideConnection, inline: InlineAgent, bodhi: BodhiProvider) {
+  constructor(
+    conn: AgentSideConnection,
+    inline: InlineAgent,
+    bodhi: BodhiProvider,
+    store?: SessionStore
+  ) {
     this.#conn = conn;
     this.#inline = inline;
     this.#bodhi = bodhi;
+    this.#store = store;
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
@@ -97,6 +106,9 @@ export class AcpAgentAdapter implements Agent {
   async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = `bodhi-${crypto.randomUUID()}`;
     this.#sessions.set(sessionId, { id: sessionId });
+    if (this.#store) {
+      await this.#store.createSession(sessionId);
+    }
     return { sessionId };
   }
 
@@ -133,6 +145,9 @@ export class AcpAgentAdapter implements Agent {
       const errorMessage = this.#inline.getErrorMessage();
       if (errorMessage) {
         throw new Error(errorMessage);
+      }
+      if (this.#store) {
+        await this.#store.recordTurn(params.sessionId, text, this.#inline.getMessages(), model.id);
       }
       return { stopReason: 'end_turn' };
     } finally {
@@ -192,7 +207,7 @@ export class AcpAgentAdapter implements Agent {
     const delta = text.slice(cursor.emittedLength);
     cursor.emittedLength = text.length;
 
-    await this.#conn.sessionUpdate({
+    await this.#emit({
       sessionId,
       update: {
         sessionUpdate: 'agent_message_chunk',
@@ -200,6 +215,22 @@ export class AcpAgentAdapter implements Agent {
         ...(messageId ? { messageId } : {}),
       },
     });
+  }
+
+  /**
+   * Single exit point for every `session/update` notification. Emits
+   * to the client AND persists the notification in the session store
+   * so `session/load` can re-emit the exact same bytes later.
+   */
+  async #emit(notification: SessionNotification): Promise<void> {
+    await this.#conn.sessionUpdate(notification);
+    if (this.#store) {
+      try {
+        await this.#store.recordNotification(notification.sessionId, notification);
+      } catch (err) {
+        console.error('[acp-agent-adapter] failed to persist notification:', err);
+      }
+    }
   }
 }
 

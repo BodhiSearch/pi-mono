@@ -1,0 +1,253 @@
+# sessions
+
+**Source of truth:** `packages/web-acp/src/agent/session-store.ts`
+(+ wiring in `src/acp/agent-adapter.ts` and `src/agent/agent-worker.ts`).
+
+**Parent:** [`./index.md`](./index.md)
+
+## Functional scope
+
+The session store is the **worker-owned persistence layer** for
+ACP sessions. It is the M1 answer to the M0 deferred item
+_"persisted sessions"_ in [`./index.md § Scope out`](./index.md#scope-out-deferred).
+
+Two tenets:
+
+1. **Agent-authoritative.** `AcpAgentAdapter` owns the store;
+   the main thread never touches IndexedDB directly. Lists and
+   replays travel over ACP (`bodhi/listSessions` ext method,
+   `session/load` request) — the same path a remote agent would
+   use. This preserves the "ACP is the only internal protocol"
+   invariant in [`./index.md`](./index.md).
+2. **ACP-native shape.** What we persist is exactly what was
+   emitted: stored `SessionNotification` rows replay verbatim
+   over `session/load`. We do **not** invent a bespoke message
+   schema on top of pi-agent-core.
+
+## Storage schema
+
+Backed by **Dexie** (IndexedDB) under DB name `web-acp` (distinct
+from web-agent's `web-agent`).
+
+### Table `sessions` (primary key `id`)
+
+| column        | type              | notes                                               |
+| ------------- | ----------------- | --------------------------------------------------- |
+| `id`          | `string` (pk)     | `bodhi-${crypto.randomUUID()}`; returned by `session/new`. |
+| `createdAt`   | `number`          | ms since epoch.                                     |
+| `updatedAt`   | `number`          | ms since epoch. Picker orders on this, descending.  |
+| `title`       | `string \| null`  | Derived from the first user prompt (see below), or set explicitly via `setTitle`. |
+| `turnCount`   | `number`          | Count of `recordTurn` calls — bumped on `end_turn`. |
+| `lastModelId` | `string \| null`  | ID of the last model used by any turn in this session. Drives "restore selected model on load". |
+
+Indexed on `updatedAt` for picker queries.
+
+### Table `entries` (compound primary key `[sessionId+seq]`)
+
+| column      | type                                | notes                                              |
+| ----------- | ----------------------------------- | -------------------------------------------------- |
+| `sessionId` | `string` (part of pk)               | Foreign-key to `sessions.id`.                      |
+| `seq`       | `number` (part of pk)               | Monotonic per session; allocated inside the rw transaction as `entries.where('sessionId').equals(id).count()`. |
+| `at`        | `number`                            | ms since epoch.                                    |
+| `kind`      | `'notification' \| 'turn'`          | See below.                                         |
+| `payload`   | `SessionNotification \| TurnPayload`| Raw ACP notification for `notification`; synthetic summary for `turn`. |
+
+Indexed on `sessionId` for range scans.
+
+**No `schemaVersion` column.** ACP does not define one at this
+granularity and inventing one now would only complicate
+migration logic. When pi-agent-core's message shape drifts (a
+future concern, not M1), we'll add version gating in the
+milestone that needs it.
+
+### Entry kinds
+
+- **`notification`** — the raw `SessionNotification` object as
+  emitted by `AcpAgentAdapter.#emit`. Replay re-emits these
+  verbatim over `session/load`.
+- **`turn`** — synthetic summary written at `end_turn`:
+  ```ts
+  interface TurnPayload {
+    userText: string;          // the text we passed to inline.prompt
+    finalMessages: AgentMessage[]; // inline.getMessages() after resolve
+    modelId: string;           // the model that ran this turn
+  }
+  ```
+  `finalMessages` lets `session/load` call
+  `InlineAgent.restoreMessages(...)` so follow-up prompts on a
+  restored session use the persisted context.
+  `modelId` is the hook that lets the UI re-select the model
+  that was in use when the user last spoke with this session.
+
+## Public interface (`SessionStore`)
+
+Defined in `packages/web-acp/src/agent/session-store.ts`.
+
+```ts
+export interface SessionStore {
+  createSession(id: string, at?: number): Promise<void>;
+  recordNotification(id: string, notification: SessionNotification, at?: number): Promise<void>;
+  recordTurn(
+    id: string,
+    userText: string,
+    finalMessages: AgentMessage[],
+    modelId: string,
+    at?: number
+  ): Promise<void>;
+  listSummaries(): Promise<SessionSummary[]>;
+  readEntries(id: string): Promise<SessionEntry[]>;
+  getSession(id: string): Promise<SessionRow | undefined>;
+  setTitle(id: string, title: string): Promise<void>;
+  deleteSession(id: string): Promise<void>;
+}
+```
+
+- **`createSession`** — inserts a row with `title = null`,
+  `turnCount = 0`, `lastModelId = null`. Called from
+  `AcpAgentAdapter.newSession` after the id is generated.
+- **`recordNotification`** — appends a `notification` entry;
+  updates `sessions.updatedAt`. Never derives anything from the
+  payload. Called on every `#emit(...)` in the adapter.
+- **`recordTurn`** — appends a `turn` entry; bumps `turnCount`;
+  sets `lastModelId`; on the **first** turn of a session with no
+  explicit title, derives one via
+  `deriveTitle(userText)`. Called once per `end_turn` in
+  `AcpAgentAdapter.prompt`.
+- **`listSummaries`** — picker feed. Orders by `updatedAt DESC`.
+  Drops `payload` (entries) — returns only the denormalised
+  fields the picker needs.
+- **`readEntries`** — full session log in `seq` order. Consumed
+  by `AcpAgentAdapter.loadSession` (Phase C) for replay.
+- **`getSession`** — single-row lookup; used for admin paths.
+- **`setTitle`** — overrides the derived title; bumps
+  `updatedAt`.
+- **`deleteSession`** — deletes the session row and all its
+  entries in a single Dexie transaction.
+
+### Title derivation (`deriveTitle`)
+
+```ts
+export function deriveTitle(userText: string): string;
+```
+
+- Collapses whitespace runs to single spaces; trims.
+- Truncates to 60 characters with a trailing `…`.
+- Runs in worker context; no LLM call.
+
+The picker's title is "first user prompt, one line" by default.
+Users can override via `setTitle` (exposed behind a future
+`bodhi/renameSession` ext method; Phase D stretch).
+
+## Integration points
+
+### `AcpAgentAdapter` (worker side)
+
+The adapter owns a **single** `SessionStore` reference passed in
+from `agent-worker.ts`. All persistence calls are best-effort on
+failures of `recordNotification` — a log, no throw — because the
+wire emission already happened and we don't want to break the
+in-flight turn. `recordTurn` and `createSession` do throw on
+failure because they're the session-creation / turn-finalisation
+barrier.
+
+Call sites (Phase A):
+
+- `newSession` → `store.createSession(sessionId)`.
+- Every `#emit(notification)` → `store.recordNotification(sessionId, notification)`.
+- `prompt` on clean `end_turn` → `store.recordTurn(sessionId, text, inline.getMessages(), model.id)`.
+
+Call sites (Phase B/C):
+
+- `extMethod('bodhi/listSessions')` → `store.listSummaries()`.
+- `loadSession(sessionId)` → `store.readEntries(sessionId)` →
+  replay as `conn.sessionUpdate(...)`; then
+  `inline.restoreMessages(lastTurn.finalMessages)`.
+
+### `InlineAgent` (worker side)
+
+`InlineAgent.restoreMessages(messages)` is the hook Phase C uses
+to seed `agent.state.messages` without firing `AgentEvent`s.
+Defined in [`./agent.md`](./agent.md#inline-agentts).
+
+### `agent-worker.ts`
+
+Instantiates `createSessionStore()` at boot and hands it to the
+adapter. The store is worker-only — the main-thread bundle never
+imports `session-store.ts`.
+
+### `useAcp` (main thread, Phase B/C)
+
+Listens to picker state, calls
+`AcpClient.listSessions()` / `AcpClient.loadSession(id)` which
+translate to ext-method / `session/load` calls over the ACP
+wire. Full hook state shape in [`./hook.md`](./hook.md).
+
+## Invariants
+
+1. **Worker-only.** The store is instantiated inside the Web
+   Worker. No code in `src/hooks/`, `src/components/`, or
+   `src/App.tsx` may import `session-store.ts` directly.
+2. **Exactly-once persistence per emission.** Every
+   `SessionNotification` that leaves `AcpAgentAdapter.#emit`
+   lands as exactly one row in `entries`. The emit + persist
+   pair is **not** transactional on the wire — if the browser
+   crashes between `#conn.sessionUpdate` and
+   `recordNotification`, a sent-but-unstored delta is lost.
+   Acceptable because replay is "best available history", not
+   byte-for-byte reconstruction of a crash.
+3. **`seq` is monotonic per session.** Allocated inside the
+   Dexie rw transaction as a count of existing entries. Safe
+   because entries are append-only until the whole session is
+   deleted.
+4. **IndexedDB is multi-tab safe.** Dexie serialises writes
+   across tabs on the same origin. A second tab sees appends
+   from the first on its next `listSummaries()` call. No
+   cross-tab live updates for M1 (see out-of-scope note in the
+   M1 plan).
+5. **No `_meta` extensions for sessions.** All session-related
+   data travels through first-class ACP methods or the
+   `bodhi/listSessions` ext method. We don't piggy-back on
+   `_meta` for session identity or restore state.
+
+## Tests
+
+- **`packages/web-acp/src/agent/session-store.test.ts`** (vitest
+  + `fake-indexeddb`). Covers:
+  - create → list ordering (`updatedAt DESC`).
+  - `recordNotification` monotonicity + order preservation.
+  - `recordTurn` first-turn title derivation, subsequent-turn
+    `turnCount` / `lastModelId` updates with title unchanged.
+  - Interleaved notifications + turns keep `seq` monotonic.
+  - `recordNotification` / `recordTurn` reject unknown sessions.
+  - `deleteSession` atomically removes row + entries.
+  - `setTitle` overrides derived title.
+  - `deriveTitle` whitespace collapsing + 60-char truncation.
+- **`packages/web-acp/e2e/sessions-persist.spec.ts`** (Phase B):
+  DOM-witness that a prompt creates a session row surviving
+  reload.
+- **`packages/web-acp/e2e/sessions-resume.spec.ts`** (Phase C):
+  DOM-witness that `session/load` replays the transcript and
+  restores the last-used model in the UI.
+
+## Non-goals (M1)
+
+- Fork / branch / navigate — M3 (`SessionTree`).
+- Context compaction rows — M4.
+- Encryption at rest — post-v1.
+- LLM-generated titles — M5 (skills).
+- Cross-tab live updates for the picker — post-v1.
+- Second-transport parity for the store — the store is
+  worker-local, not transport-adjacent; no double-writer
+  scenarios.
+
+## Change procedure
+
+Any plan that edits `packages/web-acp/src/agent/session-store.ts`
+or the adapter's call sites into the store must update this file
+in the same commit. When a new entry kind lands (e.g.
+`compaction` at M4), add it to the table above and document the
+payload shape. When the ACP wire surface changes
+(`bodhi/listSessions` → upstream `session/list`, for instance),
+update both this file and [`./acp.md`](./acp.md).
+
+See [`./index.md` § Change procedure](./index.md#change-procedure).

@@ -47,6 +47,7 @@ drill into the per-module specs:
 | [`startup-sequence.md`](./startup-sequence.md) | End-to-end wiring: page load → worker spawn → ACP handshake → Bodhi authenticate → `bodhi/listModels` → session/prompt turn. The authoritative reference for "what happens when". |
 | [`acp.md`](./acp.md) | `src/acp/` — `AcpClient`, `AcpAgentAdapter`, the `bodhi-token` auth method, the `bodhi/listModels` extension method, ACP ↔ `pi-agent-core` streaming translation. |
 | [`agent.md`](./agent.md) | `src/agent/` — `agent-worker.ts` (Worker entry), `InlineAgent` (`pi-agent-core` wrapper), `BodhiProvider` (`LlmProvider` implementation), `createStreamFn` (pi-ai bridge). |
+| [`sessions.md`](./sessions.md) | `src/agent/session-store.ts` — Dexie-backed worker-owned session persistence (schema, CRUD, invariants, replay contract with `session/load`). |
 | [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
 | [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` — the React hook that drives the main-thread side of the ACP connection, owns the singleton worker, and surfaces chat state to `ChatDemo`. |
 
@@ -127,6 +128,7 @@ packages/web-acp/src/
 │   ├── agent-worker.ts    # Web Worker entry; wires AcpAgentAdapter
 │   ├── inline-agent.ts    # pi-agent-core wrapper
 │   ├── bodhi-provider.ts  # BodhiProvider (LlmProvider implementation)
+│   ├── session-store.ts   # Dexie-backed SessionStore (M1)
 │   └── stream-fn.ts       # createStreamFn(provider) → pi-ai bridge
 ├── transport/
 │   └── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream
@@ -157,6 +159,8 @@ boundary at extraction time (M7) are:
 - `src/acp/client.ts` — `AcpClient`.
 - `src/acp/agent-adapter.ts` — `AcpAgentAdapter`.
 - `src/agent/inline-agent.ts` — `InlineAgent`, `createInlineAgent`.
+- `src/agent/session-store.ts` — `SessionStore`, `createSessionStore`
+  (M1, worker-only). Spec in [`./sessions.md`](./sessions.md).
 - `src/agent/bodhi-provider.ts` — `BodhiProvider`,
   `BODHI_PROVIDER_TAG`, `apiFormatOfModel`, `LlmProvider`,
   `LlmAuthCredential`.

@@ -3,6 +3,7 @@ import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import { AcpAgentAdapter } from '@/acp/agent-adapter';
 import { BodhiProvider } from './bodhi-provider';
 import { createInlineAgent } from './inline-agent';
+import { createSessionStore } from './session-store';
 import { createStreamFn } from './stream-fn';
 import { createMessagePortStream } from '@/transport/worker-stream';
 
@@ -33,8 +34,9 @@ function startAgent(port: MessagePort): void {
   const stream = ndJsonStream(writable, readable);
   const provider = new BodhiProvider();
   const inline = createInlineAgent(createStreamFn(provider));
+  const store = createSessionStore();
   const _connection = new AgentSideConnection(
-    conn => new AcpAgentAdapter(conn, inline, provider),
+    conn => new AcpAgentAdapter(conn, inline, provider, store),
     stream
   );
   void _connection;

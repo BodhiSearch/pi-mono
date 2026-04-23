@@ -6,7 +6,7 @@
 
 ## Functional scope
 
-The `src/agent/` subtree is the **worker-side runtime**. Four
+The `src/agent/` subtree is the **worker-side runtime**. Five
 files, each with a narrowly-scoped responsibility:
 
 - **`agent-worker.ts`** — Web Worker entry. Listens for the
@@ -18,6 +18,9 @@ files, each with a narrowly-scoped responsibility:
 - **`bodhi-provider.ts`** — `BodhiProvider`, the `LlmProvider`
   implementation. Holds the rotating access token, fetches and
   flattens the Bodhi model catalog.
+- **`session-store.ts`** — `SessionStore`, the Dexie-backed
+  session persistence layer added in M1. Full schema + contract
+  in [`./sessions.md`](./sessions.md).
 - **`stream-fn.ts`** — `createStreamFn(provider)`, a factory
   that adapts a `LlmProvider` into the `StreamFn` signature
   `pi-agent-core` expects.
@@ -59,11 +62,13 @@ properties:
   3. `new BodhiProvider()` — unauthenticated.
   4. `createInlineAgent(createStreamFn(provider))` — the turn
      engine.
-  5. `new AgentSideConnection(conn => new AcpAgentAdapter(conn,
-     inline, provider), stream)`. The factory is invoked
+  5. `createSessionStore()` — opens (or creates) the Dexie
+     `web-acp` database. See [`./sessions.md`](./sessions.md).
+  6. `new AgentSideConnection(conn => new AcpAgentAdapter(conn,
+     inline, provider, store), stream)`. The factory is invoked
      synchronously by the SDK; the returned adapter is the
      `Agent` dispatch target for inbound requests.
-  6. The return value of `new AgentSideConnection(...)` is held
+  7. The return value of `new AgentSideConnection(...)` is held
      in a `_connection` local only to prevent the module-level
      linter from flagging the assignment as unused. The SDK
      retains it internally; the reference is not read again.
@@ -90,6 +95,7 @@ export interface InlineAgent {
   prompt(text: string): Promise<void>;
   cancel(): void;
   clearMessages(): void;
+  restoreMessages(messages: AgentMessage[]): void;
 }
 ```
 
@@ -140,6 +146,12 @@ const agent = new Agent({
   []`. The explicit `abort()` before clearing protects against a
   race where a stream is still writing into the old array as we
   discard it.
+- **`restoreMessages(messages)`** — `agent.state.messages =
+  [...messages]`. Used by `session/load` replay (Phase C) to
+  seed the agent's conversation with a persisted transcript so
+  follow-up prompts stay coherent. Does **not** fire
+  `AgentEvent`s — replay emits the original stored
+  `SessionNotification`s separately over the ACP wire.
 
 The wrapper is deliberately **not** a class. `pi-agent-core`'s
 `Agent` is a class; wrapping it in a class would invite

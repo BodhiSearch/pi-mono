@@ -148,11 +148,18 @@ values for request/response.
   factory; used to send notifications and (future) client-side
   requests.
 - `readonly #inline: InlineAgent` — the single-agent runtime. M0
-  uses one `InlineAgent` for all sessions; M1 will per-session.
+  used one `InlineAgent` for all sessions. M1 keeps the single
+  `InlineAgent` but now reseeds its message history via
+  `InlineAgent.restoreMessages` on `session/load`.
 - `readonly #bodhi: BodhiProvider` — the token + catalog holder.
+- `readonly #store: SessionStore | undefined` — M1 persistence
+  layer (optional so unit tests can run memory-only). Full
+  schema + contract in [`./sessions.md`](./sessions.md).
 - `readonly #sessions = new Map<string, SessionState>()` — pure
-  existence tracking today (`SessionState = {id}`). M1 hangs
-  transcripts off this map.
+  in-memory existence tracking. The authoritative session list
+  lives in `#store` (IndexedDB); `#sessions` exists so the
+  adapter can reject `prompt`/`cancel` on an id it hasn't
+  acknowledged this tab.
 - `#models: Model<Api>[] = []` — catalog cache populated by
   `extMethod('bodhi/listModels')` and consumed by `prompt` to
   resolve `_meta.bodhi.modelId`.
@@ -188,9 +195,12 @@ values for request/response.
   6. Returns `{}` (the SDK's minimal `AuthenticateResponse`).
 
 - **`newSession(_params: NewSessionRequest): Promise<NewSessionResponse>`.**
-  Returns `{sessionId: 'bodhi-' + crypto.randomUUID()}`;
-  registers it in `#sessions`. The `NewSessionRequest`
-  (`{cwd, mcpServers}`) is ignored in M0 — both are stubs.
+  Generates `sessionId = 'bodhi-' + crypto.randomUUID()`;
+  registers it in `#sessions`; calls
+  `await #store.createSession(sessionId)` when a store is
+  configured. The `NewSessionRequest` (`{cwd, mcpServers}`) is
+  ignored today — both are stubs; M2.1 gives `cwd` semantic
+  meaning.
 
 - **`prompt(params: PromptRequest): Promise<PromptResponse>`.**
   Detailed flow in
@@ -206,8 +216,12 @@ values for request/response.
      events through `#forwardEvent`.
   6. `await this.#inline.prompt(text)`.
   7. Returns `{stopReason: 'cancelled'}` if `#cancelled`;
-     throws `inline.getErrorMessage()` if set; otherwise returns
-     `{stopReason: 'end_turn'}`.
+     throws `inline.getErrorMessage()` if set; otherwise on
+     clean `end_turn` calls `await #store.recordTurn(sessionId,
+     text, inline.getMessages(), model.id)` (M1) and returns
+     `{stopReason: 'end_turn'}`. `modelId` is persisted on the
+     turn row so `session/load` can tell the UI which model was
+     last in use for this session.
   8. Unsubscribes in `finally`.
 
 - **`cancel(_params: CancelNotification): Promise<void>`.**
@@ -242,8 +256,10 @@ values for request/response.
 - **`#extractPromptText(params)`.** Concatenates every `text`
   block; ignores other block types (images, embedded context).
   In line with the M0 `promptCapabilities` (all false).
-- **`#forwardEvent(sessionId, event, cursor)`.** The only method
-  that writes to the wire from inside the adapter.
+- **`#forwardEvent(sessionId, event, cursor)`.** Translates
+  `pi-agent-core` `AgentEvent`s into ACP notifications. Calls
+  `#emit(notification)` rather than `#conn.sessionUpdate`
+  directly so persistence is on the same path.
   1. Early-returns for non-`message_update` events.
   2. Early-returns if the message role isn't `'assistant'`.
   3. Recomputes the message id (`extractMessageId`) and resets
@@ -252,17 +268,17 @@ values for request/response.
      early-returns if empty (idempotent updates of the same
      prefix).
   5. Updates `cursor.emittedLength = text.length`.
-  6. Sends:
-     ```
-     {
-       sessionId,
-       update: {
-         sessionUpdate: 'agent_message_chunk',
-         content: { type: 'text', text: delta },
-         ...(messageId ? { messageId } : {})
-       }
-     }
-     ```
+  6. Calls `await this.#emit({sessionId, update: {...agent_message_chunk}})`.
+- **`#emit(notification)`.** Single exit point for every
+  `session/update` notification in M1+. Emits to the client via
+  `#conn.sessionUpdate(notification)` **and** persists via
+  `#store.recordNotification(sessionId, notification)` on the
+  same path. Persistence failures are logged but never thrown —
+  the wire emission already happened and breaking the in-flight
+  turn over a store write would be worse than a missed row.
+  Future emitters (tool-call notifications at M2, plan at M3)
+  use this same helper so the "what we stored = what we
+  emitted" invariant holds.
 
 #### Module-private functions
 
