@@ -36,6 +36,7 @@
 			"!packages/web-ui/src/app.css",
 			"!packages/mom/data/**/*",
 			"!packages/web-agent",
+			"!packages/web-acp",
 			"!!**/node_modules"
 		]
 	}

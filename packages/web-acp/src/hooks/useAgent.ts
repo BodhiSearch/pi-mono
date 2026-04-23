@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import { streamSimple } from '@mariozechner/pi-ai';
 import { Agent } from '@mariozechner/pi-agent-core';
-import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
+import type { AgentEvent, AgentMessage, StreamFn } from '@mariozechner/pi-agent-core';
 import { getErrorMessage } from '@/lib/utils';
 import { buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
 import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
@@ -38,7 +38,7 @@ function getOrCreateAgent(): Agent {
   return _agent;
 }
 
-export function useAgent(tools: AgentTool[]) {
+export function useAgent() {
   const { client, auth, isAuthenticated, isReady } = useBodhi();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -51,17 +51,12 @@ export function useAgent(tools: AgentTool[]) {
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
 
   const authTokenRef = useRef<string | null>(auth.accessToken);
-  const toolsRef = useRef<AgentTool[]>(tools);
   const isLoadingModelsRef = useRef(false);
 
   useEffect(() => {
     authTokenRef.current = auth.accessToken;
     _tokenGetter = () => authTokenRef.current;
   }, [auth.accessToken]);
-
-  useEffect(() => {
-    toolsRef.current = tools;
-  }, [tools]);
 
   useEffect(() => {
     const agent = getOrCreateAgent();
@@ -152,7 +147,7 @@ export function useAgent(tools: AgentTool[]) {
       const serverUrl = getServerUrlOrThrow(client.getState());
       const agent = getOrCreateAgent();
       agent.state.model = buildModel(selectedModel, serverUrl, selectedApiFormat);
-      agent.state.tools = toolsRef.current;
+      agent.state.tools = [];
       agent.state.systemPrompt = '';
 
       try {

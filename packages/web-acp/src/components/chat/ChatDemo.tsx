@@ -1,19 +1,10 @@
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { useAgent } from '@/hooks/useAgent';
-import { useMcpList } from '@/hooks/useMcpList';
-import { useMcpSelection } from '@/hooks/useMcpSelection';
-import { useMcpAgentTools } from '@/hooks/useMcpAgentTools';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 
 export default function ChatDemo() {
-  const { mcps, toolsByMcpId, isLoading: isMcpsLoading } = useMcpList();
-  const { enabledMcpTools, toggleTool, toggleMcp, getEnabledToolCount, getCheckboxState } =
-    useMcpSelection(mcps, toolsByMcpId);
-
-  const tools = useMcpAgentTools({ enabledMcpTools, mcps, toolsByMcpId });
-
   const {
     messages,
     streamingMessage,
@@ -27,7 +18,7 @@ export default function ChatDemo() {
     models,
     isLoadingModels,
     loadModels,
-  } = useAgent(tools);
+  } = useAgent();
 
   useEffect(() => {
     if (chatError) {
@@ -54,14 +45,6 @@ export default function ChatDemo() {
         models={models}
         isLoadingModels={isLoadingModels}
         onRefreshModels={loadModels}
-        mcps={mcps}
-        toolsByMcpId={toolsByMcpId}
-        enabledMcpTools={enabledMcpTools}
-        onToggleMcp={toggleMcp}
-        onToggleTool={toggleTool}
-        getCheckboxState={getCheckboxState}
-        enabledToolCount={getEnabledToolCount()}
-        isMcpsLoading={isMcpsLoading}
       />
     </>
   );

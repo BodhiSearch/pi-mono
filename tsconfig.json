@@ -27,5 +27,10 @@
 		}
 	},
 	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
-	"exclude": ["packages/web-ui/**/*", "packages/web-agent/**/*", "**/dist/**"]
+	"exclude": [
+		"packages/web-ui/**/*",
+		"packages/web-agent/**/*",
+		"packages/web-acp/**/*",
+		"**/dist/**"
+	]
 }

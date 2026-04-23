@@ -4,8 +4,6 @@ import { Plus, RefreshCw, ArrowUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ModelCombobox from './ModelCombobox';
-import McpPopover from './McpPopover';
-import type { Mcp, McpTool } from '@/lib/mcp-tools';
 import type { BodhiModelInfo } from '@/lib/bodhi-models';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 
@@ -17,14 +15,6 @@ interface ChatInputProps {
   models: BodhiModelInfo[];
   isLoadingModels: boolean;
   onRefreshModels: () => void;
-  mcps: Mcp[];
-  toolsByMcpId: Record<string, McpTool[]>;
-  enabledMcpTools: Record<string, string[]>;
-  onToggleMcp: (mcpId: string, allToolNames: string[]) => void;
-  onToggleTool: (mcpId: string, toolName: string) => void;
-  getCheckboxState: (mcpId: string) => 'checked' | 'unchecked' | 'indeterminate';
-  enabledToolCount: number;
-  isMcpsLoading: boolean;
 }
 
 export default function ChatInput({
@@ -35,14 +25,6 @@ export default function ChatInput({
   models,
   isLoadingModels,
   onRefreshModels,
-  mcps,
-  toolsByMcpId,
-  enabledMcpTools,
-  onToggleMcp,
-  onToggleTool,
-  getCheckboxState,
-  enabledToolCount,
-  isMcpsLoading,
 }: ChatInputProps) {
   const { isReady, isAuthenticated } = useBodhi();
   const [message, setMessage] = useState('');
@@ -93,17 +75,6 @@ export default function ChatInput({
           />
 
           <div className="col-start-2 flex items-center gap-2 justify-end">
-            <McpPopover
-              mcps={mcps}
-              toolsByMcpId={toolsByMcpId}
-              enabledMcpTools={enabledMcpTools}
-              onToggleMcp={onToggleMcp}
-              onToggleTool={onToggleTool}
-              getCheckboxState={getCheckboxState}
-              enabledToolCount={enabledToolCount}
-              isLoading={isMcpsLoading}
-            />
-
             <ModelCombobox
               models={models}
               selected={selectedModel}

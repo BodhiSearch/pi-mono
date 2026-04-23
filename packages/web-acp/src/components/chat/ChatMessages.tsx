@@ -1,9 +1,7 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import type { ToolResultMessage } from '@mariozechner/pi-ai';
 import MessageBubble from './MessageBubble';
-import ToolCallMessage from './ToolCallMessage';
-import { extractTextFromAgentMessage, getToolCalls, type AgentMessage } from '@/types/chat';
+import { extractTextFromAgentMessage, type AgentMessage } from '@/types/chat';
 
 interface ChatMessagesProps {
   messages: AgentMessage[];
@@ -61,16 +59,6 @@ export default function ChatMessages({
     }
   }, [renderList, isStreaming]);
 
-  const toolResults = useMemo(() => {
-    const map = new Map<string, ToolResultMessage>();
-    for (const msg of renderList) {
-      if (msg.role === 'toolResult') {
-        map.set(msg.toolCallId, msg as ToolResultMessage);
-      }
-    }
-    return map;
-  }, [renderList]);
-
   const turnByIndex = useMemo(() => {
     const turns: number[] = [];
     let userCount = 0;
@@ -111,17 +99,6 @@ export default function ChatMessages({
               {renderList.map((msg, index) => {
                 if (msg.role === 'toolResult') return null;
                 const turn = turnByIndex[index];
-
-                if (msg.role === 'assistant' && getToolCalls(msg).length > 0) {
-                  const hasText = !!extractTextFromAgentMessage(msg);
-                  return (
-                    <div key={index}>
-                      {hasText && <MessageBubble message={msg} turn={turn} />}
-                      <ToolCallMessage message={msg} toolResults={toolResults} />
-                    </div>
-                  );
-                }
-
                 return <MessageBubble key={index} message={msg} turn={turn} />;
               })}
               {showPending && (
