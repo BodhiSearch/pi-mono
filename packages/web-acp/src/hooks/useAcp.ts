@@ -5,7 +5,7 @@ import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
-import type { BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
+import type { BodhiFeatureBag, BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
 import { createMessagePortStream } from '@/transport/worker-stream';
 import { createVolumeControl, type VolumeControl } from '@/transport/volume-control';
 import { getErrorMessage } from '@/lib/utils';
@@ -17,6 +17,19 @@ import { useVolumes, type UseVolumesResult } from '@/hooks/useVolumes';
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
 const EMPTY_SESSIONS: BodhiSessionSummary[] = [];
+const EMPTY_FEATURES: BodhiFeatureBag = {};
+const EMPTY_TOOL_CALLS: ToolCallView[] = [];
+
+export interface ToolCallView {
+  toolCallId: string;
+  toolName: string;
+  title: string;
+  status: 'in_progress' | 'completed' | 'failed' | 'pending';
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  text: string;
+  turn: number;
+}
 
 interface AcpRuntime {
   worker: Worker;
@@ -126,6 +139,36 @@ function userMessage(text: string): AgentMessage {
   } as unknown as AgentMessage;
 }
 
+function toolCallContentText(
+  content:
+    | Array<{ type?: unknown; content?: { type?: unknown; text?: unknown } }>
+    | null
+    | undefined
+): string {
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const block of content) {
+    if (
+      block &&
+      block.type === 'content' &&
+      block.content &&
+      block.content.type === 'text' &&
+      typeof block.content.text === 'string'
+    ) {
+      parts.push(block.content.text);
+    }
+  }
+  return parts.join('\n');
+}
+
+function mapToolStatus(
+  status: string | undefined
+): 'in_progress' | 'completed' | 'failed' | 'pending' | undefined {
+  if (status === 'in_progress' || status === 'completed' || status === 'failed') return status;
+  if (status === 'pending') return 'pending';
+  return undefined;
+}
+
 export function useAcp() {
   const { client: bodhiClient, auth, isAuthenticated, isReady } = useBodhi();
 
@@ -140,6 +183,11 @@ export function useAcp() {
   const [sessions, setSessions] = useState<BodhiSessionSummary[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [features, setFeatures] = useState<BodhiFeatureBag>({});
+  const [featureDefaults, setFeatureDefaults] = useState<BodhiFeatureBag>({});
+  const [toolCalls, setToolCalls] = useState<ToolCallView[]>([]);
+  const toolCallsRef = useRef<Map<string, ToolCallView>>(new Map());
+  const turnIndexRef = useRef(0);
 
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
@@ -173,23 +221,52 @@ export function useAcp() {
     const unsub = runtime.client.onSessionUpdate(notification => {
       if (isReplayingRef.current) return;
       const update = notification.update;
-      if (update.sessionUpdate !== 'agent_message_chunk') return;
-      const content = update.content;
-      if (!content || content.type !== 'text') return;
-      const delta = content.text ?? '';
-      if (!delta) return;
+      if (update.sessionUpdate === 'agent_message_chunk') {
+        const content = update.content;
+        if (!content || content.type !== 'text') return;
+        const delta = content.text ?? '';
+        if (!delta) return;
 
-      const messageId = update.messageId ?? undefined;
-      if (messageId && messageId !== streamingMessageIdRef.current) {
-        streamingMessageIdRef.current = messageId;
-        streamingRef.current = emptyAssistantMessage();
+        const messageId = update.messageId ?? undefined;
+        if (messageId && messageId !== streamingMessageIdRef.current) {
+          streamingMessageIdRef.current = messageId;
+          streamingRef.current = emptyAssistantMessage();
+        }
+
+        const current = streamingRef.current ?? emptyAssistantMessage();
+        const nextText = getAssistantText(current) + delta;
+        const next = withAssistantText(current, nextText);
+        streamingRef.current = next;
+        setStreamingMessage(next);
+        return;
       }
-
-      const current = streamingRef.current ?? emptyAssistantMessage();
-      const nextText = getAssistantText(current) + delta;
-      const next = withAssistantText(current, nextText);
-      streamingRef.current = next;
-      setStreamingMessage(next);
+      if (update.sessionUpdate === 'tool_call') {
+        const view: ToolCallView = {
+          toolCallId: update.toolCallId,
+          toolName: update.title?.split(':')[0] ?? 'tool',
+          title: update.title ?? update.toolCallId,
+          status: update.status === 'pending' ? 'pending' : 'in_progress',
+          rawInput: update.rawInput,
+          text: toolCallContentText(update.content),
+          turn: turnIndexRef.current,
+        };
+        toolCallsRef.current.set(update.toolCallId, view);
+        setToolCalls(Array.from(toolCallsRef.current.values()));
+        return;
+      }
+      if (update.sessionUpdate === 'tool_call_update') {
+        const existing = toolCallsRef.current.get(update.toolCallId);
+        if (!existing) return;
+        const next: ToolCallView = {
+          ...existing,
+          status: mapToolStatus(update.status) ?? existing.status,
+          rawOutput: update.rawOutput ?? existing.rawOutput,
+          text: update.content ? toolCallContentText(update.content) : existing.text,
+        };
+        toolCallsRef.current.set(update.toolCallId, next);
+        setToolCalls(Array.from(toolCallsRef.current.values()));
+        return;
+      }
     });
     return unsub;
   }, []);
@@ -320,6 +397,34 @@ export function useAcp() {
     };
   }, [refreshSessions]);
 
+  const refreshFeatures = useCallback(async (sessionId: string) => {
+    const runtime = ensureRuntime();
+    try {
+      await runtime.initialize;
+      const payload = await runtime.client.listFeatures(sessionId);
+      setFeatures(payload.features ?? {});
+      setFeatureDefaults(payload.defaults ?? {});
+    } catch (err) {
+      console.error('_bodhi/features/list failed:', err);
+    }
+  }, []);
+
+  const setFeature = useCallback(
+    async (key: string, value: boolean) => {
+      if (!_session) return;
+      const runtime = ensureRuntime();
+      try {
+        const payload = await runtime.client.setFeature(_session, key, value);
+        setFeatures(payload.features ?? {});
+      } catch (err) {
+        console.error('_bodhi/features/set failed:', err);
+        setError(getErrorMessage(err, 'Failed to toggle feature'));
+        await refreshFeatures(_session);
+      }
+    },
+    [refreshFeatures]
+  );
+
   const ensureSession = useCallback(async (): Promise<string> => {
     if (_session) return _session;
     if (_sessionPromise) return _sessionPromise;
@@ -333,51 +438,87 @@ export function useAcp() {
     try {
       const id = await _sessionPromise;
       setCurrentSessionId(id);
+      void refreshFeatures(id);
       return id;
     } finally {
       _sessionPromise = null;
     }
-  }, []);
+  }, [refreshFeatures]);
 
-  const loadSession = useCallback(async (sessionId: string) => {
-    const runtime = ensureRuntime();
-    setError(null);
-    setIsLoadingSession(true);
-    isReplayingRef.current = true;
-    streamingRef.current = undefined;
-    streamingMessageIdRef.current = undefined;
-    setStreamingMessage(undefined);
-    try {
-      await runtime.initialize;
-      // If auth already landed we also want to ensure models are
-      // loaded so the caller can re-select `lastModelId`.
+  // Ensure a session exists once auth lands so feature defaults are
+  // fetched before the user interacts with the feature panel. This
+  // also gives `_bodhi/features/set` a sessionId to write against.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (currentSessionId) return;
+    let cancelled = false;
+    const run = async () => {
       if (_authPromise) {
         try {
           await _authPromise;
         } catch {
-          /* handled by auth effect */
+          return;
         }
       }
-      await runtime.client.loadSession(sessionId);
-      const snapshot = await runtime.client.getSession(sessionId);
-      _session = sessionId;
-      setCurrentSessionId(sessionId);
-      setMessages((snapshot.messages ?? []) as AgentMessage[]);
-      if (snapshot.lastModelId) {
-        const match = _authModels.find(m => m.id === snapshot.lastModelId);
-        if (match) {
-          setSelectedModelState(match.id);
-          setSelectedApiFormat(match.apiFormat as ApiFormat);
-        }
+      if (cancelled) return;
+      try {
+        await ensureSession();
+      } catch (err) {
+        console.error('auto-ensureSession failed:', err);
       }
-    } catch (err) {
-      console.error('session/load failed:', err);
-      setError(getErrorMessage(err, 'Failed to load session'));
-    } finally {
-      isReplayingRef.current = false;
-      setIsLoadingSession(false);
-    }
-  }, []);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, currentSessionId, ensureSession]);
+
+  const loadSession = useCallback(
+    async (sessionId: string) => {
+      const runtime = ensureRuntime();
+      setError(null);
+      setIsLoadingSession(true);
+      isReplayingRef.current = true;
+      streamingRef.current = undefined;
+      streamingMessageIdRef.current = undefined;
+      setStreamingMessage(undefined);
+      try {
+        await runtime.initialize;
+        // If auth already landed we also want to ensure models are
+        // loaded so the caller can re-select `lastModelId`.
+        if (_authPromise) {
+          try {
+            await _authPromise;
+          } catch {
+            /* handled by auth effect */
+          }
+        }
+        await runtime.client.loadSession(sessionId);
+        const snapshot = await runtime.client.getSession(sessionId);
+        _session = sessionId;
+        setCurrentSessionId(sessionId);
+        setMessages((snapshot.messages ?? []) as AgentMessage[]);
+        void refreshFeatures(sessionId);
+        toolCallsRef.current.clear();
+        turnIndexRef.current = 0;
+        setToolCalls([]);
+        if (snapshot.lastModelId) {
+          const match = _authModels.find(m => m.id === snapshot.lastModelId);
+          if (match) {
+            setSelectedModelState(match.id);
+            setSelectedApiFormat(match.apiFormat as ApiFormat);
+          }
+        }
+      } catch (err) {
+        console.error('session/load failed:', err);
+        setError(getErrorMessage(err, 'Failed to load session'));
+      } finally {
+        isReplayingRef.current = false;
+        setIsLoadingSession(false);
+      }
+    },
+    [refreshFeatures]
+  );
 
   const sendMessage = useCallback(
     async (prompt: string) => {
@@ -398,6 +539,7 @@ export function useAcp() {
         }
       }
 
+      turnIndexRef.current += 1;
       setMessages(prev => [...prev, userMessage(prompt)]);
       streamingRef.current = undefined;
       streamingMessageIdRef.current = undefined;
@@ -443,6 +585,10 @@ export function useAcp() {
     setStreamingMessage(undefined);
     setError(null);
     setCurrentSessionId(null);
+    setFeatures({});
+    toolCallsRef.current.clear();
+    turnIndexRef.current = 0;
+    setToolCalls([]);
   }, []);
 
   const clearError = useCallback(() => {
@@ -491,6 +637,10 @@ export function useAcp() {
     currentSessionId: isAuthenticated ? currentSessionId : null,
     isLoadingSession: isAuthenticated ? isLoadingSession : false,
     volumes,
+    features: isAuthenticated ? features : EMPTY_FEATURES,
+    featureDefaults,
+    setFeature,
+    toolCalls: isAuthenticated ? toolCalls : EMPTY_TOOL_CALLS,
   };
 }
 

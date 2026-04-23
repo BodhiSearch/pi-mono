@@ -1,11 +1,12 @@
 import { Agent } from '@mariozechner/pi-agent-core';
 import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
+import type { TSchema } from '@sinclair/typebox';
 
 const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
 
 export interface InlineAgentSetModelOptions {
-  tools?: AgentTool<never>[];
+  tools?: AgentTool<TSchema>[];
   systemPrompt?: string;
 }
 

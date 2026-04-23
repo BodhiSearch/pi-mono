@@ -54,11 +54,27 @@ Indexed on `updatedAt` for picker queries.
 
 Indexed on `sessionId` for range scans.
 
-**No `schemaVersion` column.** ACP does not define one at this
-granularity and inventing one now would only complicate
-migration logic. When pi-agent-core's message shape drifts (a
-future concern, not M1), we'll add version gating in the
-milestone that needs it.
+### Table `features` (primary key `sessionId`) — M2
+
+The M2 `features` table was added by a Dexie version-2 migration in
+the same database. It carries per-session feature-toggle overrides:
+
+| column      | type                     | notes |
+| ----------- | ------------------------ | ----- |
+| `sessionId` | `string` (pk)            | Foreign-key to `sessions.id`. |
+| `flags`     | `Record<string,boolean>` | Sparse override map; unset keys fall back to `FEATURE_DEFAULTS`. |
+| `updatedAt` | `number`                 | ms since epoch; last toggle change. |
+
+`createSessionStore` is split into `openSessionDb()` +
+`createStoreFromDb()` so the worker can share a single Dexie handle
+with `createFeatureStore(db)` without double-opening the database
+(Dexie enforces one instance per tab). See
+[`./features.md`](./features.md) for the full API.
+
+**No `schemaVersion` column on the row level.** Dexie manages the
+store-level version (`1` for M1, `2` for M2). When pi-agent-core's
+message shape drifts we'll either bump the Dexie version again or
+add per-row gating in the milestone that needs it.
 
 ### Entry kinds
 

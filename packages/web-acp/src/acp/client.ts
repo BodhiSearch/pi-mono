@@ -9,15 +9,22 @@ import type {
 } from '@agentclientprotocol/sdk';
 import {
   BODHI_AUTH_METHOD_ID,
+  BODHI_FEATURES_LIST_METHOD,
+  BODHI_FEATURES_SET_METHOD,
   BODHI_GET_SESSION_METHOD,
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
+  BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
+  type BodhiFeaturesListResponse,
+  type BodhiFeaturesSetResponse,
   type BodhiGetSessionResponse,
   type BodhiListModelsResponse,
   type BodhiListSessionsResponse,
   type BodhiModelDescriptor,
   type BodhiSessionSummary,
+  type BodhiVolumeDescriptor,
+  type BodhiVolumesListResponse,
 } from './index';
 
 export type SessionUpdateListener = (notification: SessionNotification) => void;
@@ -82,6 +89,26 @@ export class AcpClient {
   async getSession(sessionId: string): Promise<BodhiGetSessionResponse> {
     const raw = await this.#conn.extMethod(BODHI_GET_SESSION_METHOD, { sessionId });
     return raw as BodhiGetSessionResponse;
+  }
+
+  async listVolumes(): Promise<BodhiVolumeDescriptor[]> {
+    const raw = await this.#conn.extMethod(BODHI_VOLUMES_LIST_METHOD, {});
+    const payload = raw as BodhiVolumesListResponse;
+    return payload.volumes ?? [];
+  }
+
+  async listFeatures(sessionId: string): Promise<BodhiFeaturesListResponse> {
+    const raw = await this.#conn.extMethod(BODHI_FEATURES_LIST_METHOD, { sessionId });
+    return raw as BodhiFeaturesListResponse;
+  }
+
+  async setFeature(
+    sessionId: string,
+    key: string,
+    value: boolean
+  ): Promise<BodhiFeaturesSetResponse> {
+    const raw = await this.#conn.extMethod(BODHI_FEATURES_SET_METHOD, { sessionId, key, value });
+    return raw as BodhiFeaturesSetResponse;
   }
 
   async prompt(sessionId: string, text: string, modelId: string): Promise<PromptResponse> {

@@ -40,7 +40,12 @@ Scope invariants:
   returns the collapsed last-turn transcript + `lastModelId` in a
   single reply, which is what the UI actually needs to rehydrate
   the React state tree. Both paths read from the same
-  `SessionStore`, so they cannot disagree.
+  `SessionStore`, so they cannot disagree. M2 adds three more
+  extension methods under the spec-blessed `_`-prefix:
+  `_bodhi/volumes/list`, `_bodhi/features/list`, and
+  `_bodhi/features/set`. The older `bodhi/*` methods keep the
+  pre-spec prefix so the M0/M1 client contracts don't churn; a
+  unified rename is tracked as a deferred cleanup item.
 - **The Bodhi constants are defined once.** `acp/index.ts` is the
   single source; `client.ts` and `agent-adapter.ts` import from it.
   `useAcp` never inlines any of the string literals.
@@ -72,6 +77,12 @@ Public surface:
 - `BODHI_GET_SESSION_METHOD = 'bodhi/getSession'` — the extension
   method id for the snapshot read consumed by `useAcp.loadSession`
   after a successful `session/load` (M1).
+- `BODHI_VOLUMES_LIST_METHOD = '_bodhi/volumes/list'` — read-only
+  introspection of the worker-side `VolumeRegistry`. Covered in
+  [`./vault.md`](./vault.md).
+- `BODHI_FEATURES_LIST_METHOD = '_bodhi/features/list'` and
+  `BODHI_FEATURES_SET_METHOD = '_bodhi/features/set'` — per-session
+  feature-toggle surface. Covered in [`./features.md`](./features.md).
 - `BodhiAuthenticateMeta = { token: string; baseUrl: string }` —
   the `_meta` shape on `authenticate`.
 - `BodhiModelDescriptor = { id: string; apiFormat: string }` —
@@ -170,6 +181,11 @@ Public surface:
   ```
 - **`cancel(sessionId)`.** `this.#conn.cancel({sessionId})`; the
   SDK dispatches this as a JSON-RPC notification.
+- **`listVolumes()` / `listFeatures(sessionId)` / `setFeature(sessionId, key, value)`.**
+  Thin wrappers over the M2 extension methods
+  (`_bodhi/volumes/list`, `_bodhi/features/list`,
+  `_bodhi/features/set`). Detail in [`./vault.md`](./vault.md) and
+  [`./features.md`](./features.md).
 - **`onSessionUpdate(listener)`.** Adds the listener to
   `#listeners`; returns an unsubscribe closure. **Not** a
   passthrough to the SDK — `ClientSideConnection` only carries

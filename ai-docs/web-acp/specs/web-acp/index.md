@@ -51,6 +51,8 @@ drill into the per-module specs:
 | [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
 | [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` — the React hook that drives the main-thread side of the ACP connection, owns the singleton worker, and surfaces chat state to `ChatDemo`. |
 | [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, and the worker-side `VolumeRegistry` (M2). |
+| [`tools.md`](./tools.md) | `src/agent/tools/` — the `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation (M2). |
+| [`features.md`](./features.md) | `src/features/`, `src/components/features/` — per-session feature-toggle store (Dexie v2 `features` table), `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). |
 
 ## Overview
 
@@ -154,6 +156,11 @@ packages/web-acp/src/
 │   └── system-prompt.ts   # composeSystemPrompt(volumes) (M2)
 ├── vault/
 │   └── fsa-handle-store.ts # idb-keyval-backed FSA handle persistence (M2)
+├── features/
+│   └── feature-store.ts   # per-session feature toggles (Dexie v2) (M2)
+├── agent/tools/
+│   ├── bash-tool.ts       # just-bash-backed `bash` AgentTool (M2)
+│   └── volume-filesystem.ts # IFileSystem adapter over ZenFS (M2)
 ├── transport/
 │   ├── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream
 │   └── volume-control.ts  # main-thread client for the volume-control channel (M2)

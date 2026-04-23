@@ -5,6 +5,7 @@ import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import SessionPicker from './SessionPicker';
 import VolumesPanel from '@/components/volumes/VolumesPanel';
+import FeaturePanel from '@/components/features/FeaturePanel';
 
 export default function ChatDemo() {
   const {
@@ -24,6 +25,10 @@ export default function ChatDemo() {
     loadSession,
     currentSessionId,
     volumes,
+    features,
+    featureDefaults,
+    setFeature,
+    toolCalls,
   } = useAcp();
 
   useEffect(() => {
@@ -44,6 +49,12 @@ export default function ChatDemo() {
     <div className="flex flex-1 min-h-0">
       <div className="flex flex-col w-64 shrink-0 border-r overflow-y-auto bg-gray-50">
         <VolumesPanel volumes={volumes} />
+        <FeaturePanel
+          features={features}
+          defaults={featureDefaults}
+          onChange={setFeature}
+          disabled={isStreaming}
+        />
         <div className="flex-1 min-h-0">
           <SessionPicker
             sessions={sessions}
@@ -58,6 +69,7 @@ export default function ChatDemo() {
           streamingMessage={streamingMessage}
           isStreaming={isStreaming}
           error={chatError}
+          toolCalls={toolCalls}
         />
         <ChatInput
           onSendMessage={sendMessage}

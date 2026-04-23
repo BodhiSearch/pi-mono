@@ -1,6 +1,8 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import MessageBubble from './MessageBubble';
+import BashToolCall from './BashToolCall';
+import type { ToolCallView } from '@/hooks/useAcp';
 import { extractTextFromAgentMessage, type AgentMessage } from '@/types/chat';
 
 interface ChatMessagesProps {
@@ -8,6 +10,7 @@ interface ChatMessagesProps {
   streamingMessage?: AgentMessage;
   isStreaming: boolean;
   error?: string | null;
+  toolCalls?: ToolCallView[];
 }
 
 export default function ChatMessages({
@@ -15,6 +18,7 @@ export default function ChatMessages({
   streamingMessage,
   isStreaming,
   error,
+  toolCalls = [],
 }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -101,6 +105,13 @@ export default function ChatMessages({
                 const turn = turnByIndex[index];
                 return <MessageBubble key={index} message={msg} turn={turn} />;
               })}
+              {toolCalls.length > 0 && (
+                <div data-testid="tool-calls-container" className="my-3 space-y-2">
+                  {toolCalls.map(call => (
+                    <BashToolCall key={call.toolCallId} call={call} />
+                  ))}
+                </div>
+              )}
               {showPending && (
                 <div data-testid="streaming-indicator" className="flex justify-start mb-4">
                   <div className="bg-gray-200 px-4 py-2 rounded-lg">

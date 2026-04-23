@@ -146,10 +146,14 @@ const agent = new Agent({
 
 - **`setModel(model, opts?)`** —
   `agent.state.model = model; agent.state.tools = opts?.tools ?? [];
-  agent.state.systemPrompt = opts?.systemPrompt ?? ''`. M2.1 adds
+  agent.state.systemPrompt = opts?.systemPrompt ?? ''`. M2.1 added
   the optional `opts` so the adapter can inject the current
-  volume-aware system prompt (and, from M2.2, the bash tool) on
-  every turn. Passing no `opts` preserves M0/M1 behaviour.
+  volume-aware system prompt; M2.2 now uses it to register the
+  `bash` tool per-turn (gated by the `bashEnabled` feature +
+  non-empty `VolumeRegistry`). Passing no `opts` preserves M0/M1
+  behaviour. See [`./tools.md`](./tools.md) for the tool-side
+  contract and [`./features.md`](./features.md) for the toggle
+  surface.
 - **`subscribe(cb)`** — passthrough to `agent.subscribe(cb)`. The
   return value is the `pi-agent-core` unsubscribe closure.
 - **`getMessages()`** — returns a **shallow copy** of

@@ -71,15 +71,32 @@ export function deriveTitle(userText: string): string {
   return `${single.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
 }
 
+/**
+ * Per-session feature toggle row stored alongside sessions. Added in
+ * M2 phase B; see `src/features/feature-store.ts` for the wrapper
+ * contract and `features.md` for the public wire shape.
+ */
+export interface FeatureRow {
+  sessionId: string;
+  flags: Record<string, boolean>;
+  updatedAt: number;
+}
+
 export class SessionStoreDb extends Dexie {
   sessions!: Table<SessionRow, string>;
   entries!: Table<SessionEntry, [string, number]>;
+  features!: Table<FeatureRow, string>;
 
   constructor(dbName: string) {
     super(dbName);
     this.version(1).stores({
       sessions: '&id, updatedAt',
       entries: '&[sessionId+seq], sessionId',
+    });
+    this.version(2).stores({
+      sessions: '&id, updatedAt',
+      entries: '&[sessionId+seq], sessionId',
+      features: '&sessionId',
     });
   }
 }
@@ -105,10 +122,13 @@ export interface CreateSessionStoreOptions {
   dbName?: string;
 }
 
-export function createSessionStore(options: CreateSessionStoreOptions = {}): SessionStore {
+export function openSessionDb(options: CreateSessionStoreOptions = {}): SessionStoreDb {
   const dbName = options.dbName ?? 'web-acp';
-  const db = new SessionStoreDb(dbName);
-  return createStoreFromDb(db);
+  return new SessionStoreDb(dbName);
+}
+
+export function createSessionStore(options: CreateSessionStoreOptions = {}): SessionStore {
+  return createStoreFromDb(openSessionDb(options));
 }
 
 export function createStoreFromDb(db: SessionStoreDb): SessionStore {

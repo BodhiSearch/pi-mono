@@ -3,11 +3,12 @@ import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import { AcpAgentAdapter } from '@/acp/agent-adapter';
 import { BodhiProvider } from './bodhi-provider';
 import { createInlineAgent } from './inline-agent';
-import { createSessionStore } from './session-store';
-import { createStreamFn } from './stream-fn';
+import { createStoreFromDb, openSessionDb } from './session-store';
+import { createStreamFn, type StreamOptionOverrides } from './stream-fn';
 import { createMessagePortStream } from '@/transport/worker-stream';
 import { attachVolumeChannel } from './volume-channel';
 import { VolumeRegistry, type VolumeInit } from './volume-mount';
+import { createFeatureStore } from '@/features/feature-store';
 
 export interface AgentWorkerInitMessage {
   type: 'init';
@@ -36,8 +37,24 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
   const { readable, writable } = createMessagePortStream(port);
   const stream = ndJsonStream(writable, readable);
   const provider = new BodhiProvider();
-  const inline = createInlineAgent(createStreamFn(provider));
-  const store = createSessionStore();
+  // Per-turn override holder threaded between the adapter and the
+  // stream function. The adapter pushes `toolChoice` into this bag
+  // before each `prompt` turn (DEV-only forceToolCall feature). The
+  // consume callback clears the bag after the first LLM call so the
+  // pi-agent-core loop only forces a tool call on the initial request,
+  // not on every iteration (which would cause an infinite tool-call
+  // loop).
+  const streamOverrides: { current: StreamOptionOverrides } = { current: {} };
+  const inline = createInlineAgent(
+    createStreamFn(provider, () => {
+      const snapshot = streamOverrides.current;
+      streamOverrides.current = {};
+      return snapshot;
+    })
+  );
+  const db = openSessionDb();
+  const store = createStoreFromDb(db);
+  const features = createFeatureStore(db);
   const registry = new VolumeRegistry();
   attachVolumeChannel(scope, registry);
   // Mount any seeded volumes before the ACP connection starts taking
@@ -45,7 +62,7 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
   // `/mnt/<name>` entries.
   await registry.mountAll(volumes);
   const _connection = new AgentSideConnection(
-    conn => new AcpAgentAdapter(conn, inline, provider, store, registry),
+    conn => new AcpAgentAdapter(conn, inline, provider, store, registry, features, streamOverrides),
     stream
   );
   void _connection;
