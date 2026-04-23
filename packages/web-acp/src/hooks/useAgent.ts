@@ -1,41 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
-import { streamSimple } from '@mariozechner/pi-ai';
-import { Agent } from '@mariozechner/pi-agent-core';
-import type { AgentEvent, AgentMessage, StreamFn } from '@mariozechner/pi-agent-core';
-import { getErrorMessage } from '@/lib/utils';
-import { buildModel, getServerUrlOrThrow } from '@/lib/agent-model';
-import { fetchBodhiModels, type BodhiModelInfo } from '@/lib/bodhi-models';
+import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
+import type { Api, Model } from '@mariozechner/pi-ai';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
-
-const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
+import { getErrorMessage } from '@/lib/utils';
+import { getServerUrlOrThrow } from '@/lib/agent-model';
+import type { BodhiModelInfo } from '@/lib/bodhi-models';
+import { BODHI_PROVIDER_TAG, BodhiProvider, apiFormatOfModel } from '@/agent/bodhi-provider';
+import { createStreamFn } from '@/agent/stream-fn';
+import { createInlineAgent, type InlineAgent } from '@/agent/inline-agent';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
 
-let _agent: Agent | null = null;
+// Singletons kept at module scope so the agent survives across
+// `useBodhi()` re-renders in StrictMode.
+let _provider: BodhiProvider | null = null;
+let _agent: InlineAgent | null = null;
 let _agentUnsub: (() => void) | null = null;
-let _tokenGetter: () => string | null = () => null;
 
-function getStreamFn(): StreamFn {
-  return (model, context, options) => {
-    const token = _tokenGetter();
-    const headers = token
-      ? { ...model.headers, Authorization: `Bearer ${token}`, 'x-api-key': token }
-      : model.headers;
-    const patchedModel = headers !== model.headers ? { ...model, headers } : model;
-    return streamSimple(patchedModel, context, options);
-  };
+function getProvider(): BodhiProvider {
+  if (!_provider) _provider = new BodhiProvider();
+  return _provider;
 }
 
-function getOrCreateAgent(): Agent {
+function getAgent(): InlineAgent {
   if (!_agent) {
-    _agent = new Agent({
-      streamFn: getStreamFn(),
-      getApiKey: () => SENTINEL_API_KEY,
-    });
+    _agent = createInlineAgent(createStreamFn(getProvider()));
   }
   return _agent;
+}
+
+function toBodhiModelInfo(model: Model<Api>): BodhiModelInfo {
+  return { id: model.id, apiFormat: apiFormatOfModel(model) };
 }
 
 export function useAgent() {
@@ -45,21 +42,30 @@ export function useAgent() {
   const [streamingMessage, setStreamingMessage] = useState<AgentMessage | undefined>(undefined);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [models, setModels] = useState<BodhiModelInfo[]>([]);
+  const [models, setModels] = useState<Model<Api>[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
 
-  const authTokenRef = useRef<string | null>(auth.accessToken);
   const isLoadingModelsRef = useRef(false);
 
+  // Rotate the Bodhi token into the provider whenever it changes.
   useEffect(() => {
-    authTokenRef.current = auth.accessToken;
-    _tokenGetter = () => authTokenRef.current;
-  }, [auth.accessToken]);
+    const provider = getProvider();
+    const serverUrl = isReady ? getServerUrlOrThrow(client.getState()) : undefined;
+    if (auth.accessToken && serverUrl) {
+      provider.setAuthToken({
+        provider: BODHI_PROVIDER_TAG,
+        token: auth.accessToken,
+        baseUrl: serverUrl,
+      });
+    } else {
+      provider.setAuthToken(null);
+    }
+  }, [auth.accessToken, client, isReady]);
 
   useEffect(() => {
-    const agent = getOrCreateAgent();
+    const agent = getAgent();
     _agentUnsub?.();
     _agentUnsub = agent.subscribe((event: AgentEvent) => {
       switch (event.type) {
@@ -68,22 +74,23 @@ export function useAgent() {
           setError(null);
           break;
         case 'message_update':
-          setMessages([...agent.state.messages]);
+          setMessages(agent.getMessages());
           setStreamingMessage(event.message);
           break;
         case 'message_end':
-          setMessages([...agent.state.messages]);
+          setMessages(agent.getMessages());
           setStreamingMessage(undefined);
           break;
         case 'turn_end':
-          setMessages([...agent.state.messages]);
+          setMessages(agent.getMessages());
           break;
         case 'agent_end':
-          setMessages([...agent.state.messages]);
+          setMessages(agent.getMessages());
           setStreamingMessage(undefined);
           setIsStreaming(false);
-          if (agent.state.errorMessage) {
-            setError(agent.state.errorMessage);
+          {
+            const errMsg = agent.getErrorMessage();
+            if (errMsg) setError(errMsg);
           }
           break;
       }
@@ -104,11 +111,12 @@ export function useAgent() {
     setIsLoadingModels(true);
     setError(null);
     try {
-      const list = await fetchBodhiModels(client);
+      const list = await getProvider().getAvailableModels();
       setModels(list);
       if (list.length > 0 && !selectedModel) {
-        setSelectedModelState(list[0].id);
-        setSelectedApiFormat(list[0].apiFormat);
+        const first = list[0];
+        setSelectedModelState(first.id);
+        setSelectedApiFormat(apiFormatOfModel(first));
       }
     } catch (err) {
       console.error('Failed to fetch models:', err);
@@ -117,7 +125,7 @@ export function useAgent() {
       setIsLoadingModels(false);
       isLoadingModelsRef.current = false;
     }
-  }, [client, isAuthenticated, selectedModel]);
+  }, [isAuthenticated, selectedModel]);
 
   useEffect(() => {
     if (isReady && isAuthenticated && models.length === 0 && !isLoadingModelsRef.current) {
@@ -126,9 +134,7 @@ export function useAgent() {
   }, [isReady, isAuthenticated, models.length, loadModels]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      _agent?.abort();
-    }
+    if (!isAuthenticated) _agent?.cancel();
   }, [isAuthenticated]);
 
   const setSelectedModel = useCallback((id: string, fmt: ApiFormat) => {
@@ -144,11 +150,14 @@ export function useAgent() {
       }
       setError(null);
 
-      const serverUrl = getServerUrlOrThrow(client.getState());
-      const agent = getOrCreateAgent();
-      agent.state.model = buildModel(selectedModel, serverUrl, selectedApiFormat);
-      agent.state.tools = [];
-      agent.state.systemPrompt = '';
+      const match = models.find(m => m.id === selectedModel);
+      if (!match) {
+        setError('Selected model is not in the current catalog');
+        return;
+      }
+
+      const agent = getAgent();
+      agent.setModel(match);
 
       try {
         await agent.prompt(prompt);
@@ -158,16 +167,15 @@ export function useAgent() {
         setError(getErrorMessage(err, 'Failed to send message'));
       }
     },
-    [client, selectedModel, selectedApiFormat]
+    [models, selectedModel]
   );
 
   const stop = useCallback(() => {
-    _agent?.abort();
+    _agent?.cancel();
   }, []);
 
   const clearMessages = useCallback(() => {
-    _agent?.abort();
-    if (_agent) _agent.state.messages = [];
+    _agent?.clearMessages();
     setMessages([]);
     setStreamingMessage(undefined);
     setError(null);
@@ -176,6 +184,8 @@ export function useAgent() {
   const clearError = useCallback(() => {
     setError(null);
   }, []);
+
+  const displayModels = models.map(toBodhiModelInfo);
 
   return {
     messages: isAuthenticated ? messages : EMPTY_MESSAGES,
@@ -189,7 +199,7 @@ export function useAgent() {
     clearMessages,
     error: isAuthenticated ? error : null,
     clearError,
-    models: isAuthenticated ? models : EMPTY_MODELS,
+    models: isAuthenticated ? displayModels : EMPTY_MODELS,
     isLoadingModels: isAuthenticated ? isLoadingModels : false,
     loadModels,
   };
