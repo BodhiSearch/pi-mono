@@ -20,7 +20,8 @@ export default function ChatDemo() {
     isLoadingModels,
     loadModels,
     sessions,
-    refreshSessions,
+    loadSession,
+    currentSessionId,
   } = useAcp();
 
   useEffect(() => {
@@ -32,15 +33,18 @@ export default function ChatDemo() {
     }
   }, [chatError, clearChatError]);
 
-  const handleSelectSession = (_id: string) => {
-    // Phase C wires this to session/load; for now the picker is
-    // informational so a reload demonstrates persistence.
-    void refreshSessions();
+  const handleSelectSession = (id: string) => {
+    if (id === currentSessionId) return;
+    void loadSession(id);
   };
 
   return (
     <div className="flex flex-1 min-h-0">
-      <SessionPicker sessions={sessions} activeSessionId={null} onSelect={handleSelectSession} />
+      <SessionPicker
+        sessions={sessions}
+        activeSessionId={currentSessionId}
+        onSelect={handleSelectSession}
+      />
       <div className="flex flex-col flex-1 min-w-0">
         <ChatMessages
           messages={messages}

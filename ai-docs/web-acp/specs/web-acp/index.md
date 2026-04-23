@@ -60,9 +60,12 @@ drill into the per-module specs:
    `@agentclientprotocol/sdk@0.17.0`'s `ClientSideConnection` +
    `AgentSideConnection` + `ndJsonStream`.
 3. Announce one auth method (`bodhi-token`) and the extension
-   methods (`bodhi/listModels`, `bodhi/listSessions`); everything
-   Bodhi-specific rides through ACP's standard `_meta` / `extMethod`
-   escape hatches.
+   methods (`bodhi/listModels`, `bodhi/listSessions`,
+   `bodhi/getSession`); everything Bodhi-specific rides through
+   ACP's standard `_meta` / `extMethod` escape hatches. The stable
+   `session/load` request is advertised via
+   `agentCapabilities.loadSession = true` so clients can resume
+   persisted sessions using the ACP-native path.
 4. Forward the Bodhi access token from `@bodhiapp/bodhi-js-react`
    to the worker on every auth-state change.
 5. Fetch the Bodhi model catalog from inside the worker; surface
@@ -75,7 +78,7 @@ drill into the per-module specs:
 
 ### Scope out (deferred)
 
-- Session persistence, reload, list, switch (**M1**).
+- Session rename / delete UI (M1.x).
 - Vault mount (FSA + ZenFS + dev seed) (**M2.1**).
 - `fs/*` delegation and the built-in `read/write/edit/ls/glob/grep`
   tool surface (**M2.2**).
@@ -154,10 +157,13 @@ boundary at extraction time (M7) are:
 
 - `src/acp/index.ts` — `BODHI_AUTH_METHOD_ID`,
   `BODHI_LIST_MODELS_METHOD`, `BODHI_LIST_SESSIONS_METHOD`,
-  `BodhiAuthenticateMeta`, `BodhiModelDescriptor`,
-  `BodhiListModelsResponse`, `BodhiSessionSummary`,
-  `BodhiListSessionsResponse`, plus re-exported SDK types. This
-  is the contract every ACP client of the worker consumes.
+  `BODHI_GET_SESSION_METHOD`, `BodhiAuthenticateMeta`,
+  `BodhiModelDescriptor`, `BodhiListModelsResponse`,
+  `BodhiSessionSummary`, `BodhiListSessionsResponse`,
+  `BodhiGetSessionRequest`, `BodhiGetSessionResponse`, plus
+  re-exported SDK types (including `LoadSessionRequest` /
+  `LoadSessionResponse`). This is the contract every ACP client
+  of the worker consumes.
 - `src/acp/client.ts` — `AcpClient`.
 - `src/acp/agent-adapter.ts` — `AcpAgentAdapter`.
 - `src/agent/inline-agent.ts` — `InlineAgent`, `createInlineAgent`.

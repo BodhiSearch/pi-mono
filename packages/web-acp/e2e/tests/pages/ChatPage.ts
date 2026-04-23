@@ -22,6 +22,7 @@ export class ChatPage {
     sessionPicker: '[data-testid="session-picker"]',
     sessionRow: (id: string) => `[data-testid="session-row-${id}"]`,
     sessionPickerEmpty: '[data-testid="session-picker-empty"]',
+    newChatButton: '[data-testid="btn-new-chat"]',
   };
 
   async waitServerReady(bodhiServerUrl: string): Promise<void> {
@@ -145,5 +146,30 @@ export class ChatPage {
 
   async getSelectedModel(): Promise<string> {
     return (await this.page.locator(this.selectors.modelSelector).textContent())?.trim() ?? '';
+  }
+
+  async newChat(): Promise<void> {
+    await this.page.locator(this.selectors.newChatButton).click();
+  }
+
+  async clickSession(sessionId: string): Promise<void> {
+    await this.page.locator(this.selectors.sessionRow(sessionId)).click();
+    await this.page
+      .locator(`${this.selectors.sessionRow(sessionId)}[data-teststate="active"]`)
+      .waitFor();
+  }
+
+  async waitForAssistantTurnOnRestoredSession(): Promise<void> {
+    // After `session/load`, the transcript is restored in one shot from
+    // the `bodhi/getSession` snapshot, so turn indices are recomputed
+    // from the full message list. Wait for the first assistant message
+    // to be present.
+    await this.page.locator(this.selectors.message(0, 'assistant')).waitFor();
+  }
+
+  async waitForActiveSession(sessionId: string): Promise<void> {
+    await this.page
+      .locator(`${this.selectors.sessionRow(sessionId)}[data-teststate="active"]`)
+      .waitFor();
   }
 }

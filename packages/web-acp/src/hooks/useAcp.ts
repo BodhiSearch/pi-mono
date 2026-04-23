@@ -119,10 +119,17 @@ export function useAcp() {
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
   const [sessions, setSessions] = useState<BodhiSessionSummary[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
 
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
   const loadingModelsRef = useRef(false);
+  // When `session/load` is replaying stored notifications back at us, we
+  // ignore them in the live stream handler — the UI rehydrates from
+  // the `bodhi/getSession` snapshot instead, which is already the
+  // collapsed transcript and has a defined `lastModelId`.
+  const isReplayingRef = useRef(false);
 
   // Worker + client stay alive across re-renders; initialize once.
   useEffect(() => {
@@ -133,6 +140,7 @@ export function useAcp() {
   useEffect(() => {
     const runtime = ensureRuntime();
     const unsub = runtime.client.onSessionUpdate(notification => {
+      if (isReplayingRef.current) return;
       const update = notification.update;
       if (update.sessionUpdate !== 'agent_message_chunk') return;
       const content = update.content;
@@ -292,9 +300,51 @@ export function useAcp() {
       return _session;
     })();
     try {
-      return await _sessionPromise;
+      const id = await _sessionPromise;
+      setCurrentSessionId(id);
+      return id;
     } finally {
       _sessionPromise = null;
+    }
+  }, []);
+
+  const loadSession = useCallback(async (sessionId: string) => {
+    const runtime = ensureRuntime();
+    setError(null);
+    setIsLoadingSession(true);
+    isReplayingRef.current = true;
+    streamingRef.current = undefined;
+    streamingMessageIdRef.current = undefined;
+    setStreamingMessage(undefined);
+    try {
+      await runtime.initialize;
+      // If auth already landed we also want to ensure models are
+      // loaded so the caller can re-select `lastModelId`.
+      if (_authPromise) {
+        try {
+          await _authPromise;
+        } catch {
+          /* handled by auth effect */
+        }
+      }
+      await runtime.client.loadSession(sessionId);
+      const snapshot = await runtime.client.getSession(sessionId);
+      _session = sessionId;
+      setCurrentSessionId(sessionId);
+      setMessages((snapshot.messages ?? []) as AgentMessage[]);
+      if (snapshot.lastModelId) {
+        const match = _authModels.find(m => m.id === snapshot.lastModelId);
+        if (match) {
+          setSelectedModelState(match.id);
+          setSelectedApiFormat(match.apiFormat as ApiFormat);
+        }
+      }
+    } catch (err) {
+      console.error('session/load failed:', err);
+      setError(getErrorMessage(err, 'Failed to load session'));
+    } finally {
+      isReplayingRef.current = false;
+      setIsLoadingSession(false);
     }
   }, []);
 
@@ -361,6 +411,7 @@ export function useAcp() {
     setMessages([]);
     setStreamingMessage(undefined);
     setError(null);
+    setCurrentSessionId(null);
   }, []);
 
   const clearError = useCallback(() => {
@@ -368,11 +419,22 @@ export function useAcp() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated && _session) {
+    if (isAuthenticated || !_session) return;
+    let cancelled = false;
+    const run = async () => {
       const runtime = ensureRuntime();
-      void runtime.client.cancel(_session);
+      try {
+        await runtime.client.cancel(_session!);
+      } catch {
+        /* swallow — we're tearing down anyway */
+      }
       _session = null;
-    }
+      if (!cancelled) setCurrentSessionId(null);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated]);
 
   const displayModels = models.map(toBodhiModelInfo);
@@ -394,5 +456,8 @@ export function useAcp() {
     loadModels,
     sessions: isAuthenticated ? sessions : EMPTY_SESSIONS,
     refreshSessions,
+    loadSession,
+    currentSessionId: isAuthenticated ? currentSessionId : null,
+    isLoadingSession: isAuthenticated ? isLoadingSession : false,
   };
 }

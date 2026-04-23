@@ -159,9 +159,21 @@ Call sites (Phase A):
 Call sites (Phase B/C):
 
 - `extMethod('bodhi/listSessions')` → `store.listSummaries()`.
+- `extMethod('bodhi/getSession')` → `store.readEntries(sessionId)`,
+  returning the last turn's `finalMessages` + `lastModelId` + `title`
+  so the main thread can rehydrate the transcript and model selector
+  in one call, without aggregating stream chunks.
 - `loadSession(sessionId)` → `store.readEntries(sessionId)` →
   replay as `conn.sessionUpdate(...)`; then
-  `inline.restoreMessages(lastTurn.finalMessages)`.
+  `inline.restoreMessages(lastTurn.finalMessages)` and set
+  `#activeInlineSessionId = sessionId`.
+- `prompt` on a session whose state isn't loaded into the inline
+  runtime (e.g. client raced before `session/load`) →
+  `#rehydrateInlineFromStore(sessionId)` first. Prevents splicing
+  another session's context into the current turn's `finalMessages`.
+- `newSession` additionally calls `inline.clearMessages()` and sets
+  `#activeInlineSessionId = sessionId`, so a "New chat" immediately
+  after a previous session does not inherit the old messages.
 
 ### `InlineAgent` (worker side)
 

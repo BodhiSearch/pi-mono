@@ -2,15 +2,18 @@ import type {
   Client,
   ClientSideConnection,
   InitializeResponse,
+  LoadSessionResponse,
   NewSessionResponse,
   PromptResponse,
   SessionNotification,
 } from '@agentclientprotocol/sdk';
 import {
   BODHI_AUTH_METHOD_ID,
+  BODHI_GET_SESSION_METHOD,
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
   type BodhiAuthenticateMeta,
+  type BodhiGetSessionResponse,
   type BodhiListModelsResponse,
   type BodhiListSessionsResponse,
   type BodhiModelDescriptor,
@@ -70,6 +73,15 @@ export class AcpClient {
 
   async newSession(): Promise<NewSessionResponse> {
     return this.#conn.newSession({ cwd: '/', mcpServers: [] });
+  }
+
+  async loadSession(sessionId: string): Promise<LoadSessionResponse> {
+    return this.#conn.loadSession({ sessionId, cwd: '/', mcpServers: [] });
+  }
+
+  async getSession(sessionId: string): Promise<BodhiGetSessionResponse> {
+    const raw = await this.#conn.extMethod(BODHI_GET_SESSION_METHOD, { sessionId });
+    return raw as BodhiGetSessionResponse;
   }
 
   async prompt(sessionId: string, text: string, modelId: string): Promise<PromptResponse> {

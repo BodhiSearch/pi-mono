@@ -131,7 +131,7 @@ the main thread is awaiting the response, and the adapter's
   {
     protocolVersion: 1,
     agentCapabilities: {
-      loadSession: false,
+      loadSession: true,        // true whenever a SessionStore is wired into the adapter (always, in production)
       promptCapabilities: { image: false, audio: false, embeddedContext: false }
     },
     authMethods: [{
@@ -226,6 +226,53 @@ runs whenever any of these change.
 At end of Phase 2, the worker holds a valid Bodhi credential and
 a cached, provider-flattened model catalog; the main thread holds
 the `{id, apiFormat}` shortlist and has a default selection.
+
+## Phase 2.5 — Session picker + resume (M1)
+
+Two parallel pathways layer onto the post-auth steady state once
+the `SessionStore` is wired in (see [`./sessions.md`](./sessions.md)).
+
+### 2.5a — Picker feed
+
+1. `useAcp` owns a `refreshSessions` callback that calls
+   `AcpClient.listSessions()` whenever it's invoked.
+2. A `useEffect([refreshSessions])` fires it once after auth so
+   the picker renders with fresh rows.
+3. `sendMessage` additionally fires `refreshSessions()` after a
+   clean `end_turn` so the picker shows new sessions and bumped
+   `updatedAt` ordering without a manual refresh.
+4. `AcpClient.listSessions` translates to
+   `conn.extMethod('bodhi/listSessions', {})` which the adapter
+   serves from `SessionStore.listSummaries()`.
+
+### 2.5b — Resume
+
+1. The user clicks a row in `SessionPicker`.
+2. `ChatDemo.handleSelectSession` calls `useAcp.loadSession(id)`.
+3. `useAcp.loadSession` flips `isReplayingRef = true` so the
+   live `session/update` handler ignores replay deltas, then:
+   - `await runtime.client.loadSession(sessionId)` — the stable
+     ACP request. The adapter re-emits every stored
+     `SessionNotification` via `conn.sessionUpdate(...)` and
+     seeds `InlineAgent` via `restoreMessages`.
+   - `await runtime.client.getSession(sessionId)` — the
+     Bodhi-extension snapshot. Returns the last turn's
+     `finalMessages`, `lastModelId`, and `title`.
+4. The hook sets `_session = sessionId`,
+   `setCurrentSessionId(sessionId)`,
+   `setMessages(snapshot.messages)`, and — if `lastModelId`
+   matches a catalog entry — updates `selectedModel` +
+   `selectedApiFormat`.
+5. `finally`: clears `isReplayingRef` and `isLoadingSession`.
+6. Subsequent `sendMessage` calls find `_session` already set
+   and skip `session/new`; the adapter's
+   `#activeInlineSessionId` already equals the loaded id, so
+   the mismatch rehydration in `prompt` is a no-op.
+
+At end of Phase 2.5, the transcript in the UI matches what the
+user last saw for that session, the model selector points at the
+model that was last used for that session, and follow-up prompts
+use the restored pi-agent-core context.
 
 ## Phase 3 — First prompt
 

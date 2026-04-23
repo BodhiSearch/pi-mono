@@ -54,6 +54,7 @@ export default function ChatInput({
       <div className="max-w-4xl mx-auto">
         <div className="grid grid-cols-[auto_1fr_auto] grid-rows-[1fr_auto] gap-2 p-3 bg-white border border-gray-200 rounded-3xl shadow-sm">
           <Button
+            data-testid="btn-new-chat"
             onClick={handleNewChat}
             variant="ghost"
             size="icon"

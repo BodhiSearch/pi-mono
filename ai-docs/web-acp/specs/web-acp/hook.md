@@ -34,6 +34,10 @@ Responsibilities:
 7. Keep the picker feed (`sessions: BodhiSessionSummary[]`) in
    sync with the worker's `SessionStore` by calling
    `bodhi/listSessions` on auth and after every completed turn.
+8. Resume a persisted session via `loadSession(id)`, which calls
+   the stable `session/load` request and then reads the
+   collapsed snapshot via `bodhi/getSession` to restore both
+   transcript and selected model.
 
 Non-responsibilities:
 
@@ -116,6 +120,14 @@ Key design notes:
 - `sessions: BodhiSessionSummary[]` — the picker feed (M1).
   Populated from `bodhi/listSessions` on auth and after every
   completed turn. Empty array when unauthenticated.
+- `currentSessionId: string | null` — the id of the session the
+  UI considers "active" (matches `_session`). Set by
+  `ensureSession` (first prompt) and `loadSession` (picker
+  click); cleared by `clearMessages` and sign-out. Drives the
+  picker's active-row styling.
+- `isLoadingSession: boolean` — true between the user clicking
+  a session row and the transcript being rehydrated. Lets the
+  UI show a spinner / disable the input during replay.
 
 ### Refs
 
@@ -132,6 +144,12 @@ Key design notes:
 - `loadingModelsRef: useRef(false)` — guards against concurrent
   `loadModels()` calls (e.g. the user clicks the refresh button
   twice in a row).
+- `isReplayingRef: useRef(false)` — flipped on while
+  `session/load` is streaming persisted notifications back.
+  The `session/update` listener early-returns when this ref is
+  true, so replay deltas do not clobber the transcript state —
+  the `bodhi/getSession` snapshot path owns the rehydration
+  instead, and speaks `AgentMessage`s directly.
 
 ### Effects
 
@@ -210,6 +228,27 @@ Key design notes:
   `AcpClient.listSessions()`. Store / transport errors are
   logged but not surfaced to the user — a stale picker is
   better than a toast.
+- **`loadSession(sessionId)`.** The resume pathway:
+  1. Set `isLoadingSession = true`, `isReplayingRef = true`,
+     clear streaming state.
+  2. Await `runtime.initialize`; if an `_authPromise` is in
+     flight, await it so models are loaded before we try to
+     match `lastModelId`.
+  3. Call `runtime.client.loadSession(sessionId)` — the agent
+     replays persisted notifications and calls
+     `InlineAgent.restoreMessages`.
+  4. Call `runtime.client.getSession(sessionId)` to fetch the
+     collapsed snapshot (`messages`, `lastModelId`, `title`).
+  5. Set module `_session = sessionId`, `setCurrentSessionId`,
+     `setMessages(snapshot.messages)`.
+  6. If `lastModelId` matches a descriptor in `_authModels`,
+     update `selectedModel` + `selectedApiFormat`. Missing
+     matches leave the current selection alone (the model may
+     have been removed from the catalog since the turn ran).
+  7. `finally`: clear `isReplayingRef` and
+     `isLoadingSession`. Errors are toasted and do not corrupt
+     the existing chat state (React `setMessages` is only
+     called on the success path).
 - **`stop()`.** No-op if `_session` is null. Otherwise fires
   `client.cancel(_session)` and does not await — cancellation
   is a notification in ACP and a best-effort operation on our
@@ -240,6 +279,9 @@ Key design notes:
   loadModels: () => Promise<void>;
   sessions: BodhiSessionSummary[];
   refreshSessions: () => Promise<void>;
+  loadSession: (sessionId: string) => Promise<void>;
+  currentSessionId: string | null;
+  isLoadingSession: boolean;
 }
 ```
 
@@ -259,10 +301,11 @@ the underlying state clear.
   lives in memory until the next `authenticate` (which calls
   `inline.clearMessages`); acceptable because `session/load`
   always reseeds via `InlineAgent.restoreMessages`.
-- **Single live session in `_session`.** `_session` is a
-  scalar; the picker does not yet rebind it on click. M1
-  phase C wires `session/load` + switches `_session` to the
-  loaded id.
+- **Single live session in `_session`.** `_session` is still a
+  scalar, but the picker now rebinds it on click via
+  `loadSession`. Multi-session concurrency (e.g. streaming in
+  one tab while inspecting another) is out of scope until a
+  later milestone adds per-session state dictionaries.
 - **No tool-call UI.** `sessionUpdate.update.sessionUpdate`
   values other than `agent_message_chunk` are silently ignored.
 - **No progressive catalog update.** The auth effect fetches

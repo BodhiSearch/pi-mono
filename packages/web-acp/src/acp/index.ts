@@ -8,6 +8,8 @@ export type {
   CancelNotification,
   InitializeRequest,
   InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -19,6 +21,7 @@ export type {
 export const BODHI_AUTH_METHOD_ID = 'bodhi-token';
 export const BODHI_LIST_MODELS_METHOD = 'bodhi/listModels';
 export const BODHI_LIST_SESSIONS_METHOD = 'bodhi/listSessions';
+export const BODHI_GET_SESSION_METHOD = 'bodhi/getSession';
 
 export interface BodhiAuthenticateMeta {
   token: string;
@@ -51,4 +54,22 @@ export interface BodhiSessionSummary {
 
 export interface BodhiListSessionsResponse extends Record<string, unknown> {
   sessions: BodhiSessionSummary[];
+}
+
+/**
+ * Snapshot of a session's UI-ready state — the condensed view the
+ * client needs after `session/load` to rebuild the transcript and
+ * restore model selection without having to aggregate streamed
+ * chunks itself. Sourced from the last `turn` entry in the session
+ * store (which records the full conversation after each turn).
+ */
+export interface BodhiGetSessionRequest extends Record<string, unknown> {
+  sessionId: string;
+}
+
+export interface BodhiGetSessionResponse extends Record<string, unknown> {
+  sessionId: string;
+  messages: unknown[];
+  lastModelId: string | null;
+  title: string | null;
 }

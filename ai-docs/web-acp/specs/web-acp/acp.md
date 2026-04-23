@@ -12,8 +12,9 @@ Bodhi-specific extensions layered on top of the
 
 - **`index.ts`** — SDK re-exports + the Bodhi-specific constants
   (`BODHI_AUTH_METHOD_ID`, `BODHI_LIST_MODELS_METHOD`,
-  `BODHI_LIST_SESSIONS_METHOD`) + the `_meta` shapes that travel
-  alongside ACP's standard payloads.
+  `BODHI_LIST_SESSIONS_METHOD`, `BODHI_GET_SESSION_METHOD`) +
+  the `_meta` shapes that travel alongside ACP's standard
+  payloads.
 - **`client.ts`** — `AcpClient`, a thin wrapper over
   `ClientSideConnection` that `useAcp` consumes on the main
   thread.
@@ -25,14 +26,21 @@ Scope invariants:
 
 - **ACP is the only wire protocol.** The adapter's deviations
   from stock ACP are the `bodhi-token` auth method (advertised via
-  the standard `authMethods` response array) and the two extension
-  methods `bodhi/listModels` + `bodhi/listSessions` (served via
-  `Agent.extMethod`, a standard SDK escape hatch). Session-scoped
-  `_meta` on `session/prompt` carries the selected model id.
-  `bodhi/listSessions` is used in preference to the upstream
-  `session/list` because the latter lives under the SDK's
-  `schema.unstable.json` surface; this repo only consumes the
-  stable schema (see [`./index.md`](./index.md)).
+  the standard `authMethods` response array) and the three
+  extension methods `bodhi/listModels` + `bodhi/listSessions` +
+  `bodhi/getSession` (served via `Agent.extMethod`, a standard SDK
+  escape hatch). Session-scoped `_meta` on `session/prompt`
+  carries the selected model id. `bodhi/listSessions` is used in
+  preference to the upstream `session/list` because the latter
+  lives under the SDK's `schema.unstable.json` surface; this repo
+  only consumes the stable schema (see [`./index.md`](./index.md)).
+  `bodhi/getSession` is a condensed "snapshot" sibling to the
+  stable `session/load` request — `session/load` streams stored
+  notifications back verbatim (per ACP) while `bodhi/getSession`
+  returns the collapsed last-turn transcript + `lastModelId` in a
+  single reply, which is what the UI actually needs to rehydrate
+  the React state tree. Both paths read from the same
+  `SessionStore`, so they cannot disagree.
 - **The Bodhi constants are defined once.** `acp/index.ts` is the
   single source; `client.ts` and `agent-adapter.ts` import from it.
   `useAcp` never inlines any of the string literals.
@@ -61,6 +69,9 @@ Public surface:
   method id consumed by `conn.extMethod(...)`.
 - `BODHI_LIST_SESSIONS_METHOD = 'bodhi/listSessions'` — the
   extension method id for picker feed (M1).
+- `BODHI_GET_SESSION_METHOD = 'bodhi/getSession'` — the extension
+  method id for the snapshot read consumed by `useAcp.loadSession`
+  after a successful `session/load` (M1).
 - `BodhiAuthenticateMeta = { token: string; baseUrl: string }` —
   the `_meta` shape on `authenticate`.
 - `BodhiModelDescriptor = { id: string; apiFormat: string }` —
@@ -77,6 +88,14 @@ Public surface:
 - `BodhiListSessionsResponse extends Record<string, unknown>` with
   `sessions: BodhiSessionSummary[]` — return shape of
   `bodhi/listSessions`.
+- `BodhiGetSessionRequest extends Record<string, unknown>` with
+  `sessionId: string` — params shape of `bodhi/getSession`.
+- `BodhiGetSessionResponse extends Record<string, unknown>` with
+  `sessionId, messages: unknown[], lastModelId: string | null,
+  title: string | null` — return shape of `bodhi/getSession`.
+  `messages` is typed as `unknown[]` on the wire because the
+  canonical shape is `pi-agent-core`'s `AgentMessage[]`, which is
+  a moving internal type; the client casts on receipt.
 
 ### `acp/client.ts`
 
@@ -124,6 +143,18 @@ Public surface:
   ```
   Returns picker-ready rows ordered by `updatedAt DESC` (the
   adapter delegates to `SessionStore.listSummaries`).
+- **`loadSession(sessionId)`.** Calls
+  `this.#conn.loadSession({sessionId, cwd: '/', mcpServers: []})`
+  — the stable SDK method. The agent replays stored
+  `session/update` notifications verbatim during this call; the
+  hook silences the live handler via an `isReplayingRef` so
+  those deltas don't touch the UI (the snapshot path does the
+  rehydration instead).
+- **`getSession(sessionId)`.** `return await
+  this.#conn.extMethod(BODHI_GET_SESSION_METHOD, {sessionId}) as
+  BodhiGetSessionResponse`. Used immediately after
+  `loadSession` by `useAcp` to obtain the last turn's
+  `finalMessages` + `lastModelId` + `title` in one hop.
 - **`newSession()`.** `return this.#conn.newSession({cwd: '/',
   mcpServers: []})`. `cwd` and `mcpServers` are stubs — M0's
   adapter ignores both. They're present because the SDK types
@@ -187,6 +218,15 @@ values for request/response.
   resolve `_meta.bodhi.modelId`.
 - `#cancelled = false` — per-turn flag set by `cancel`, read by
   `prompt`.
+- `#activeInlineSessionId: string | null = null` — identity of the
+  session whose history is currently seeded into the
+  `InlineAgent`. Updated on `newSession` (clearMessages + set),
+  `loadSession` (restoreMessages + set), and
+  `#rehydrateInlineFromStore` (same flow, called from `prompt`
+  when it detects a mismatch). Prevents `recordTurn` from
+  persisting another session's messages into the current turn's
+  `finalMessages` — the root cause of the "transcripts cross
+  over after `+ New chat`" bug fixed in Phase C.
 
 #### Methods
 
@@ -194,10 +234,16 @@ values for request/response.
   Returns the static response shown in
   [`./startup-sequence.md`](./startup-sequence.md#initialize-payload-exchange):
   `protocolVersion: 1`,
-  `agentCapabilities: { loadSession: false, promptCapabilities:
-  { image: false, audio: false, embeddedContext: false } }`,
+  `agentCapabilities: { loadSession: <store-configured>,
+  promptCapabilities: { image: false, audio: false,
+  embeddedContext: false } }`,
   `authMethods: [{id: BODHI_AUTH_METHOD_ID, name, description}]`.
-  No MCP capabilities advertised (see
+  `loadSession` is advertised as `true` whenever a
+  `SessionStore` is wired into the adapter — which, in
+  production, is always, because `agent-worker.ts` always
+  instantiates one. Unit tests that construct the adapter
+  without a store get `loadSession: false` and no resume
+  surface, as expected. No MCP capabilities advertised (see
   [`../../milestones/m2-tools.md`](../../milestones/m2-tools.md)
   § M2.3).
 
@@ -220,9 +266,33 @@ values for request/response.
   Generates `sessionId = 'bodhi-' + crypto.randomUUID()`;
   registers it in `#sessions`; calls
   `await #store.createSession(sessionId)` when a store is
-  configured. The `NewSessionRequest` (`{cwd, mcpServers}`) is
-  ignored today — both are stubs; M2.1 gives `cwd` semantic
-  meaning.
+  configured; then `this.#inline.clearMessages()` and sets
+  `#activeInlineSessionId = sessionId`. Clearing the inline
+  runtime on every new session is what prevents the previous
+  session's transcript from leaking into the next one's
+  `finalMessages` (the "+ New chat → Anthropic prompt" case in
+  `sessions-resume.spec.ts`). The `NewSessionRequest`
+  (`{cwd, mcpServers}`) is ignored today — both are stubs; M2.1
+  gives `cwd` semantic meaning.
+
+- **`loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse>`.**
+  Requires `#store`. Flow:
+  1. `store.getSession(sessionId)` — throws on unknown id.
+  2. Register in `#sessions` so a subsequent `prompt` passes the
+     existence check.
+  3. `store.readEntries(sessionId)` — iterate in `seq` order.
+     Every `notification` entry is re-emitted verbatim via
+     `#conn.sessionUpdate(...)` (deliberately bypassing `#emit`
+     to avoid double-persisting rows). Every `turn` entry
+     overwrites `lastTurnMessages`.
+  4. If `lastTurnMessages` is present,
+     `inline.restoreMessages(lastTurnMessages)`; otherwise
+     `inline.clearMessages()`.
+  5. `#activeInlineSessionId = sessionId`.
+  6. Returns `{}` — ACP's minimal `LoadSessionResponse`. Model
+     restoration travels over the companion `bodhi/getSession`
+     reply; ACP's stable `LoadSessionResponse` has no
+     first-class field for "last model" yet.
 
 - **`prompt(params: PromptRequest): Promise<PromptResponse>`.**
   Detailed flow in
@@ -233,18 +303,23 @@ values for request/response.
      `#models` (throws on miss).
   3. Text extraction (concatenates every `type: 'text'` block in
      `params.prompt`; throws if empty).
-  4. `this.#inline.setModel(model)`.
-  5. Subscribes to `inline` events; routes `message_update`
+  4. If `#activeInlineSessionId !== params.sessionId`, call
+     `#rehydrateInlineFromStore(params.sessionId)` — otherwise a
+     stale inline history (e.g. from a prior session whose
+     `loadSession` wasn't re-issued after worker restart) would
+     get spliced into the new turn's `finalMessages`.
+  5. `this.#inline.setModel(model)`.
+  6. Subscribes to `inline` events; routes `message_update`
      events through `#forwardEvent`.
-  6. `await this.#inline.prompt(text)`.
-  7. Returns `{stopReason: 'cancelled'}` if `#cancelled`;
+  7. `await this.#inline.prompt(text)`.
+  8. Returns `{stopReason: 'cancelled'}` if `#cancelled`;
      throws `inline.getErrorMessage()` if set; otherwise on
      clean `end_turn` calls `await #store.recordTurn(sessionId,
      text, inline.getMessages(), model.id)` (M1) and returns
      `{stopReason: 'end_turn'}`. `modelId` is persisted on the
      turn row so `session/load` can tell the UI which model was
      last in use for this session.
-  8. Unsubscribes in `finally`.
+  9. Unsubscribes in `finally`.
 
 - **`cancel(_params: CancelNotification): Promise<void>`.**
   `this.#cancelled = true; this.#inline.cancel()`. The abort
@@ -270,7 +345,17 @@ values for request/response.
   ```
   An empty array is returned when the store is not configured
   (e.g. in unit tests that instantiate the adapter without a
-  store). Otherwise throws `"Unknown extension method: <name>"`
+  store).
+  If `method === BODHI_GET_SESSION_METHOD`:
+  ```
+  const row = await this.#store.getSession(req.sessionId);      // throws on unknown
+  const entries = await this.#store.readEntries(req.sessionId);
+  const messages = lastTurnFrom(entries)?.finalMessages ?? [];
+  return { sessionId: row.id, messages, lastModelId: row.lastModelId, title: row.title };
+  ```
+  Throws if the store is not configured or the session is
+  unknown; those errors surface to the UI as a toast.
+  Otherwise throws `"Unknown extension method: <name>"`
   so the SDK serialises a JSON-RPC error back. Full catalog
   flattening lives in [`./agent.md`](./agent.md);
   `apiFormatOfModel` is the inverse of `apiFormatToPiApi` used
@@ -308,7 +393,18 @@ values for request/response.
   turn over a store write would be worse than a missed row.
   Future emitters (tool-call notifications at M2, plan at M3)
   use this same helper so the "what we stored = what we
-  emitted" invariant holds.
+  emitted" invariant holds. `loadSession` deliberately bypasses
+  `#emit` when replaying — replay must not re-persist existing
+  rows.
+- **`#rehydrateInlineFromStore(sessionId)`.** Private helper
+  shared by `prompt`'s mismatch guard. Reads the session's
+  entries in `seq` order; picks the latest `turn`'s
+  `finalMessages` (if any) and calls
+  `inline.restoreMessages`; otherwise `inline.clearMessages`.
+  Always sets `#activeInlineSessionId = sessionId`. Returns
+  `void`. When no store is configured it short-circuits to
+  `clearMessages` — unit tests don't need the store to exist to
+  call `prompt`.
 
 #### Module-private functions
 
@@ -341,8 +437,8 @@ M1 plan adds vitest coverage of at least:
 ## Constraints
 
 - The Bodhi constants must not be inlined elsewhere; grep
-  `'bodhi-token'`, `'bodhi/listModels'`, and
-  `'bodhi/listSessions'` across `src/` to enforce.
+  `'bodhi-token'`, `'bodhi/listModels'`, `'bodhi/listSessions'`,
+  and `'bodhi/getSession'` across `src/` to enforce.
 - The `Agent` interface is the extraction boundary. If a future
   milestone wants a non-SDK hook (e.g., direct event emission
   into the worker-main channel), add it **outside** the
