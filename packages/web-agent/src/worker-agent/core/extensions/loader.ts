@@ -8,6 +8,7 @@
 
 import type { LsOperations, ReadOperations } from '../../fs/zenfs-operations';
 import { Type } from '@sinclair/typebox';
+import type { LlmProvider } from '../../llm/types';
 import type {
   Extension,
   ExtensionAPI,
@@ -15,8 +16,11 @@ import type {
   ExtensionEventHandler,
   ExtensionFactory,
   ExtensionManifest,
+  ExtensionSkillInput,
   ExtensionUIContext,
   RegisteredCommand,
+  RegisteredProvider,
+  RegisteredSkill,
   RegisteredTool,
   ToolDefinition,
 } from './types';
@@ -36,9 +40,13 @@ export type ExtensionUIContextBuilder = (extensionPath: string) => ExtensionUICo
 const NOOP_UI: ExtensionUIContext = {
   notify: () => {},
   setStatus: () => {},
+  setTitle: () => {},
+  setWidget: () => {},
   select: async () => undefined,
   confirm: async () => false,
   input: async () => undefined,
+  editor: async () => undefined,
+  setEditorText: () => {},
 };
 
 /** Default UI builder — returns a no-op channel. Tests can supply their own. */
@@ -224,6 +232,33 @@ function buildExtensionAPI(record: Extension, ui: ExtensionUIContext): Extension
       };
       record.commands.set(name, registered);
     },
+    registerProvider(providerId: string, provider: LlmProvider) {
+      if (typeof providerId !== 'string' || providerId.length === 0) {
+        throw new Error('registerProvider: providerId must be a non-empty string');
+      }
+      const registered: RegisteredProvider = {
+        providerId,
+        provider,
+        extensionPath: record.path,
+      };
+      record.providers.set(providerId, registered);
+    },
+    registerSkill(skill: ExtensionSkillInput) {
+      if (!skill || typeof skill.name !== 'string' || skill.name.length === 0) {
+        throw new Error('registerSkill: skill.name must be a non-empty string');
+      }
+      if (typeof skill.body !== 'string') {
+        throw new Error('registerSkill: skill.body must be a string');
+      }
+      const registered: RegisteredSkill = {
+        name: skill.name,
+        description: skill.description ?? '',
+        body: skill.body,
+        disableModelInvocation: skill.disableModelInvocation,
+        extensionPath: record.path,
+      };
+      record.skills.set(skill.name, registered);
+    },
     ui,
     Type,
     defineTool,
@@ -268,6 +303,8 @@ async function loadOneExtension(
     handlers: new Map(),
     tools: new Map(),
     commands: new Map(),
+    providers: new Map(),
+    skills: new Map(),
   };
 
   let mod: Record<string, unknown>;
@@ -416,6 +453,8 @@ export async function loadExtensionFromSource(
     handlers: new Map(),
     tools: new Map(),
     commands: new Map(),
+    providers: new Map(),
+    skills: new Map(),
   };
 
   const importer = options.importModule ?? importFromVault;

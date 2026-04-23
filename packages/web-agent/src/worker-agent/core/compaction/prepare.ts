@@ -70,10 +70,42 @@ function findLastUserMessageIndex(path: SessionEntry[], boundaryStart: number): 
   return -1;
 }
 
+/**
+ * Snap an arbitrary index back to the first user-message entry at or
+ * before it. Returns -1 when no suitable boundary exists (extensions
+ * supplying overrides see a no-op outcome in that case).
+ */
+function snapToUserBoundary(path: SessionEntry[], desired: number, boundaryStart: number): number {
+  const start = Math.min(desired, path.length - 1);
+  for (let i = start; i > boundaryStart; i--) {
+    if (isUserMessageEntry(path[i])) return i;
+  }
+  return -1;
+}
+
+export interface PrepareCompactionOptions {
+  /** Force compaction on short transcripts (used by `/compact`). */
+  force?: boolean;
+  /**
+   * Extension-supplied override for the cut point. Clamped to
+   * `(boundaryStart, path.length)` and snapped back to the nearest
+   * user-message boundary at or before the supplied index so the
+   * summariser still receives whole turns.
+   */
+  preferredCutIndex?: number;
+  /**
+   * Extension-supplied set of entry ids that must remain in the kept
+   * suffix. Any matching entry whose index falls before the current
+   * `cutIdx` pulls `cutIdx` back to that index (snapped to a
+   * user-message boundary) so the entry survives summarisation.
+   */
+  preserveEntries?: string[];
+}
+
 export function prepareCompaction(
   path: SessionEntry[],
   settings: CompactionSettings,
-  opts: { force?: boolean } = {}
+  opts: PrepareCompactionOptions = {}
 ): CompactionPreparation | null {
   if (path.length < settings.minEntriesToCompact) return null;
   const last = path[path.length - 1];
@@ -87,6 +119,27 @@ export function prepareCompaction(
   }
   if (cutIdx < 0) return null;
   if (cutIdx <= boundaryStart) return null;
+
+  if (typeof opts.preferredCutIndex === 'number') {
+    const clamped = Math.max(boundaryStart + 1, Math.min(path.length - 1, opts.preferredCutIndex));
+    const snapped = snapToUserBoundary(path, clamped, boundaryStart);
+    if (snapped > boundaryStart) cutIdx = snapped;
+  }
+  if (opts.preserveEntries && opts.preserveEntries.length > 0) {
+    const preserve = new Set(opts.preserveEntries);
+    let earliest = cutIdx;
+    for (let i = boundaryStart; i < cutIdx; i++) {
+      const id = path[i].id;
+      if (id && preserve.has(id)) {
+        earliest = i;
+        break;
+      }
+    }
+    if (earliest < cutIdx) {
+      const snapped = snapToUserBoundary(path, earliest, boundaryStart);
+      if (snapped > boundaryStart) cutIdx = snapped;
+    }
+  }
 
   const firstKeptEntry = path[cutIdx];
   if (!firstKeptEntry.id) return null;

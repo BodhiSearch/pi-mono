@@ -13,7 +13,7 @@ Drop this prompt into a fresh session to continue M8 work after Phase 2a.
    `ExtensionHostController` owns lifecycle, `ExtensionUIController` owns
    per-request state). Breaking any of these invariants silently breaks
    existing e2e coverage.
-3. Produce a concrete plan file under `/Users/amir36/.cursor/plans/` that
+3. Produce a concrete plan file that
    names every file you intend to touch and every open question you intend
    to close. The Phase 2a plan is a good template
    (`extensions_phase_2a_ui_0376ffab.plan.md`).

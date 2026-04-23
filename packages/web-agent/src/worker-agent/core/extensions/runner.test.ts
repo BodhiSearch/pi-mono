@@ -2,7 +2,9 @@ import { describe, expect, test, vi } from 'vitest';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { ExtensionRunner } from './runner';
 import type {
+  AfterCompactEvent,
   BeforeAgentStartEvent,
+  BeforeCompactEvent,
   ContextEvent,
   Extension,
   ExtensionContext,
@@ -18,6 +20,10 @@ import type {
 const noopUI: ExtensionUIContext = {
   notify: () => {},
   setStatus: () => {},
+  setTitle: () => {},
+  setWidget: () => {},
+  setEditorText: () => {},
+  editor: async () => undefined,
   select: async () => undefined,
   confirm: async () => false,
   input: async () => undefined,
@@ -31,6 +37,8 @@ function makeExtension(name: string, setup: (ext: Extension) => void = () => {})
     handlers: new Map(),
     tools: new Map(),
     commands: new Map(),
+    providers: new Map(),
+    skills: new Map(),
   };
   setup(ext);
   return ext;
@@ -52,6 +60,7 @@ const baseContext: ExtensionContext = {
   abort: () => {},
   ui: noopUI,
   hasUI: true,
+  session: null,
 };
 
 describe('ExtensionRunner', () => {
@@ -344,6 +353,109 @@ describe('ExtensionRunner', () => {
       ['a:turn_start', 'a:message_end:user', 'a:session_loaded:reload', 'b:message_end'].sort()
     );
     expect(errors).toContain('turn_start');
+  });
+
+  // --------------------------------------------------------------------------
+  // Phase 2b: compaction hooks
+  // --------------------------------------------------------------------------
+
+  function makeBeforeCompactEvent(
+    entries: string[] = ['e0', 'e1', 'e2', 'e3']
+  ): BeforeCompactEvent {
+    return {
+      type: 'before_compact',
+      entries: entries.map(
+        id => ({ id, parentId: null, userMessage: null, assistantMessage: null }) as never
+      ),
+      cutIndex: Math.floor(entries.length / 2),
+    };
+  }
+
+  test('emitBeforeCompact returns undefined when no handler registered', async () => {
+    const runner = new ExtensionRunner();
+    const out = await runner.emitBeforeCompact(makeBeforeCompactEvent(), baseContext);
+    expect(out).toBeUndefined();
+  });
+
+  test('emitBeforeCompact reducer — later handlers observe earlier cutIndex overrides', async () => {
+    const runner = new ExtensionRunner();
+    const seen: number[] = [];
+    const first = makeExtension('first', e =>
+      setHandler<BeforeCompactEvent>(e, 'before_compact', event => {
+        seen.push(event.cutIndex);
+        return { cutIndex: 1 };
+      })
+    );
+    const second = makeExtension('second', e =>
+      setHandler<BeforeCompactEvent>(e, 'before_compact', event => {
+        seen.push(event.cutIndex);
+        return { preserveEntries: ['e2', 'e3'] };
+      })
+    );
+    runner.setExtensions([first, second]);
+    const out = await runner.emitBeforeCompact(makeBeforeCompactEvent(), baseContext);
+    expect(seen).toEqual([2, 1]);
+    expect(out?.cutIndex).toBe(1);
+    expect(out?.preserveEntries?.sort()).toEqual(['e2', 'e3']);
+  });
+
+  test('emitBeforeCompact clamps out-of-range cutIndex overrides', async () => {
+    const runner = new ExtensionRunner();
+    const ext = makeExtension('x', e =>
+      setHandler<BeforeCompactEvent>(e, 'before_compact', () => ({ cutIndex: 9999 }))
+    );
+    runner.setExtensions([ext]);
+    const event = makeBeforeCompactEvent();
+    const out = await runner.emitBeforeCompact(event, baseContext);
+    expect(out?.cutIndex).toBe(event.entries.length);
+  });
+
+  test('emitBeforeCompact errors are isolated — surviving handlers still produce outcomes', async () => {
+    const runner = new ExtensionRunner();
+    const errors: string[] = [];
+    runner.onError(err => errors.push(err.event));
+    const bad = makeExtension('bad', e =>
+      setHandler<BeforeCompactEvent>(e, 'before_compact', () => {
+        throw new Error('boom');
+      })
+    );
+    const good = makeExtension('good', e =>
+      setHandler<BeforeCompactEvent>(e, 'before_compact', () => ({ cutIndex: 0 }))
+    );
+    runner.setExtensions([bad, good]);
+    const out = await runner.emitBeforeCompact(makeBeforeCompactEvent(), baseContext);
+    expect(out?.cutIndex).toBe(0);
+    expect(errors).toEqual(['before_compact']);
+  });
+
+  test('emitAfterCompact fans out to every handler and isolates errors', async () => {
+    const runner = new ExtensionRunner();
+    const errors: string[] = [];
+    const calls: string[] = [];
+    runner.onError(err => errors.push(err.event));
+    const a = makeExtension('a', e =>
+      setHandler<AfterCompactEvent>(e, 'after_compact', ev => {
+        calls.push(`a:${ev.beforeCount}->${ev.afterCount}`);
+      })
+    );
+    const b = makeExtension('b', e =>
+      setHandler<AfterCompactEvent>(e, 'after_compact', () => {
+        throw new Error('boom');
+      })
+    );
+    runner.setExtensions([a, b]);
+    await runner.emitAfterCompact(
+      {
+        type: 'after_compact',
+        summary: 'sum',
+        beforeCount: 10,
+        afterCount: 3,
+        tokensBefore: 4200,
+      },
+      baseContext
+    );
+    expect(calls).toEqual(['a:10->3']);
+    expect(errors).toEqual(['after_compact']);
   });
 
   test('onError returns a disposer', () => {

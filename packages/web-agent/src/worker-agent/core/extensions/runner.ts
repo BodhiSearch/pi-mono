@@ -9,8 +9,11 @@
 
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type {
+  AfterCompactEvent,
   BeforeAgentStartEvent,
   BeforeAgentStartEventResult,
+  BeforeCompactEvent,
+  BeforeCompactEventResult,
   ContextEvent,
   ContextEventResult,
   Extension,
@@ -19,6 +22,8 @@ import type {
   ExtensionEventHandler,
   MessageEndEvent,
   RegisteredCommand,
+  RegisteredProvider,
+  RegisteredSkill,
   RegisteredTool,
   SessionLoadedEvent,
   ToolCallEvent,
@@ -50,6 +55,17 @@ export interface ToolResultOverride {
 export interface ToolCallOutcome {
   blocked: boolean;
   reason?: string;
+}
+
+/**
+ * Aggregate outcome of a `before_compact` dispatch. Merges all
+ * handler-returned `cutIndex` + `preserveEntries` values. When no
+ * handler returned a value, the shape is `undefined` and the caller
+ * falls through to the worker-selected cut.
+ */
+export interface BeforeCompactOutcome {
+  cutIndex?: number;
+  preserveEntries?: string[];
 }
 
 export class ExtensionRunner {
@@ -141,6 +157,34 @@ export class ExtensionRunner {
       }
     }
     return commands;
+  }
+
+  /** Aggregate every skill contributed across loaded extensions, de-duped by name (first wins). */
+  getRegisteredSkills(): RegisteredSkill[] {
+    const skills: RegisteredSkill[] = [];
+    const seen = new Set<string>();
+    for (const ext of this.extensions) {
+      for (const [name, skill] of ext.skills) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        skills.push(skill);
+      }
+    }
+    return skills;
+  }
+
+  /**
+   * Aggregate every provider contributed across loaded extensions.
+   * Unlike tools / commands / skills we return the full list (no
+   * de-dup here) so the provider controller can reconcile churn and
+   * resolve collisions with its own last-wins policy.
+   */
+  getRegisteredProviders(): RegisteredProvider[] {
+    const providers: RegisteredProvider[] = [];
+    for (const ext of this.extensions) {
+      for (const [, prov] of ext.providers) providers.push(prov);
+    }
+    return providers;
   }
 
   findCommand(name: string): RegisteredCommand | null {
@@ -319,6 +363,58 @@ export class ExtensionRunner {
   async emitSessionLoaded(event: SessionLoadedEvent, ctx: ExtensionContext): Promise<void> {
     if (!this.hasHandlers('session_loaded')) return;
     await this.emitObserverEvent('session_loaded', event, ctx);
+  }
+
+  /**
+   * Dispatch `before_compact` handlers sequentially. Each handler sees
+   * the accumulated event (later handlers observe earlier handlers'
+   * `cutIndex` override). Returns `undefined` when no handler produced
+   * overrides; otherwise returns the merged outcome. `preserveEntries`
+   * from every handler are unioned into a single deduped list.
+   */
+  async emitBeforeCompact(
+    event: BeforeCompactEvent,
+    ctx: ExtensionContext
+  ): Promise<BeforeCompactOutcome | undefined> {
+    if (!this.hasHandlers('before_compact')) return undefined;
+    let current: BeforeCompactEvent = { ...event };
+    let outcome: BeforeCompactOutcome | undefined;
+    const preserveSet = new Set<string>();
+    for (const ext of this.extensions) {
+      const bucket = ext.handlers.get('before_compact') ?? [];
+      for (const raw of bucket) {
+        const handler = raw as ExtensionEventHandler<BeforeCompactEvent, BeforeCompactEventResult>;
+        try {
+          const res = await handler(current, ctx);
+          if (res && typeof res === 'object') {
+            const r = res as BeforeCompactEventResult;
+            outcome = outcome ?? {};
+            if (typeof r.cutIndex === 'number' && Number.isFinite(r.cutIndex)) {
+              const clamped = Math.max(0, Math.min(event.entries.length, Math.floor(r.cutIndex)));
+              outcome.cutIndex = clamped;
+              current = { ...current, cutIndex: clamped };
+            }
+            if (Array.isArray(r.preserveEntries)) {
+              for (const id of r.preserveEntries) {
+                if (typeof id === 'string') preserveSet.add(id);
+              }
+            }
+          }
+        } catch (err) {
+          this.reportError(this.toExtensionError(ext.path, 'before_compact', err));
+        }
+      }
+    }
+    if (outcome && preserveSet.size > 0) {
+      outcome.preserveEntries = [...preserveSet];
+    }
+    return outcome;
+  }
+
+  /** Observer-only fan-out for `after_compact`. Errors isolated, return values ignored. */
+  async emitAfterCompact(event: AfterCompactEvent, ctx: ExtensionContext): Promise<void> {
+    if (!this.hasHandlers('after_compact')) return;
+    await this.emitObserverEvent('after_compact', event, ctx);
   }
 
   /**

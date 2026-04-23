@@ -12,6 +12,7 @@ import type {
   RpcCompactionEvent,
   RpcEventEnvelope,
   RpcExtensionErrorEvent,
+  RpcExtensionProvidersChangedEvent,
   RpcExtensionStatesEvent,
   RpcResponse,
   RpcSessionLoadedEvent,
@@ -53,6 +54,9 @@ export class RpcClient {
   private readonly compactionListeners = new Set<(event: RpcCompactionEvent) => void>();
   private readonly extensionStatesListeners = new Set<(event: RpcExtensionStatesEvent) => void>();
   private readonly extensionErrorListeners = new Set<(event: RpcExtensionErrorEvent) => void>();
+  private readonly extensionProvidersChangedListeners = new Set<
+    (event: RpcExtensionProvidersChangedEvent) => void
+  >();
   /**
    * Main-thread subscribers for extension UI requests. The webapp
    * registers its dialog renderer here so the worker's
@@ -271,6 +275,18 @@ export class RpcClient {
   }
 
   /**
+   * Subscribe to `extension_providers_changed`. The main thread uses
+   * this to refresh the model picker when an extension (un)registers a
+   * provider.
+   */
+  onExtensionProvidersChanged(
+    listener: (event: RpcExtensionProvidersChangedEvent) => void
+  ): () => void {
+    this.extensionProvidersChangedListeners.add(listener);
+    return () => this.extensionProvidersChangedListeners.delete(listener);
+  }
+
+  /**
    * Subscribe to `pi.ui.*` requests originating in the worker. The
    * webapp's renderer hooks in here, produces UI (toast / dialog),
    * then calls `sendExtensionUIResponse` with the user's answer.
@@ -304,6 +320,7 @@ export class RpcClient {
     this.compactionListeners.clear();
     this.extensionStatesListeners.clear();
     this.extensionErrorListeners.clear();
+    this.extensionProvidersChangedListeners.clear();
     this.extensionUIListeners.clear();
     this.toolCallHandler = null;
   }
@@ -340,6 +357,10 @@ export class RpcClient {
     }
     if (raw.type === 'extension_error') {
       for (const listener of this.extensionErrorListeners) listener(raw);
+      return;
+    }
+    if (raw.type === 'extension_providers_changed') {
+      for (const listener of this.extensionProvidersChangedListeners) listener(raw);
       return;
     }
     if (raw.type === 'extension_ui_request') {
@@ -400,6 +421,7 @@ function isEnvelope(value: unknown): value is RpcResponse | RpcEventEnvelope {
     t === 'compaction_end' ||
     t === 'extension_states' ||
     t === 'extension_error' ||
+    t === 'extension_providers_changed' ||
     t === 'extension_ui_request'
   );
 }

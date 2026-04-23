@@ -15,7 +15,10 @@
  */
 
 import type { ReadOperations } from '../../fs/zenfs-operations';
-import type { RegisteredCommand as ExtensionRegisteredCommand } from '../extensions/types';
+import type {
+  RegisteredCommand as ExtensionRegisteredCommand,
+  RegisteredSkill as ExtensionRegisteredSkill,
+} from '../extensions/types';
 import {
   expandPromptTemplate as expandPromptTemplatePure,
   loadPromptTemplatesFromDir,
@@ -51,6 +54,13 @@ export class CommandRegistry {
    * coding-agent's precedence.
    */
   private extensionCommands: ExtensionRegisteredCommand[] = [];
+  /**
+   * Skills contributed by extensions via `pi.registerSkill`. Stored
+   * in-memory (no SKILL.md file on disk). Listed under
+   * `source: 'extension-skill'` and expanded by `expandSkill` using the
+   * stored `body` directly.
+   */
+  private extensionSkills: ExtensionRegisteredSkill[] = [];
 
   /**
    * Load `<vaultMount>/.pi/prompts/*.md` into the registry, replacing
@@ -94,11 +104,22 @@ export class CommandRegistry {
     this.extensionCommands = commands;
   }
 
-  /** Drop prompt templates, skills, and extension commands (e.g. on vault unmount). */
+  /** Drop all extension-registered skills (e.g. when the runner clears). */
+  clearExtensionSkills(): void {
+    this.extensionSkills = [];
+  }
+
+  /** Replace the extension-skill set in one shot (called from the runner). */
+  setExtensionSkills(skills: ExtensionRegisteredSkill[]): void {
+    this.extensionSkills = skills;
+  }
+
+  /** Drop prompt templates, skills, extension commands, and extension skills. */
   clearAll(): void {
     this.clearPrompts();
     this.clearSkills();
     this.clearExtensionCommands();
+    this.clearExtensionSkills();
   }
 
   /**
@@ -133,7 +154,13 @@ export class CommandRegistry {
       ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}),
       source: 'extension',
     }));
-    return [...builtins, ...prompts, ...skills, ...extensions];
+    const extensionSkills: SlashCommandInfo[] = this.extensionSkills.map(s => ({
+      name: `skill:${s.name}`,
+      description: s.description,
+      source: 'extension-skill',
+      disableModelInvocation: s.disableModelInvocation,
+    }));
+    return [...builtins, ...prompts, ...skills, ...extensions, ...extensionSkills];
   }
 
   getPromptTemplates(): PromptTemplate[] {
@@ -156,12 +183,20 @@ export class CommandRegistry {
     return this.skills.find(s => s.name === name) ?? null;
   }
 
+  findExtensionSkill(name: string): ExtensionRegisteredSkill | null {
+    return this.extensionSkills.find(s => s.name === name) ?? null;
+  }
+
   findExtensionCommand(name: string): ExtensionRegisteredCommand | null {
     return this.extensionCommands.find(c => c.name === name) ?? null;
   }
 
   getExtensionCommands(): ExtensionRegisteredCommand[] {
     return this.extensionCommands;
+  }
+
+  getExtensionSkills(): ExtensionRegisteredSkill[] {
+    return this.extensionSkills;
   }
 
   /**
@@ -193,6 +228,16 @@ export class CommandRegistry {
     const spaceIndex = text.indexOf(' ');
     const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
     const args = spaceIndex === -1 ? '' : text.slice(spaceIndex + 1).trim();
+
+    // Extension skills win when names collide so authors can override
+    // a vault skill by registering their own. In-memory body means no
+    // readFile round-trip.
+    const extSkill = this.findExtensionSkill(skillName);
+    if (extSkill) {
+      const body = extSkill.body.trim();
+      const skillBlock = `<skill name="${extSkill.name}" location="extension:${extSkill.extensionPath}">\n${body}\n</skill>`;
+      return args ? `${skillBlock}\n\n${args}` : skillBlock;
+    }
 
     const skill = this.findSkill(skillName);
     if (!skill) return text;

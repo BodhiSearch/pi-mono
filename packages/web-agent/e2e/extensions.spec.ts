@@ -8,8 +8,13 @@ import { FULL_MODEL_ID, getTestState } from './tests/global-setup';
 /**
  * Extensions (M8 — Phase 1).
  *
- * The `sample-with-extensions` vault seeds four extensions under
- * `/vault/.pi/extensions/`:
+ * The `sample-phase-1-extensions` vault seeds the four original Phase 1
+ * extensions under `/vault/.pi/extensions/`. We deliberately use a
+ * minimal vault (not `sample-with-extensions`, which also includes every
+ * Phase 2a / 2b fixture) so the LLM turn that invokes the `hello` tool
+ * is not perturbed by context-injection, widget churn, title mutations,
+ * etc. — cross-phase interactions are covered by the Phase 2a / 2b
+ * specs. The seeded extensions are:
  *
  *   - fancy-prompt — `/fancy-prompt` toggles pirate-style system prompt
  *     shaping via the `before_agent_start` hook.
@@ -35,7 +40,7 @@ test.describe('Extensions — Phase 1', () => {
     const input = page.locator(chat.selectors.chatInput);
 
     await test.step('install vault with seeded extensions', async () => {
-      await installVault(page, 'sample-with-extensions');
+      await installVault(page, 'sample-phase-1-extensions');
     });
 
     await test.step('load app, authenticate, pick a model', async () => {

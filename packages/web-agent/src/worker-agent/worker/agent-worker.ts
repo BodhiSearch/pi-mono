@@ -21,7 +21,6 @@
  */
 
 import { AgentSession } from '../core/agent-session';
-import { createStreamFn } from '../llm/stream';
 import { DexieSessionStore, WebAgentDB } from '../core/session/dexie-store';
 import { RpcServer } from '../rpc/rpc-server';
 import { BodhiProvider } from '../../worker-bodhi';
@@ -46,12 +45,12 @@ async function boot(
 ): Promise<void> {
   const provider = new BodhiProvider();
   const session = new AgentSession();
-  // The streamFn closes over the provider — every request calls
-  // `provider.getApiKeyAndHeaders(model)` and forwards the resolved
-  // `apiKey` + `headers` to pi-ai. pi-ai's per-format provider code
-  // handles the actual auth header (OpenAI → `Authorization: Bearer`,
-  // Anthropic → `x-api-key`, Gemini → key param).
-  session.setStreamFn(createStreamFn(provider));
+  // `WorkerAgentHost` wraps the base provider in a composite (which
+  // dispatches to extension-contributed providers first) and installs
+  // the streamFn itself. Auth resolution still flows through the
+  // provider chain — pi-ai's per-format provider code then handles
+  // the auth header (OpenAI → `Authorization: Bearer`, Anthropic →
+  // `x-api-key`, Gemini → key param).
 
   // Both ports were transferred via postMessage; addEventListener-based
   // listeners require an explicit start() before delivery begins.

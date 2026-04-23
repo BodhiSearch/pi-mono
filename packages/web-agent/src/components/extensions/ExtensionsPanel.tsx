@@ -86,7 +86,7 @@ export default function ExtensionsPanel({
       </PopoverTrigger>
       <PopoverContent
         data-testid="extensions-popover-content"
-        className="w-80 p-2"
+        className="w-80 max-h-[70vh] overflow-y-auto p-2"
         align="start"
         side="top"
       >

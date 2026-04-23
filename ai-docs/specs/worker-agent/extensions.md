@@ -6,7 +6,10 @@
 `packages/web-agent/src/worker-agent/core/agent-session.ts` (tool-call + context hooks),
 `packages/web-agent/src/worker-agent/worker/extension-host.ts` (extension lifecycle controller),
 `packages/web-agent/src/worker-agent/worker/extension-ui-controller.ts` (`pi.ui.*` request lifecycle),
-`packages/web-agent/src/worker-agent/worker/worker-host.ts` (vault lifecycle + RPC plumbing),
+`packages/web-agent/src/worker-agent/worker/extension-provider-controller.ts` (composite `LlmProvider` fan-out),
+`packages/web-agent/src/worker-agent/worker/extension-skill-controller.ts` (in-memory skill store → `CommandRegistry`),
+`packages/web-agent/src/worker-agent/core/extensions/session-forwarder.ts` (read-only `ctx.session`),
+`packages/web-agent/src/worker-agent/worker/worker-host.ts` (vault lifecycle + RPC plumbing + compaction hooks),
 `packages/web-agent/src/worker-agent/worker/init-protocol.ts` (boot-time enabled-map plumbing),
 `packages/web-agent/src/worker-agent/rpc/rpc-types.ts`,
 `packages/web-agent/src/worker-agent/rpc/rpc-server.ts`,
@@ -17,19 +20,24 @@
 `packages/web-agent/src/providers/WebAgentProvider.tsx` (pre-boot hydration),
 `packages/web-agent/src/components/extensions/ExtensionsPanel.tsx`,
 `packages/web-agent/src/components/extensions/ExtensionUIRenderer.tsx`,
+`packages/web-agent/src/components/extensions/ExtensionTitleSlot.tsx`,
+`packages/web-agent/src/components/extensions/ExtensionWidgetSlot.tsx`,
 `packages/web-agent/src/components/extensions/ExtensionStatusChips.tsx`.
 
 **Parent:** [`./index.md`](./index.md)
 
 ## Functional scope
 
-Extensions (M8 — Phase 1 / Phase 2a) let users drop small JavaScript
+Extensions (M8 — Phases 1 + 2a + 2b) let users drop small JavaScript
 packages into `<vaultMount>/.pi/extensions/<name>/index.js` to shape
 prompts, transform tool results, register LLM-callable tools, register
-slash commands, subscribe to every stage of the agent turn, and drive a
-minimal modal UI surface — all without modifying the web-agent source.
-They are the web-agent port of `packages/coding-agent`'s extension
-system, adapted to the Worker-as-source-of-truth architecture.
+slash commands, contribute LLM providers and skills, subscribe to
+every stage of the agent turn (including compaction), drive a full
+set of modal + transient UI surfaces, and read live session state —
+all without modifying the web-agent source. They are the web-agent
+port of `packages/coding-agent`'s extension system, adapted to the
+Worker-as-source-of-truth architecture; the feature envelope now
+matches coding-agent's apart from the isolation model (Phase 3).
 
 - **Discovery.** The worker scans `<vaultMount>/.pi/extensions/` on
   every mount, dev-seed, and `/reload`. Each direct subdirectory with
@@ -60,14 +68,54 @@ system, adapted to the Worker-as-source-of-truth architecture.
   - `turn_start` — observer fired at the start of every user turn.
   - `message_end` — observer fired at the end of every assistant
     message.
-  - `session_loaded` — observer fired from `/reload` only. Initial
-    mount / dev-seed / session-switch paths do **not** fire it; this
-    is a documented Phase 2a limitation and will be revisited in
-    Phase 2b together with the full initial-load lifecycle question.
+  - `session_loaded` — observer fired from every session-transition
+    path with a discriminator `reason: 'mount' | 'reload' | 'switch'
+    | 'fork' | 'new' | 'navigate'`. `mount` fires at the end of
+    `mountVault` / `mountDevSeed`; `reload` fires from `/reload`;
+    `switch` / `fork` / `new` / `navigate` fire at the end of the
+    matching `WorkerAgentHost` session entry point. Extensions can
+    branch off `event.reason` to initialise state the first time
+    they are seen.
+- **Lifecycle hooks (Phase 2b).**
+  - `before_compact` — reducer fired before `prepareCompaction`
+    summarises. Handlers may return `{ cutIndex?, preserveEntries? }`;
+    later handlers observe the running override, the host clamps
+    `cutIndex` to `[0, entries.length)` and ORs `preserveEntries`
+    into the base set before summarisation. Errors isolate so a
+    broken extension cannot break compaction.
+  - `after_compact` — observer fired after the `CompactionEntry` is
+    committed. Payload: `{ summary, beforeCount, afterCount }`.
 - **LLM-callable tools.** `pi.registerTool(def)` contributes a tool to
   the agent's tool-list for every subsequent turn. The LLM-visible
   triple (`name` / `description` / `parameters`) propagates to the
   main-thread palette; the `execute` closure stays in the Worker.
+- **LLM providers (Phase 2b).** `pi.registerProvider(provider)` adds
+  an `LlmProvider` to `ExtensionProviderController`. The controller
+  exposes a composite `LlmProvider` that the `WorkerAgentHost` uses
+  for `streamFn`, summarisation, and `getAvailableModels`. Model
+  `provider` field keyed dispatch — each request is routed to the
+  first registered provider whose `getAvailableModels()` returns a
+  matching `provider` id (extension providers checked in registration
+  order, falling back to the base Bodhi provider last). Churn emits
+  `extension_providers_changed { providers: ExtensionProviderDescriptor[] }`
+  so the host UI can refresh the model picker.
+- **Skills (Phase 2b).** `pi.registerSkill({ name, description, body,
+  disableModelInvocation? })` hands the skill to
+  `ExtensionSkillController` which pushes it into `CommandRegistry`
+  with `source: 'extension-skill'`. The inline `body` is stored in
+  memory; `CommandRegistry.expandSkill` wraps it in the same
+  `<skill name=… location="extension:<path>">` envelope as filesystem
+  skills so the LLM-visible output is identical. When
+  `disableModelInvocation` is set the skill is omitted from the
+  `<available-skills>` block but remains invocable through the
+  palette.
+- **Read-only session access (Phase 2b).** `ctx.session` is a
+  `ReadonlySessionForwarder` that re-reads `WorkerAgentHost`'s live
+  `SessionManager` every call (`getCwd`, `getEntries`, `getLeafId`,
+  `getBranch`, `getTree`, …). The forwarder throws
+  `InvalidSessionError` when the session has been swapped out since
+  the extension captured `ctx`, so a handler cannot read from a
+  stale session.
 - **Slash commands.** `pi.registerCommand(name, { handler })` adds a
   command with `source: 'extension'` to `CommandRegistry`. When the
   user types `/<name> …`, the worker dispatches the handler directly
@@ -76,12 +124,34 @@ system, adapted to the Worker-as-source-of-truth architecture.
   `ExtensionsPanel` surfaces every discovered extension with a
   checkbox; the global "Disable all" button satisfies the M8 gate
   (one click must silence every extension without a reload).
-- **UI channel (Phase 2a).** `ctx.ui` / `pi.ui` exposes a minimal
-  modal surface:
+- **UI channel (Phases 2a + 2b).** `ctx.ui` / `pi.ui` exposes the
+  full modal + transient surface:
   - `ui.notify(message, type?)` → sonner toast (`'info'` /
-    `'warning'` / `'error'`).
+    `'warning'` / `'error'`). Fire-and-forget.
   - `ui.setStatus(text?)` → chip in the `ChatInput` footer, keyed
     per-extension (one chip per extension, `null` clears).
+    Fire-and-forget.
+  - `ui.setTitle(text?)` → chip in the chat header
+    (`ExtensionTitleSlot`). Last-writer-wins among extensions that
+    pass a non-null text (ordered by first setTitle call); passing
+    `null` removes that extension's entry. Fire-and-forget.
+  - `ui.setWidget(key, widget?)` → transient bubble in the
+    transcript (`ExtensionWidgetSlot`). Closed kind enum
+    (`progress | info | choice`); passing `null` or a missing
+    widget removes the slot. `choice` widgets call
+    `rpcClient.respondExtensionUIRequest` with the chosen option;
+    the controller fans that back to the extension through the
+    running handler (observer only — no promise to resolve, since
+    widgets are fire-and-forget).
+  - `ui.editor(title, prefill, opts?)` → modal `EditorDialog`
+    (textarea + Cancel / Save). Joins the same FIFO queue as
+    `select` / `confirm` / `input`. Cancel / Escape / backdrop-click
+    resolves with `undefined`; Cmd/Ctrl+Enter or the `Save` button
+    resolves with the current textarea value. `opts.signal` /
+    `opts.timeout` behave the same as for the other modals.
+  - `ui.setEditorText(text)` → mutates the open editor buffer of
+    the **same extension** (no-op when no editor is open for the
+    calling extension). Fire-and-forget.
   - `ui.select(title, options, opts?)` / `ui.confirm(title, message,
     opts?)` / `ui.input(title, placeholder?, opts?)` → modal dialogs
     rendered by `ExtensionUIRenderer`. FIFO queue across extensions,
@@ -100,19 +170,14 @@ system, adapted to the Worker-as-source-of-truth architecture.
 
 Explicit non-responsibilities:
 
-- **No widgets / editor / `setTitle`.** Phase 2a lands the modal UI
-  verbs only (`notify`, `setStatus`, `select`, `confirm`, `input`).
-  Custom transcript widgets, inline editors, and the chat-header
-  `setTitle` slot are deferred to Phase 2b.
-- **No `registerProvider` / `registerSkill`.** Extensions cannot
-  contribute LLM providers or skills yet (Phase 2b).
-- **No compaction hooks.** `before_compact` / `after_compact` remain
-  unimplemented (Phase 2b).
-- **No session-manager access.** `ctx.session.*` (entries, branches,
-  labels) is still absent (Phase 2b).
 - **No out-of-worker code.** Extensions run in the same Worker as the
   agent. There is no iframe or separate Worker per extension — the
-  isolation story deferred to Phase 3.
+  isolation story remains deferred to Phase 3. Cross-extension
+  interference is prevented only by per-handler `try/catch` + the
+  runner's deduplication rules; a rogue extension that monopolises
+  CPU or memory will degrade the agent Worker.
+- **No keybinding hook.** `pi-tui`'s `registerKeybinding` has no
+  browser equivalent; deferred to Phase 3.
 - **No TypeScript sources.** Only single-file `index.js` with ESM
   `export default` is accepted. TS transpilation lands in Phase 3.
 - **No bare-specifier imports.** Extension code sees the host Worker's
@@ -126,9 +191,11 @@ Explicit non-responsibilities:
 
 | Export | Purpose |
 | --- | --- |
-| `ExtensionContext` | `{ cwd, isIdle(), abort(), ui, hasUI }` — narrow read-only view handed to every handler / tool invocation. Phase 2a widened this with `ui: ExtensionUIContext` + `hasUI: true` (always true on the worker; keeps the shape aligned with a future no-UI host). |
-| `ExtensionUIContext` | `{ notify, setStatus, select, confirm, input }` — the Phase 2a modal API. Also accessible as `pi.ui` inside the extension factory. |
-| `ExtensionUIDialogOptions` | `{ signal?: AbortSignal, timeout?: number }` passed to `select` / `confirm` / `input`. Abort / timeout resolves the pending promise with the channel's cancel value. |
+| `ExtensionContext` | `{ cwd, isIdle(), abort(), ui, hasUI, session? }` — narrow read-only view handed to every handler / tool invocation. Phase 2a widened this with `ui: ExtensionUIContext` + `hasUI: true`; Phase 2b added `session: ReadonlySessionManager` backed by `ReadonlySessionForwarder`. |
+| `ExtensionUIContext` | `{ notify, setStatus, setTitle, setWidget, editor, setEditorText, select, confirm, input }` — the Phase 2a + 2b UI API. Also accessible as `pi.ui` inside the extension factory. |
+| `ExtensionWidget` | `{ kind: 'progress' \| 'info' \| 'choice' } & WidgetProps` — closed-enum payload for `setWidget`. `progress`: `{ label?, value?, indeterminate? }`. `info`: `{ title?, body? }`. `choice`: `{ prompt, options: { id, label }[] }`. |
+| `ExtensionUIEditorPayload` | `{ title, prefill, placeholder?, language? }` passed to `ui.editor`. `language` is a hint only (no syntax highlighting in Phase 2b); surfaces as `data-editor-language` on the textarea. |
+| `ExtensionUIDialogOptions` | `{ signal?: AbortSignal, timeout?: number }` passed to `select` / `confirm` / `input` / `editor`. Abort / timeout resolves the pending promise with the channel's cancel value. |
 | `ExtensionSelectOption<T>` | `{ label: string, value: T }` — `value` can be any payload; the controller serialises by index so non-clonable values round-trip safely. |
 | `BeforeAgentStartEvent` / `...Result` | `{ type, prompt, systemPrompt }` → `{ systemPrompt? }`. |
 | `ToolResultEvent` / `...Result` | `{ type, toolCallId, toolName, input, content, details, isError }` → `{ content?, details?, isError? }`. No deep merge — supplied fields replace wholesale. |
@@ -136,12 +203,17 @@ Explicit non-responsibilities:
 | `ToolCallEvent` / `...Result` | `{ type, toolCallId, toolName, input }` → `{ block?, reason? }`. `event.input` is mutated in place; a single handler returning `{ block: true }` short-circuits the chain. |
 | `TurnStartEvent` | `{ type, turn }` — observer payload for `on('turn_start')`. |
 | `MessageEndEvent` | `{ type, message }` — observer payload for `on('message_end')`. |
-| `SessionLoadedEvent` | `{ type, reason }` — observer payload for `on('session_loaded')`. Phase 2a only fires `reason: 'reload'`. |
+| `SessionLoadedEvent` | `{ type, reason }` — observer payload for `on('session_loaded')`. `reason: 'mount' \| 'reload' \| 'switch' \| 'fork' \| 'new' \| 'navigate'` (Phase 2b widened from Phase 2a's `'reload'` only). |
+| `BeforeCompactEvent` / `...Result` | `{ type, entries, cutIndex, preserveEntries }` → `{ cutIndex?, preserveEntries? }`. Reducer — later handlers see the merged override. Errors are isolated per-handler. |
+| `AfterCompactEvent` | `{ type, summary, beforeCount, afterCount }` — observer payload for `on('after_compact')`. |
+| `RegisteredProvider` | `{ extensionPath, provider: LlmProvider }` — runtime record for an extension-contributed provider. |
+| `RegisteredSkill` | `{ extensionPath, name, description, body, disableModelInvocation? }` — runtime record for an extension-contributed skill (kept in memory; `body` is the SKILL.md equivalent). |
+| `InvalidSessionError` | Thrown by `ReadonlySessionForwarder` when the underlying `SessionManager` has been swapped out since `ctx.session` was captured. |
 | `ToolDefinition<TParams, TDetails>` | Thinner than coding-agent's: `name`, `description`, `parameters` (TypeBox), optional `prepareArguments` / `executionMode`, and `execute(toolCallId, params, signal, onUpdate, ctx)`. Intentionally no `renderCall` / `renderResult` / `label` — there is no TUI to render into. |
 | `defineTool<TParams, TDetails>(tool)` | Passthrough helper that preserves parameter inference so `pi.registerTool(pi.defineTool({ … }))` type-checks even when the tool is stored in an intermediate variable. |
 | `RegisteredTool` / `RegisteredCommand` | Runtime record for a tool / command contributed by an extension. Both carry `extensionPath` for diagnostic reporting. |
 | `ExtensionCommandHandler` | `(args: string, ctx: ExtensionContext) => void \| Promise<void>`. |
-| `ExtensionAPI` | Surface handed to the extension factory: `on(event, handler)` with overloads for every Phase 1 + Phase 2a event (`before_agent_start`, `tool_result`, `context`, `tool_call`, `turn_start`, `message_end`, `session_loaded`), `registerTool`, `registerCommand`, `ui` (Phase 2a), plus the `Type` / `defineTool` helpers re-exported so extensions don't need external imports. |
+| `ExtensionAPI` | Surface handed to the extension factory: `on(event, handler)` with overloads for every Phase 1 + Phase 2a + Phase 2b event (`before_agent_start`, `tool_result`, `context`, `tool_call`, `turn_start`, `message_end`, `session_loaded`, `before_compact`, `after_compact`), `registerTool`, `registerCommand`, `registerProvider`, `registerSkill`, `ui`, plus the `Type` / `defineTool` helpers re-exported so extensions don't need external imports. |
 | `ExtensionUIContextBuilder` | `(extensionPath: string) => ExtensionUIContext` — Phase 2a injection point. `ExtensionHostController` supplies a builder that returns the live `ui` channel bound to the extension path; the loader uses it to thread `pi.ui` through factories and handler invocations alike. |
 | `ExtensionFactory` | `(pi: ExtensionAPI) => void \| Promise<void>`. |
 | `ExtensionManifest` | `{ name, version?, description? }`; optionally provided by a sibling `package.json`. |
@@ -189,7 +261,10 @@ agent lifecycle.
 | `emitToolResult(event, ctx)` | Chains handlers; merges `content` / `details` / `isError` overrides with replace-not-merge semantics. Returns the merged override (or `undefined`). |
 | `emitContext(event, ctx)` | Phase 2a. Chains `on('context')` handlers; each handler sees the running `messages` override. Returns the merged override (or `undefined`). Isolated per handler — a throw becomes an `ExtensionError` and the next handler sees the last good value. |
 | `emitToolCall(event, ctx)` | Phase 2a. Chains `on('tool_call')` handlers; handlers mutate `event.input` in place. The first handler returning `{ block: true, reason? }` short-circuits the chain; the controller's `beforeToolCall` hook converts that into a `pi-agent-core` tool denial. |
-| `emitTurnStart(event, ctx)` / `emitMessageEnd(event, ctx)` / `emitSessionLoaded(event, ctx)` | Phase 2a. Observer dispatchers — no return value, full per-handler isolation via the shared `emitObserverEvent` helper. |
+| `emitTurnStart(event, ctx)` / `emitMessageEnd(event, ctx)` / `emitSessionLoaded(event, ctx)` | Phase 2a. Observer dispatchers — no return value, full per-handler isolation via the shared `emitObserverEvent` helper. Phase 2b: `emitSessionLoaded` payload widened to the six-value `reason` discriminator. |
+| `emitBeforeCompact(event, ctx)` | Phase 2b. Reducer. Chains `on('before_compact')` handlers in load order; each handler sees the running override; returns `{ cutIndex?, preserveEntries? }`. Errors isolated per handler (subsequent handlers still run against the last good state). |
+| `emitAfterCompact(event, ctx)` | Phase 2b. Observer fan-out with per-handler isolation. |
+| `getRegisteredProviders()` / `getRegisteredSkills()` | Phase 2b. Deduplicate `RegisteredProvider` / `RegisteredSkill` across extensions (first wins). Used by `ExtensionHostController` to feed `ExtensionProviderController` / `ExtensionSkillController` after every load. |
 
 The runner does NOT own the enable/disable map or any pending-flush
 bookkeeping — that lives on `ExtensionHostController` so the runner
@@ -212,20 +287,28 @@ snapshot) so every invocation sees live `isIdle` / `cwd` state.
 
 ### Registry integration — `core/commands/registry.ts`
 
-`SlashCommandSource` gained an `'extension'` entry. `CommandRegistry`
-tracks extension commands alongside builtins, prompt templates, and
-skills:
+`SlashCommandSource` now carries both `'extension'` (commands) and
+`'extension-skill'` (skills). `CommandRegistry` tracks extension
+surfaces alongside builtins, prompt templates, and filesystem skills:
 
-- `setExtensionCommands(list)` / `clearExtensionCommands()` / `clearAll()`
-  — replace or drop the extension-contributed set.
-- `list()` appends `/<name>` entries with `source: 'extension'`, the
-  description carried from `RegisteredCommand`, and
-  `argumentHint` when the extension supplied one.
+- `setExtensionCommands(list)` / `clearExtensionCommands()` — replace
+  or drop the extension-contributed commands.
+- `setExtensionSkills(list)` / `clearExtensionSkills()` — Phase 2b
+  replace-all API used by `ExtensionSkillController` after every
+  churn.
+- `clearAll()` now also drops extension skills.
+- `list()` emits extension commands (`source: 'extension'`),
+  extension skills (`source: 'extension-skill'`), and filesystem
+  skills (`source: 'skill'`) in deterministic order so the palette
+  surfaces are stable across re-renders.
 - `findExtensionCommand(name)` — used by the worker-host before any
   other routing so extensions can override builtins.
-
-Skills and extensions share no storage — the two loaders are
-independent.
+- `findExtensionSkill(name)` + `expandSkill(name, args)` — expand
+  extension skills from their in-memory `body` using the same
+  `<skill name=… location=…>` envelope as filesystem skills.
+  Extension skills take precedence over filesystem skills with the
+  same name (plan decision — flagged in the handoff for Phase 3
+  review).
 
 ### Agent-session hooks — `core/agent-session.ts`
 
@@ -247,42 +330,103 @@ independent.
 
 `ExtensionUIController` owns the worker-side half of the `pi.ui.*`
 channel. It serialises every call into an `extension_ui_request` RPC
-event, tracks the pending promise, and resolves it when the main
-thread replies with `extension_ui_response`.
+event, tracks the pending promise (for modal verbs), and resolves it
+when the main thread replies with `extension_ui_response`.
 
 | Method | Behaviour |
 | --- | --- |
 | `notify(extensionPath, message, type)` | Fires an `extension_ui_request{ kind: 'notify' }` and resolves immediately — no round-trip reply is expected. |
 | `setStatus(extensionPath, text \| null)` | Same fire-and-forget shape as `notify`; the main thread tracks a `Record<extensionPath, text>` and removes the chip when `text === null`. |
+| `setTitle(extensionPath, text \| null)` | Phase 2b. Fire-and-forget; the main thread tracks a per-extension title map and `ExtensionTitleSlot` renders the active entry. |
+| `setWidget(extensionPath, slotKey, widget \| null)` | Phase 2b. Fire-and-forget; the main thread keys widgets by `(extensionPath, slotKey)`. Setting `widget: null` removes the slot. |
+| `editor(extensionPath, payload, opts?)` | Phase 2b. Joins the same pending-promise queue as `select` / `confirm` / `input`. Cancel / Escape / backdrop resolves with `undefined`; Save / Cmd+Enter resolves with the textarea value. |
+| `setEditorText(extensionPath, text)` | Phase 2b. Fire-and-forget; main thread mutates the open editor buffer of the **same extension** (no-op otherwise). |
 | `select / confirm / input(extensionPath, …, opts?)` | Opens a pending entry keyed by `requestId`. Wires `opts.signal` → abort listener that resolves with the channel's cancel value. Wires `opts.timeout` → `setTimeout` with the same cancel semantics. |
 | `handleResponse({ requestId, result, error? })` | Correlates replies back to the pending entry and resolves / rejects the promise. |
 | `cancelAllForSession(reason)` | Resolves every pending promise with its `cancelValue` and clears the pending map. Called on session reset / unmount / dispose. |
-| `createContextFor(extensionPath)` | Returns the live `ExtensionUIContext` bound to the supplied path. Extensions receive the same object for every factory / handler invocation so the path attribution is guaranteed. |
+| `createContextFor(extensionPath)` | Returns the live `ExtensionUIContext` bound to the supplied path, exposing every Phase 2a + 2b verb (`notify`, `setStatus`, `setTitle`, `setWidget`, `editor`, `setEditorText`, `select`, `confirm`, `input`). Extensions receive the same object for every factory / handler invocation so the path attribution is guaranteed. |
+
+### Provider controller — `worker/extension-provider-controller.ts`
+
+`ExtensionProviderController` (Phase 2b) owns extension-contributed
+`LlmProvider` instances:
+
+- `setProviders(list: RegisteredProvider[])` — replace the registered
+  set. Diffs against the previous set so churn events only fire on
+  actual changes.
+- `composite()` — returns a stable `LlmProvider` that fans out over
+  the base Bodhi provider + every extension-registered provider.
+  `streamMessage` / `setAuthToken` / `getAvailableModels` dispatch
+  using the `Model.provider` id; unknown providers fall through to
+  the base provider (backward compatible with Phase 1 / 2a where all
+  models route to Bodhi).
+- Emits `extension_providers_changed { providers: ExtensionProviderDescriptor[] }`
+  whenever the set changes so the main-thread model picker can
+  refresh.
+- `dispose()` clears the set and emits a final churn event with
+  `providers: []`.
+
+### Skill controller — `worker/extension-skill-controller.ts`
+
+`ExtensionSkillController` (Phase 2b) owns extension-contributed
+skills:
+
+- Maintains an in-memory map of `RegisteredSkill`s keyed by
+  `(extensionPath, name)` so an extension can register multiple
+  skills without collision, while cross-extension duplicate names
+  are deduplicated first-wins (matching the command rule).
+- After every runner churn, pushes the deduplicated list through
+  `CommandRegistry.setExtensionSkills` so the palette + expansion
+  paths see the current set.
+- `expandBody(name, args)` — returns the wrapped `<skill …>` envelope
+  with `$ARGUMENTS` substituted, identical to
+  `CommandRegistry.expandSkill` for filesystem skills.
+- `dispose()` / `clear()` drops the map and calls
+  `CommandRegistry.clearExtensionSkills`.
+
+### Session forwarder — `core/extensions/session-forwarder.ts`
+
+`ReadonlySessionForwarder` (Phase 2b) is a thin proxy implementing
+`ReadonlySessionManager`. Construction takes a `() => SessionManager | null`
+supplier + the `SessionManager` instance the extension captured at
+`ctx` time. Every call:
+
+1. Asks the supplier for the current `SessionManager`.
+2. Throws `InvalidSessionError` if the returned instance is `null` or
+   is not the originally captured one.
+3. Forwards to the live manager otherwise.
+
+This keeps extensions correct when the host swaps sessions
+(`loadSession` / `newSession` / `forkSession` / `navigateToLeaf`) —
+stale snapshots fail fast instead of reading from a retired manager.
 
 ### Host controller — `worker/extension-host.ts`
 
 `ExtensionHostController` owns every piece of per-extension state:
 the runner, the descriptor cache, the authoritative enable-state map,
 a single `pendingFlush` boolean, the three lazy `AgentSession` hooks
-(`afterToolCall`, `beforeToolCall`, `transformContext`), and the
-Phase 2a lifecycle subscribers that fan `turn_start` /
-`message_end` events from `AgentSession.subscribe` through the
-runner. `WorkerAgentHost` delegates through a narrow
-`ExtensionHostDeps` surface (`session`, `commands`, `getVaultOps`,
-`getVaultMount`, `isVaultAttached`, `refreshTools`, `emitEvent`,
-`uiController`) so the controller can be exercised without standing
-up a full host.
+(`afterToolCall`, `beforeToolCall`, `transformContext`), the Phase 2a
+lifecycle subscribers that fan `turn_start` / `message_end` events
+from `AgentSession.subscribe` through the runner, and the Phase 2b
+`providerController` / `skillController` it pushes registrations into.
+`WorkerAgentHost` delegates through a narrow `ExtensionHostDeps`
+surface (`session`, `commands`, `getVaultOps`, `getVaultMount`,
+`isVaultAttached`, `refreshTools`, `emitEvent`, `uiController`,
+`providerController`, `skillController`, `getSessionManager`) so the
+controller can be exercised without standing up a full host.
 
 | Method | Behaviour |
 | --- | --- |
-| `loadFromVault()` | Discover, import, and factory-invoke every enabled extension (threading `buildUIContext` so `pi.ui` resolves inside factories); populate descriptors + commands; reconcile the enabled map against the scan (prunes removed entries so the map cannot grow monotonically); ensure the `afterToolCall`, `beforeToolCall`, and `transformContext` hooks are installed on demand. |
+| `loadFromVault()` | Discover, import, and factory-invoke every enabled extension (threading `buildUIContext` so `pi.ui` resolves inside factories); populate descriptors + commands; push extension-contributed providers to `providerController.setProviders` and skills to `skillController.setSkills`; reconcile the enabled map against the scan (prunes removed entries so the map cannot grow monotonically); ensure the `afterToolCall`, `beforeToolCall`, and `transformContext` hooks are installed on demand. |
 | `setStates(states)` | Merge into the enable map. If streaming, set `pendingFlush = true` and return the current descriptors; otherwise reload + refresh tools + emit `extension_states`. |
 | `flushIfPending()` | Called at `agent_end`. If `pendingFlush` is set, runs the reload + refresh + emit sequence. |
 | `emitBeforeAgentStart(prompt, systemPrompt)` | Compose the event and dispatch through the runner. |
-| `emitSessionLoaded(reason)` | Phase 2a. Dispatches `on('session_loaded')` through the runner. Called from `WorkerAgentHost.reloadCommands()` with `reason: 'reload'`. |
-| `tryRunCommand(message)` | Dispatch an `/ext-cmd` handler inline on the worker side and return `true` when handled. |
+| `emitSessionLoaded(reason)` | Dispatches `on('session_loaded')` through the runner. Phase 2b widened `reason` to `'mount' \| 'reload' \| 'switch' \| 'fork' \| 'new' \| 'navigate'`. `WorkerAgentHost` calls it from every matching session-transition path. |
+| `emitBeforeCompact(entries, cutIndex, preserveEntries)` | Phase 2b. Reducer dispatch — returns the merged `{ cutIndex, preserveEntries }` the host re-feeds into `prepareCompaction`. |
+| `emitAfterCompact(summary, beforeCount, afterCount)` | Phase 2b. Observer fan-out after a compaction commit. |
+| `tryRunCommand(message)` | Dispatch an `/ext-cmd` handler inline on the worker side and return `true` when handled. Phase 2b also resolves extension skills (`source: 'extension-skill'`) through `skillController.expandBody` before the builtin expansion path. |
 | `getWrappedTools()` | Produce `AgentTool[]` on demand (via the wrapper + context supplier). |
-| `buildContext(extensionPath?)` | Fresh `ExtensionContext` on every call so handlers see live `isIdle` / `cwd`; attaches `ui: uiController.createContextFor(path)` and `hasUI: true`. |
+| `buildContext(extensionPath?)` | Fresh `ExtensionContext` on every call so handlers see live `isIdle` / `cwd`; attaches `ui: uiController.createContextFor(path)`, `hasUI: true`, and a freshly-constructed `session: ReadonlySessionForwarder` bound to `deps.getSessionManager()`. |
 | `buildUIContextFor(extensionPath?)` | Shared helper used by the loader and the `buildContext()` fast path to keep the UI attribution consistent across factory and handler invocations. |
 | `ensureBeforeToolCallHook()` / `ensureTransformContextHook()` | Install the corresponding `AgentSession` hook on the first call that sees a matching runner handler. Idempotent — tracked by `beforeToolCallHookInstalled` / `transformContextHookInstalled`. |
 | `attachLifecycleSubscribers()` | Subscribes once to `AgentSession` events and dispatches `turn_start` / `message_end` through the runner. Clean-up handle stored for `dispose()`. |
@@ -295,11 +439,12 @@ all extension concerns to it. Lifecycle:
 
 | Event | Host behaviour |
 | --- | --- |
-| constructor(…, `{ initialExtensionEnabledState }`) | Instantiate `ExtensionUIController` and `ExtensionHostController` (pre-seeded with the persisted enabled map forwarded through the init protocol); hook `agent_end` to `extensions.flushIfPending()`. |
-| `mountVault(handle)` / `mountDevSeed(seed)` | `extensions.loadFromVault()`, `refreshTools()`, rebuild system prompt, `extensions.emitStates()`. |
+| constructor(…, `{ initialExtensionEnabledState }`) | Instantiate `ExtensionUIController`, `ExtensionProviderController`, `ExtensionSkillController`, and `ExtensionHostController` (pre-seeded with the persisted enabled map forwarded through the init protocol); install `providerController.composite()` as the active `LlmProvider`; hook `agent_end` to `extensions.flushIfPending()`. |
+| `mountVault(handle)` / `mountDevSeed(seed)` | `extensions.loadFromVault()`, `refreshTools()`, rebuild system prompt, `extensions.emitStates()`, `extensions.emitSessionLoaded('mount')`. |
 | `reloadCommands()` | Reload prompts / skills / extensions, `refreshTools()`, `extensions.emitSessionLoaded('reload')`, `extensions.emitStates()`. |
-| `unmountVault()` | `extensions.clear()` (also cancels every pending `pi.ui.*` request), drop vault tools, emit an empty `extension_states`. |
-| `loadSession` / `newSession` / `forkSession` / `navigateToLeaf` | Call `extensionUIController.cancelAllForSession('session switch')` so modal / dialog promises never outlive the session that issued them. |
+| `unmountVault()` | `extensions.clear()` (also cancels every pending `pi.ui.*` request, clears providers, clears skills), drop vault tools, emit an empty `extension_states`. |
+| `loadSession` / `newSession` / `forkSession` / `navigateToLeaf` | Call `extensionUIController.cancelAllForSession('session switch')` so modal / dialog promises never outlive the session that issued them, then `extensions.emitSessionLoaded(<reason>)` with the matching `'switch' \| 'new' \| 'fork' \| 'navigate'` discriminator. |
+| `runCompaction()` | Phase 2b. Before `prepareCompaction`: call `extensions.emitBeforeCompact(entries, baseCutIndex, baseSet)`, clamp / OR the returned overrides, re-feed them into `prepareCompaction`. After `compactSummarize` commits: call `extensions.emitAfterCompact(summary, beforeCount, afterCount)`. Errors from either hook stay isolated to the extension so compaction always completes. |
 | `listExtensions()` RPC | `extensions.list()`. |
 | `setExtensionStates(next)` RPC | `extensions.setStates(next)`. |
 | `prompt(message)` | 1) `extensions.tryRunCommand(message)` — if handled, short-circuit. 2) `commands.expandAsync(…)` for skill + template expansion. 3) `extensions.emitBeforeAgentStart(…)`; when an override is produced, swap it onto the session and restore the previous prompt in a `finally`. |
@@ -313,20 +458,28 @@ extension tools into the single tool list `AgentSession` sees.
 
 - Commands: `list_extensions` → `ExtensionDescriptor[]`,
   `set_extension_states({ [name]: boolean })` → `ExtensionDescriptor[]`,
-  and the Phase 2a `extension_ui_response` command
-  (`{ type, requestId, result?, error? }`) that closes a pending
-  `pi.ui.*` promise.
+  and `extension_ui_response` (`{ type, requestId, result?, error? }`)
+  that closes a pending `pi.ui.*` promise.
 - Events: `extension_states` (`{ type, extensions }`),
   `extension_error` (`{ type, extensionPath, event, error, stack? }`),
-  and the Phase 2a `extension_ui_request` event
-  (`{ type, requestId, extensionPath, kind, payload }`) with
-  `kind ∈ 'notify' | 'setStatus' | 'select' | 'confirm' | 'input'`.
-- `rpc-client.ts` gained `onExtensionUIRequest(listener)` +
-  `sendExtensionUIResponse(requestId, result?, error?)`; `dispose()`
-  clears the subscriber set; `isEnvelope` accepts
-  `extension_ui_request`.
-- Known-commands map on the server and `isEnvelope` on the client were
-  both extended so the types are authoritative at wire level.
+  `extension_ui_request` (`{ type, requestId, extensionPath, kind, payload }`)
+  with `kind ∈ 'notify' | 'setStatus' | 'setTitle' | 'setWidget' |
+  'editor' | 'setEditorText' | 'select' | 'confirm' | 'input'`
+  (Phase 2a + 2b), and `extension_providers_changed`
+  (`{ type, providers: ExtensionProviderDescriptor[] }`) — Phase 2b
+  churn event for the extension-contributed provider set.
+- `ExtensionUISetTitlePayload`, `ExtensionUISetWidgetPayload`,
+  `ExtensionUIEditorPayload`, `ExtensionUISetEditorTextPayload`,
+  `ExtensionWidget`, and `ExtensionProviderDescriptor` are exported
+  from `packages/web-agent/src/worker-agent/index.ts` so hosts can
+  bind custom renderers without reaching into internals.
+- `rpc-client.ts` exposes `onExtensionUIRequest(listener)`,
+  `sendExtensionUIResponse(requestId, result?, error?)`, and
+  `onExtensionProvidersChanged(listener)`; `dispose()` clears every
+  subscriber set.
+- Known-commands map on the server and `isEnvelope` on the client are
+  extended so every new event + payload type is authoritative at
+  wire level.
 
 ### Main-thread state — `src/providers/WebAgentProvider.tsx`, `src/extension-store/ExtensionStore.ts`, `src/hooks/useExtensionState.ts`
 
@@ -381,22 +534,43 @@ Popover-trigger component with:
 `useSkillSandbox` and `useMcpAgentTools`, threading the derived props
 into `ChatInput` which renders the panel next to `McpPopover`.
 
-### UI channel — `src/hooks/useExtensionUI.ts`, `src/components/extensions/ExtensionUIRenderer.tsx`, `src/components/extensions/ExtensionStatusChips.tsx`
+### UI channel — `src/hooks/useExtensionUI.ts`, `src/components/extensions/ExtensionUIRenderer.tsx`, `src/components/extensions/ExtensionStatusChips.tsx`, `src/components/extensions/ExtensionTitleSlot.tsx`, `src/components/extensions/ExtensionWidgetSlot.tsx`
 
-Phase 2a main-thread surface for the `pi.ui.*` channel.
+Main-thread surface for the `pi.ui.*` channel (Phase 2a + Phase 2b).
 
 - `useExtensionUI()` subscribes to `rpcClient.onExtensionUIRequest`
-  once per `ChatDemo` mount. Routes `notify` to sonner
-  (`toast.info` / `warning` / `error`), tracks `statusChips:
-  Record<extensionPath, text>` for `setStatus`, and maintains a FIFO
-  `queue: ActiveExtensionDialog[]` for `select` / `confirm` /
-  `input`. Exposes `{ activeDialog, statusChips, respond,
-  dismissActive }`.
-- `ExtensionUIRenderer` renders the head of the queue in a modal
-  overlay. Escape / backdrop-click dismiss (resolve with the
-  channel's cancel value). Each dialog kind has dedicated testids so
-  Playwright can target options / confirm buttons / input fields
-  without reading labels.
+  once per `ChatDemo` mount. It maintains the state for every verb:
+  - `notify` → routed to sonner (`toast.info` / `warning` /
+    `error`).
+  - `setStatus` → `statusChips: Record<extensionPath, text>`.
+  - `setTitle` → `titles: Record<extensionPath, text>` +
+    `titleOrder: string[]` (first-set wins; latest non-null wins
+    for the rendered slot).
+  - `setWidget` → `widgetMap: Record<slotKey, ExtensionWidgetSnapshot>`
+    + `widgetOrder: string[]` keyed by `(extensionPath, slotKey)`.
+  - `editor` → `editorDialog: ActiveExtensionDialog | null` joined
+    onto the same FIFO queue as `select` / `confirm` / `input`.
+  - `setEditorText` → mutates the open editor buffer of the same
+    extension (no-op otherwise).
+  - Exposes `{ activeDialog, statusChips, title, titleExtensionPath,
+    widgets, respond, dismissActive }`.
+- `ExtensionUIRenderer` renders the head of the modal queue.
+  `EditorDialog` is the Phase 2b branch — textarea + Cancel / Save
+  bar; Escape / backdrop / Cancel resolves with `undefined`;
+  Cmd/Ctrl+Enter or Save resolves with the current value.
+  `data-testid="extension-editor"` + `data-editor-language` let
+  Playwright target the textarea without reading placeholders.
+- `ExtensionTitleSlot` renders the active title in the chat header
+  with `data-testid="extension-title"` + `data-extension-path`. Null
+  title means the slot renders nothing.
+- `ExtensionWidgetSlot` renders transient transcript bubbles above
+  the composer. Each snapshot carries
+  `data-testid="extension-widget-bubble"` +
+  `data-widget-kind="progress | info | choice"`. `progress` bodies
+  render a labelled bar; `info` bodies render heading + body text;
+  `choice` bodies render clickable option buttons that fire
+  `onChoice(snapshot, optionId)` back through
+  `sendExtensionUIResponse` for the extension to observe.
 - `ExtensionStatusChips` renders the `statusChips` map in the
   `ChatInput` footer; each chip shows the simplified extension name
   plus the status text and carries
@@ -404,13 +578,15 @@ Phase 2a main-thread surface for the `pi.ui.*` channel.
   `data-extension-path` for attribution.
 - `ChatDemo` is the **single** subscription site for
   `onExtensionUIRequest`. It passes `statusChips` down to
-  `ChatInput` and `{ activeDialog, respond, dismissActive }` down to
+  `ChatInput`, renders `ExtensionTitleSlot` in the header next to
+  `SessionPicker`, `ExtensionWidgetSlot` above `ChatInput`, and
+  `{ activeDialog, respond, dismissActive }` down to
   `ExtensionUIRenderer`, so the subscription never fights a
   double-mount.
 
 ### Fixtures — `e2e/data/sample-with-extensions/.pi/extensions/`
 
-Nine fixture extensions, documented in the per-folder `README.md`:
+Fifteen fixture extensions, documented in the per-folder `README.md`:
 
 | Extension | Origin / hook under test | Notes |
 | --- | --- | --- |
@@ -423,6 +599,12 @@ Nine fixture extensions, documented in the per-folder `README.md`:
 | `notifier/` | `on('turn_start')` / `on('message_end')` / `pi.ui.notify` | Counts observer fires; `/notify-test <kind>` emits a mapped toast; `/notify-stats` surfaces the counts. Phase 2a. |
 | `asker/` | `pi.ui.select` / `confirm` / `input` / `setStatus` | Drives every modal kind + the status chip surface; answers are echoed through `pi.ui.notify` so the spec can assert on DOM. Phase 2a. |
 | `reload-observer/` | `on('session_loaded')` | Increments a counter on every `reason: 'reload'` fire; `/reload-count` surfaces the running total. Phase 2a. |
+| `title-marker/` | `pi.ui.setTitle` | Toggles the chat-header title via `/title-show` and `/title-clear` to exercise the `ExtensionTitleSlot` contract. Phase 2b. |
+| `progress-widget/` | `pi.ui.setWidget` | Emits every closed widget kind (`progress`, `info`, `choice`) via `/widget-progress`, `/widget-info`, `/widget-choice`, and removes them via `/widget-clear`. Phase 2b. |
+| `note-editor/` | `pi.ui.editor` + `pi.ui.setEditorText` | `/note-edit` opens the modal editor and echoes the submitted value through `pi.ui.setTitle` + `pi.ui.notify` so the spec can assert the round-trip; `/note-prefill` demonstrates `setEditorText`. Phase 2b. |
+| `echo-provider/` | `pi.registerProvider` | Registers a deterministic fake `LlmProvider` (canned models, fixed stream). The model picker lists the contributed models with the `echo` provider id. Phase 2b. |
+| `compaction-nudger/` | `on('before_compact')` / `on('after_compact')` | Mutates `cutIndex` / `preserveEntries` during `before_compact` and records counts during `after_compact`; `/compact-stats` surfaces the stored stats via `pi.ui.notify`. Phase 2b. |
+| `skill-nudge/` | `pi.registerSkill` | Registers two skills (`nudge`, `nudge-disabled`); the palette surfaces both with `data-command-source="extension-skill"` and the `disabled` variant is omitted from `<available-skills>`. Phase 2b. |
 
 ## Tests
 
@@ -439,19 +621,41 @@ Nine fixture extensions, documented in the per-folder `README.md`:
 - `core/extensions/wrapper.test.ts` — execute-signature adaptation,
   live context supplier (including Phase 2a `ui` + `hasUI`), order
   preservation, `prepareArguments` / `executionMode` forwarding.
-- `worker/extension-ui-controller.test.ts` — Phase 2a. Notify /
-  setStatus fire-and-forget, select / confirm / input resolve paths,
-  `opts.signal` abort, `opts.timeout`, `cancelAllForSession`,
-  `handleResponse` correlation, `createContextFor`, concurrent
-  request handling.
+- `worker/extension-ui-controller.test.ts` — Notify / setStatus /
+  setTitle / setWidget / setEditorText fire-and-forget, select /
+  confirm / input / editor resolve paths, `opts.signal` abort,
+  `opts.timeout`, `cancelAllForSession`, `handleResponse`
+  correlation, `createContextFor`, concurrent request handling,
+  editor cancel resolves to `undefined`.
+- `worker/extension-provider-controller.test.ts` — Phase 2b.
+  Composite dispatch by `Model.provider`, fallback to the base
+  provider for unknown ids, `setAuthToken` fan-out, model list
+  merging, churn event emission (no-op on identical sets).
+- `worker/extension-skill-controller.test.ts` — Phase 2b.
+  `CommandRegistry` push on registration, cross-extension
+  deduplication, `expandBody` wrapping identical to filesystem
+  skills, `disableModelInvocation` suppressed from the
+  `<available-skills>` block, churn + disposal clears registry
+  entries.
+- `core/extensions/session-forwarder.test.ts` — Phase 2b. Live
+  forwarding against a stubbed `SessionManager`, throws
+  `InvalidSessionError` when the manager is `null` or has been
+  swapped since capture.
 - `core/commands/registry.test.ts` — `setExtensionCommands`, listing
-  order, `findExtensionCommand`, `clearExtensionCommands`, `clearAll`.
-- `rpc/rpc.test.ts` — Phase 2a. `extension_ui_request` events reach
-  the client listener; `sendExtensionUIResponse` replies reach the
-  host with the correct correlation id; error propagation.
+  order, `findExtensionCommand`, `clearExtensionCommands`,
+  `setExtensionSkills`, `findExtensionSkill`, `expandSkill` for
+  extension skills, `clearAll`.
+- `rpc/rpc.test.ts` — `extension_ui_request` events reach the client
+  listener (including Phase 2b `setTitle` / `setWidget` / `editor` /
+  `setEditorText` kinds); `sendExtensionUIResponse` replies reach the
+  host with the correct correlation id; `extension_providers_changed`
+  events reach their listener; error propagation.
 - `worker/worker-host.test.ts` — extension lifecycle across mount /
   reload / unmount, `list_extensions` / `set_extension_states`
-  handling, `extension_states` / `extension_error` event emission.
+  handling, `extension_states` / `extension_error` event emission,
+  `session_loaded` reason widening across `mount` / `switch` /
+  `fork` / `new` / `navigate`, compaction hooks firing before /
+  after summarisation.
 - `e2e/extensions.spec.ts` — palette surfacing, prompt-shaping toggle
   via `/fancy-prompt`, `hello` tool happy path, per-extension toggle,
   global disable-all, broken-extension error path, thrower hook error
@@ -461,6 +665,12 @@ Nine fixture extensions, documented in the per-folder `README.md`:
   toggle, confirm happy / cancel paths, `select`, `input`, `/reload`
   triggering `session_loaded`, `/ctx-show` observer surfacing.
   Asserts on DOM / RPC witnesses only.
+- `e2e/extensions-ui-2b.spec.ts` — Phase 2b. `setTitle` /
+  `setWidget` / `editor` (+ `setEditorText`) DOM flows, `echo`
+  provider models in the picker, extension skills in the
+  command palette carrying `data-command-source="extension-skill"`,
+  `/compact-stats` returning the hook-captured counts. Zero LLM-text
+  assertions.
 
 ## Constraints
 
@@ -486,8 +696,11 @@ Nine fixture extensions, documented in the per-folder `README.md`:
 
 Any plan that edits `core/extensions/*`, `core/commands/registry.ts`
 (extension paths), `core/agent-session.ts` (tool-call / context
-hooks), `worker/worker-host.ts` (extension lifecycle or RPC dispatch),
+hooks), `core/compaction/*` (hook plumbing), `worker/worker-host.ts`
+(extension lifecycle / RPC dispatch / compaction hooks),
 `worker/extension-host.ts`, `worker/extension-ui-controller.ts`,
+`worker/extension-provider-controller.ts`,
+`worker/extension-skill-controller.ts`,
 `rpc/rpc-types.ts` / `rpc-server.ts` / `rpc-client.ts` (extension
 commands or events), `src/extension-store/ExtensionStore.ts`,
 `src/hooks/useExtensionState.ts`, `src/hooks/useExtensionUI.ts`, or

@@ -156,6 +156,95 @@ describe('ExtensionUIController', () => {
     expect(events[1]).toMatchObject({ extensionPath: '/ext/bound', kind: 'setStatus' });
   });
 
+  // --------------------------------------------------------------------------
+  // Phase 2b verbs
+  // --------------------------------------------------------------------------
+
+  test('setTitle emits fire-and-forget setTitle without pending promise', () => {
+    const { controller, events } = makeController();
+    controller.setTitle('/ext/a', 'hello');
+    controller.setTitle('/ext/a', null);
+    expect(events.map(e => e.kind)).toEqual(['setTitle', 'setTitle']);
+    expect((events[0]!.payload as { text: string | null }).text).toBe('hello');
+    expect((events[1]!.payload as { text: string | null }).text).toBeNull();
+    expect(controller.pendingCount()).toBe(0);
+  });
+
+  test('setWidget emits fire-and-forget setWidget with the widget payload', () => {
+    const { controller, events } = makeController();
+    controller.setWidget('/ext/a', 'w1', { kind: 'info', props: { message: 'hi' } });
+    controller.setWidget('/ext/a', 'w1', null);
+    expect(events.map(e => e.kind)).toEqual(['setWidget', 'setWidget']);
+    const first = events[0]!.payload as { widgetId: string; widget: { kind: string } | null };
+    const second = events[1]!.payload as { widget: unknown };
+    expect(first.widgetId).toBe('w1');
+    expect(first.widget!.kind).toBe('info');
+    expect(second.widget).toBeNull();
+    expect(controller.pendingCount()).toBe(0);
+  });
+
+  test('setEditorText is fire-and-forget and emits regardless of editor open state', () => {
+    const { controller, events } = makeController();
+    controller.setEditorText('/ext/a', 'new content');
+    expect(events.map(e => e.kind)).toEqual(['setEditorText']);
+    expect((events[0]!.payload as { text: string }).text).toBe('new content');
+    expect(controller.pendingCount()).toBe(0);
+  });
+
+  test('editor joins the pending queue and resolves with the submitted string', async () => {
+    const { controller, events } = makeController();
+    const promise = controller.editor('/ext/a', 'Edit', 'before', { language: 'markdown' });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe('editor');
+    expect(controller.pendingCount()).toBe(1);
+    controller.handleResponse({
+      type: 'extension_ui_response',
+      requestId: events[0]!.requestId,
+      result: 'after',
+    });
+    await expect(promise).resolves.toBe('after');
+    expect(controller.pendingCount()).toBe(0);
+  });
+
+  test('editor resolves with undefined on null cancel result', async () => {
+    const { controller, events } = makeController();
+    const promise = controller.editor('/ext/a', 'Edit');
+    controller.handleResponse({
+      type: 'extension_ui_response',
+      requestId: events[0]!.requestId,
+      result: null,
+    });
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  test('editor resolves with undefined when cancelAllForSession tears down pending requests', async () => {
+    const { controller, events } = makeController();
+    const promise = controller.editor('/ext/a', 'Edit', 'prefill');
+    expect(events).toHaveLength(1);
+    controller.cancelAllForSession('session reset');
+    await expect(promise).resolves.toBeUndefined();
+    expect(controller.pendingCount()).toBe(0);
+  });
+
+  test('createContextFor exposes setTitle/setWidget/editor/setEditorText bound to the path', async () => {
+    const { controller, events } = makeController();
+    const ui = controller.createContextFor('/ext/bound');
+    ui.setTitle('T');
+    ui.setWidget('w1', { kind: 'progress', props: { ratio: 0.5 } });
+    ui.setEditorText('X');
+    const editorPromise = ui.editor('Edit', 'pre', { language: 'markdown' });
+    expect(events.map(e => e.kind)).toEqual(['setTitle', 'setWidget', 'setEditorText', 'editor']);
+    for (const ev of events) {
+      expect(ev.extensionPath).toBe('/ext/bound');
+    }
+    controller.handleResponse({
+      type: 'extension_ui_response',
+      requestId: events[3]!.requestId,
+      result: 'post',
+    });
+    await expect(editorPromise).resolves.toBe('post');
+  });
+
   test('concurrent requests get distinct ids', async () => {
     const { controller, events } = makeController();
     const p1 = controller.confirm('/ext/a', 'T1', 'M1');

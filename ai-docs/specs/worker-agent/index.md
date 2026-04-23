@@ -29,7 +29,7 @@ Start with **[overview](#overview)** below. Then drill into the module-level spe
 | [`vault-tools.md`](./vault-tools.md) | Filesystem tools, ZenFS operations, vault mounting (FSA + dev seed). |
 | [`mcp-proxy.md`](./mcp-proxy.md) | MCP tool descriptors + main-thread upcall protocol. |
 | [`skills.md`](./skills.md) | `.pi/skills/` loader, `/skill:<name>` expansion, sandboxed `bash` shim, worker-owned system prompt. |
-| [`extensions.md`](./extensions.md) | `.pi/extensions/` loader, `before_agent_start` / `tool_result` hooks, in-worker extension tools & slash commands, main-thread ExtensionsPanel. |
+| [`extensions.md`](./extensions.md) | `.pi/extensions/` loader, full hook surface (`before_agent_start`, `tool_result`, `context`, `tool_call`, `turn_start`, `message_end`, `session_loaded`, `before_compact`, `after_compact`), `registerTool` / `registerCommand` / `registerProvider` / `registerSkill`, full `pi.ui.*` channel (modals + widgets + title + editor), `ctx.session` forwarder, `ExtensionsPanel` + `ExtensionTitleSlot` + `ExtensionWidgetSlot` + `ExtensionUIRenderer`. |
 
 ## Overview
 
@@ -48,7 +48,7 @@ Start with **[overview](#overview)** below. Then drill into the module-level spe
 11. RPC wire protocol — typed commands, responses, events (agent, session-loaded, compaction, tool upcall).
 12. Transport pairs — in-process (`MessageChannel`) and Worker (`MessagePort`).
 13. Worker boot protocol — tagged init message transferring `agentPort` and `vfsPort`.
-14. Extensions — `.pi/extensions/` discovery, Blob-URL dynamic `import()` inside the Worker, `before_agent_start` and `tool_result` hooks, LLM-callable tool registration, `source: 'extension'` slash commands, per-extension error isolation, and the `list_extensions` / `set_extension_states` RPC surface that drives the main-thread `ExtensionsPanel` (see [`extensions.md`](./extensions.md)).
+14. Extensions — `.pi/extensions/` discovery, Blob-URL dynamic `import()` inside the Worker, the full hook surface (`before_agent_start`, `tool_result`, `context`, `tool_call`, `turn_start`, `message_end`, `session_loaded` with the `mount | reload | switch | fork | new | navigate` discriminator, `before_compact`, `after_compact`), LLM-callable tool / command / provider / skill registration, `source: 'extension'` and `source: 'extension-skill'` slash commands, a read-only `ctx.session` forwarder, per-extension error isolation, the `pi.ui.*` channel (modals + widgets + title + editor), and the `list_extensions` / `set_extension_states` / `extension_providers_changed` RPC surface that drives the main-thread `ExtensionsPanel` + `ExtensionTitleSlot` + `ExtensionWidgetSlot` + `ExtensionUIRenderer` (see [`extensions.md`](./extensions.md)).
 
 ### Scope out
 
@@ -76,7 +76,7 @@ packages/web-agent/src/worker-agent/
 │   ├── agent-session.ts
 │   ├── commands/             # frontmatter, prompt-templates, skills, registry, slash-commands
 │   ├── compaction/           # token-estimate, prepare, summarize, prompts, serialize, file-ops
-│   ├── extensions/           # Phase 1 runtime: types, loader, runner, wrapper
+│   ├── extensions/           # runtime: types, loader, runner, wrapper, session-forwarder
 │   ├── session/              # store, memory-store, dexie-store, session-manager, types, ids, tree
 │   ├── system-prompt.ts      # worker-owned prompt builder (skills + cwd + date)
 │   └── tools/                # read/write/edit/ls/glob/grep + truncation + file-mutation-queue

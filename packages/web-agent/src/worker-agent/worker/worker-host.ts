@@ -22,6 +22,7 @@ import {
   type CompactionSettings,
 } from '../core/compaction';
 import type { ExtensionDescriptor } from '../core/extensions';
+import { createStreamFn } from '../llm/stream';
 import type { LlmAuthCredential, LlmProvider } from '../llm/types';
 import { SessionManager } from '../core/session/session-manager';
 import type { SessionStore } from '../core/session/store';
@@ -38,6 +39,8 @@ import type {
   RpcSessionState,
 } from '../rpc/rpc-types';
 import { ExtensionHostController } from './extension-host';
+import { ExtensionProviderController } from './extension-provider-controller';
+import { ExtensionSkillController } from './extension-skill-controller';
 import { ExtensionUIController } from './extension-ui-controller';
 import type { InMemoryVaultSeed } from './init-protocol';
 
@@ -89,14 +92,22 @@ export class WorkerAgentHost implements AgentSessionHost {
   private readonly vfsPort: MessagePort;
   private readonly store: SessionStore;
   /**
-   * The pluggable LLM gateway. Owns both auth resolution (used by the
-   * live streamFn and the summariser) and the model catalog the Worker
-   * resolves `(provider, id)` identifiers against. Coding-agent's node
-   * Worker ships a config-file seeded `ModelRegistry`; web-agent's
-   * Worker delegates the equivalent responsibility to this provider so
-   * the main thread never has to push the catalog itself.
+   * The **composite** LLM gateway. Extension-contributed providers win
+   * by `model.provider` match; falls through to the constructor-injected
+   * base provider (Bodhi in production) otherwise. The streamFn,
+   * summariser, and `getAvailableModels` all consume the composite
+   * interchangeably with a single provider because the shape is
+   * identical.
    */
   private readonly provider: LlmProvider;
+  /**
+   * Base (non-extension) provider. Retained so `setAuthToken` fans out
+   * to both the base and any extension-contributed providers via the
+   * `ExtensionProviderController`.
+   */
+  private readonly baseProvider: LlmProvider;
+  private readonly providerController: ExtensionProviderController;
+  private readonly skillController: ExtensionSkillController;
   private readonly vaultMount: string;
   private readonly compactionSettings: CompactionSettings;
   /** Re-entrancy guard for the compaction pipeline. */
@@ -140,7 +151,17 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session = session;
     this.vfsPort = vfsPort;
     this.store = store;
-    this.provider = provider;
+    this.baseProvider = provider;
+    this.providerController = new ExtensionProviderController({
+      base: provider,
+      emitEvent: (event: RpcEventEnvelope) => this.hostEventSink?.(event),
+    });
+    this.provider = this.providerController.composite();
+    // Re-point the session's streamFn to the composite so extension
+    // contributions see LLM traffic. Silent-noop when the session
+    // stub ignores setStreamFn (unit tests).
+    this.session.setStreamFn(createStreamFn(this.provider));
+    this.skillController = new ExtensionSkillController({ registry: this.commands });
     this.vaultMount = options.vaultMount ?? VAULT_MOUNT;
     this.compactionSettings = { ...DEFAULT_COMPACTION_SETTINGS, ...options.compactionSettings };
     this.extensionUIController = new ExtensionUIController({
@@ -156,6 +177,9 @@ export class WorkerAgentHost implements AgentSessionHost {
         refreshTools: () => this.refreshTools(),
         emitEvent: (event: RpcEventEnvelope) => this.hostEventSink?.(event),
         uiController: this.extensionUIController,
+        providerController: this.providerController,
+        skillController: this.skillController,
+        getSessionManager: () => this.sessionManager,
       },
       options.initialExtensionEnabledState
     );
@@ -338,7 +362,12 @@ export class WorkerAgentHost implements AgentSessionHost {
    * or ignore the payload — so multi-provider hosts remain possible.
    */
   setAuthToken(credential: LlmAuthCredential | null): void {
+    // `this.provider` is the composite — it fans out to every
+    // extension-contributed provider and then to the base. Callers
+    // who need only the base can still reach it via `baseProvider`.
     this.provider.setAuthToken?.(credential);
+    // Keep the reference alive for type-narrowing in future work.
+    void this.baseProvider;
   }
 
   /**
@@ -377,6 +406,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.refreshTools();
     this.rebuildSystemPrompt();
     this.extensions.emitStates();
+    await this.extensions.emitSessionLoaded('mount');
   }
 
   /**
@@ -428,6 +458,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.refreshTools();
     this.rebuildSystemPrompt();
     this.extensions.emitStates();
+    await this.extensions.emitSessionLoaded('mount');
   }
 
   async unmountVault(): Promise<void> {
@@ -521,6 +552,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.restoreMessages(ctx.messages);
     await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
+    await this.extensions.emitSessionLoaded('switch');
   }
 
   async newSession(parentSession?: string): Promise<{ sessionId: string }> {
@@ -538,6 +570,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     const ctx = sm.buildSessionContext();
     await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
+    await this.extensions.emitSessionLoaded('new');
     return { sessionId: sm.getSessionId() };
   }
 
@@ -555,6 +588,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.restoreMessages(ctx.messages);
     await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
+    await this.extensions.emitSessionLoaded('fork');
     return { sessionId: forked.getSessionId() };
   }
 
@@ -571,6 +605,7 @@ export class WorkerAgentHost implements AgentSessionHost {
     this.session.restoreMessages(ctx.messages);
     await this.restoreModelFromContext(ctx.model);
     this.emitSessionLoaded();
+    await this.extensions.emitSessionLoaded('navigate');
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -638,10 +673,39 @@ export class WorkerAgentHost implements AgentSessionHost {
     const path = sm.getBranch();
     if (path.length < this.compactionSettings.minEntriesToCompact && !opts.force) return;
 
-    const preparation = prepareCompaction(path, this.compactionSettings, {
+    // Compute the worker's default preparation first so we can surface
+    // the worker-selected `cutIndex` to the `before_compact` hook. When
+    // no handlers subscribe the extra `prepareCompaction` call is a
+    // pure-function no-op — cheap.
+    const defaultPrep = prepareCompaction(path, this.compactionSettings, {
       force: opts.force,
     });
-    if (!preparation) return;
+    if (!defaultPrep) return;
+
+    const workerCutIndex = path.findIndex(e => e.id === defaultPrep.firstKeptEntryId);
+    const outcome = await this.extensions
+      .emitBeforeCompact({
+        type: 'before_compact',
+        entries: path,
+        cutIndex: workerCutIndex,
+      })
+      .catch(err => {
+        console.error('[WorkerAgentHost] before_compact dispatch failed:', err);
+        return undefined;
+      });
+
+    // Re-prepare using the extension-supplied overrides (if any). The
+    // pure function validates + clamps the inputs; an invalid override
+    // resolves to null and we fall back to the default preparation.
+    let preparation = defaultPrep;
+    if (outcome && (outcome.cutIndex !== undefined || outcome.preserveEntries?.length)) {
+      const overridden = prepareCompaction(path, this.compactionSettings, {
+        force: opts.force,
+        preferredCutIndex: outcome.cutIndex,
+        preserveEntries: outcome.preserveEntries,
+      });
+      if (overridden) preparation = overridden;
+    }
 
     this.compactionInFlight = true;
     const abort = new AbortController();
@@ -653,6 +717,7 @@ export class WorkerAgentHost implements AgentSessionHost {
       const model = this.session.getModel();
       if (!model) throw new Error('No model set — cannot summarize');
 
+      const beforeCount = path.length;
       const result = await compactSummarize(preparation, model, {
         provider: this.provider,
         signal: abort.signal,
@@ -670,6 +735,21 @@ export class WorkerAgentHost implements AgentSessionHost {
       const ctx = sm.buildSessionContext();
       this.session.restoreMessages(ctx.messages);
       this.emitSessionLoaded();
+
+      // Observer-only fan-out after the summary is committed. Errors
+      // are isolated inside the runner so they never influence the
+      // compaction success path.
+      await this.extensions
+        .emitAfterCompact({
+          type: 'after_compact',
+          summary: result.summary,
+          beforeCount,
+          afterCount: sm.getBranch().length,
+          tokensBefore: result.tokensBefore,
+        })
+        .catch(err => {
+          console.error('[WorkerAgentHost] after_compact dispatch failed:', err);
+        });
 
       this.hostEventSink?.({
         type: 'compaction_end',

@@ -459,3 +459,79 @@ describe('RPC round-trip — extension UI channel', () => {
     ]);
   });
 });
+
+// ----------------------------------------------------------------------------
+// Phase 2b — new UI kinds (setTitle / setWidget / editor / setEditorText)
+// and extension_providers_changed event.
+// ----------------------------------------------------------------------------
+
+describe('RPC round-trip — Phase 2b additions', () => {
+  function bootUIPair() {
+    const base = createFakeSession();
+    let sink: HostEventSink | null = null;
+    const host: AgentSessionHost = {
+      ...base,
+      setHostEventSink(s) {
+        sink = s;
+      },
+      handleExtensionUIResponse() {},
+    };
+    const { client: clientT, server: serverT } = createInProcessTransportPair();
+    new RpcServer(serverT, host);
+    const client = new RpcClient(clientT);
+    return {
+      client,
+      emit: (event: import('./rpc-types').RpcEventEnvelope) => sink?.(event),
+    };
+  }
+
+  test('setTitle / setWidget / editor / setEditorText each flow as distinct kinds', async () => {
+    const { client, emit } = bootUIPair();
+    const seen: ExtensionUIRequestEvent[] = [];
+    client.onExtensionUIRequest(event => seen.push(event));
+
+    const kinds: ExtensionUIRequestEvent['kind'][] = [
+      'setTitle',
+      'setWidget',
+      'editor',
+      'setEditorText',
+    ];
+    const payloads: Record<string, unknown> = {
+      setTitle: { text: 'hello' },
+      setWidget: { widgetId: 'w1', widget: { kind: 'info', props: { message: 'hi' } } },
+      editor: { title: 'Edit', prefill: '', language: null, placeholder: null },
+      setEditorText: { text: 'new text' },
+    };
+    let idx = 0;
+    for (const kind of kinds) {
+      emit({
+        type: 'extension_ui_request',
+        requestId: `req-${idx++}`,
+        extensionPath: '/ext/a',
+        kind,
+        payload: payloads[kind] as never,
+      });
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(seen.map(s => s.kind)).toEqual(kinds);
+    const widgetPayload = seen[1].payload as { widget: { kind: string } };
+    expect(widgetPayload.widget.kind).toBe('info');
+  });
+
+  test('extension_providers_changed event dispatches to its dedicated listener', async () => {
+    const { client, emit } = bootUIPair();
+    const seen: Array<{ providerId: string }> = [];
+    client.onExtensionProvidersChanged(event => {
+      for (const p of event.providers) seen.push({ providerId: p.providerId });
+    });
+    emit({
+      type: 'extension_providers_changed',
+      providers: [
+        { providerId: 'echo', extensionPath: '/ext/a' },
+        { providerId: 'fake', extensionPath: '/ext/b' },
+      ],
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(seen.map(s => s.providerId)).toEqual(['echo', 'fake']);
+  });
+});

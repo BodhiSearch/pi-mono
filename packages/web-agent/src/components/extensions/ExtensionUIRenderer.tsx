@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 import type { ActiveExtensionDialog } from '@/hooks/useExtensionUI';
 
 export interface ExtensionUIRendererProps {
@@ -75,7 +76,10 @@ function ExtensionDialogShell({ dialog, respond, dismiss }: ShellProps) {
       }}
     >
       <div
-        className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+        className={cn(
+          'w-full rounded-lg bg-white p-6 shadow-xl',
+          dialog.kind === 'editor' ? 'max-w-2xl' : 'max-w-md'
+        )}
         role="dialog"
         aria-modal="true"
         data-testid="extension-ui-dialog"
@@ -92,6 +96,9 @@ function ExtensionDialogBody({ dialog, respond, dismiss }: ShellProps) {
   }
   if (dialog.kind === 'confirm') {
     return <ConfirmDialog dialog={dialog} respond={respond} dismiss={dismiss} />;
+  }
+  if (dialog.kind === 'editor') {
+    return <EditorDialog dialog={dialog} respond={respond} dismiss={dismiss} />;
   }
   return <InputDialog dialog={dialog} respond={respond} dismiss={dismiss} />;
 }
@@ -183,6 +190,81 @@ function ConfirmDialog({
           onClick={() => respond(requestId, true)}
         >
           Confirm
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function EditorDialog({
+  dialog,
+  respond,
+  dismiss,
+}: {
+  dialog: Extract<ActiveExtensionDialog, { kind: 'editor' }>;
+  respond: ShellProps['respond'];
+  dismiss: () => void;
+}) {
+  const { payload, requestId, extensionPath } = dialog;
+  // The buffer starts from the prefill the worker sent. If
+  // `pi.ui.setEditorText` arrives while the editor is open, the hook
+  // mutates `dialog.payload.prefill` and we re-sync via the effect
+  // below so extension-driven edits aren't silently overwritten by
+  // user input that predates the update.
+  const [value, setValue] = useState(payload.prefill);
+  const lastPrefillRef = useRef(payload.prefill);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (payload.prefill !== lastPrefillRef.current) {
+      lastPrefillRef.current = payload.prefill;
+      setValue(payload.prefill);
+    }
+  }, [payload.prefill]);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, [requestId]);
+
+  const submit = useCallback(() => {
+    respond(requestId, value);
+  }, [respond, requestId, value]);
+
+  return (
+    <div>
+      <ExtensionAttribution path={extensionPath} />
+      <h2 className="text-base font-semibold text-foreground" data-testid="extension-dialog-title">
+        {payload.title}
+      </h2>
+      <textarea
+        ref={textareaRef}
+        data-testid="extension-editor"
+        data-extension-path={extensionPath}
+        data-editor-language={payload.language ?? ''}
+        className="mt-3 min-h-[220px] w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        placeholder={payload.placeholder ?? undefined}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={e => {
+          // Ctrl/Cmd + Enter submits — matches the coding-agent modal
+          // editor's affordance so muscle memory carries over.
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <div className="mt-4 flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          data-testid="extension-dialog-cancel"
+          onClick={dismiss}
+        >
+          Cancel
+        </Button>
+        <Button type="button" data-testid="extension-dialog-submit" onClick={submit}>
+          Save
         </Button>
       </div>
     </div>

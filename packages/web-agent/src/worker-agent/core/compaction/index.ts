@@ -7,6 +7,7 @@ export {
 } from './types';
 export { estimateContextTokens, estimateTokens, shouldCompact } from './token-estimate';
 export { prepareCompaction } from './prepare';
+export type { PrepareCompactionOptions } from './prepare';
 export { compactSummarize, type CompactSummarizeOptions } from './summarize';
 export {
   COMPACTION_SUMMARY_PREFIX,

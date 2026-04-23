@@ -9,10 +9,13 @@
  */
 
 export type {
+  AfterCompactEvent,
   AgentToolResult,
   AgentToolUpdateCallback,
   BeforeAgentStartEvent,
   BeforeAgentStartEventResult,
+  BeforeCompactEvent,
+  BeforeCompactEventResult,
   ContextEvent,
   ContextEventResult,
   ContextSupplier,
@@ -21,18 +24,24 @@ export type {
   ExtensionCommandHandler,
   ExtensionContext,
   ExtensionDescriptor,
+  ExtensionEditorOptions,
   ExtensionError,
   ExtensionEventHandler,
   ExtensionFactory,
   ExtensionManifest,
   ExtensionSelectOption,
+  ExtensionSkillInput,
   ExtensionUIContext,
   ExtensionUIDialogOptions,
   ExtensionUINotifyType,
+  ExtensionWidget,
   MessageEndEvent,
   RegisteredCommand,
+  RegisteredProvider,
+  RegisteredSkill,
   RegisteredTool,
   SessionLoadedEvent,
+  SessionLoadedReason,
   ToolCallEvent,
   ToolCallEventResult,
   ToolDefinition,
@@ -58,6 +67,14 @@ export type {
 } from './loader';
 
 export { ExtensionRunner } from './runner';
-export type { ExtensionErrorListener, ToolCallOutcome, ToolResultOverride } from './runner';
+export type {
+  BeforeCompactOutcome,
+  ExtensionErrorListener,
+  ToolCallOutcome,
+  ToolResultOverride,
+} from './runner';
+
+export { InvalidSessionError, ReadonlySessionForwarder } from './session-forwarder';
+export type { SessionSupplier } from './session-forwarder';
 
 export { wrapRegisteredTool, wrapRegisteredTools } from './wrapper';

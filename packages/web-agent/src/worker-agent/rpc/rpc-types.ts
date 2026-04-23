@@ -11,7 +11,11 @@ import type { AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { LlmAuthCredential } from '../llm/types';
 import type { SlashCommandInfo } from '../core/commands/types';
-import type { ExtensionDescriptor, ExtensionError } from '../core/extensions/types';
+import type {
+  ExtensionDescriptor,
+  ExtensionError,
+  ExtensionWidget,
+} from '../core/extensions/types';
 import type {
   SessionHeader,
   SessionMeta,
@@ -336,6 +340,28 @@ export interface RpcExtensionErrorEvent extends ExtensionError {
   type: 'extension_error';
 }
 
+/**
+ * Plain-data descriptor for an extension-contributed provider. Emitted
+ * alongside `extension_providers_changed` so the main thread can
+ * attribute new provider ids in its catalog without reaching back into
+ * the worker.
+ */
+export interface ExtensionProviderDescriptor {
+  providerId: string;
+  extensionPath: string;
+}
+
+/**
+ * Worker → Main synthetic event: the set of extension-contributed LLM
+ * providers changed (registration or vault unmount). The main thread
+ * re-runs `get_available_models` in response so the picker reflects the
+ * new catalog.
+ */
+export interface RpcExtensionProvidersChangedEvent {
+  type: 'extension_providers_changed';
+  providers: ExtensionProviderDescriptor[];
+}
+
 // ============================================================================
 // Extension UI channel (Phase 2a)
 // ============================================================================
@@ -344,11 +370,22 @@ export interface RpcExtensionErrorEvent extends ExtensionError {
 export type RpcExtensionNotifyType = 'info' | 'warning' | 'error';
 
 /**
- * UI request kinds. `notify` / `setStatus` are fire-and-forget (main
- * sends no reply); `select` / `confirm` / `input` correlate via
- * `requestId` to a later `extension_ui_response` command.
+ * UI request kinds.
+ *
+ *  - Fire-and-forget (no reply): `notify`, `setStatus`, `setTitle`,
+ *    `setWidget`, `setEditorText`.
+ *  - Awaited: `select`, `confirm`, `input`, `editor`.
  */
-export type ExtensionUIRequestKind = 'notify' | 'setStatus' | 'select' | 'confirm' | 'input';
+export type ExtensionUIRequestKind =
+  | 'notify'
+  | 'setStatus'
+  | 'setTitle'
+  | 'setWidget'
+  | 'setEditorText'
+  | 'select'
+  | 'confirm'
+  | 'input'
+  | 'editor';
 
 export interface ExtensionUINotifyPayload {
   message: string;
@@ -383,12 +420,39 @@ export interface ExtensionUIInputPayload {
   placeholder: string | null;
 }
 
+export interface ExtensionUISetTitlePayload {
+  /** `null` clears this extension's title slot. */
+  text: string | null;
+}
+
+export interface ExtensionUISetWidgetPayload {
+  /** Stable identifier chosen by the extension; scopes the update. */
+  widgetId: string;
+  /** `null` removes the widget; otherwise replaces the current value. */
+  widget: ExtensionWidget | null;
+}
+
+export interface ExtensionUIEditorPayload {
+  title: string;
+  prefill: string;
+  language: string | null;
+  placeholder: string | null;
+}
+
+export interface ExtensionUISetEditorTextPayload {
+  text: string;
+}
+
 export type ExtensionUIRequestPayload =
   | ExtensionUINotifyPayload
   | ExtensionUISetStatusPayload
   | ExtensionUISelectPayload
   | ExtensionUIConfirmPayload
-  | ExtensionUIInputPayload;
+  | ExtensionUIInputPayload
+  | ExtensionUISetTitlePayload
+  | ExtensionUISetWidgetPayload
+  | ExtensionUIEditorPayload
+  | ExtensionUISetEditorTextPayload;
 
 /**
  * Worker → Main event requesting a UI interaction. `requestId`
@@ -422,6 +486,7 @@ export type RpcEventEnvelope =
   | RpcCompactionEvent
   | RpcExtensionStatesEvent
   | RpcExtensionErrorEvent
+  | RpcExtensionProvidersChangedEvent
   | ExtensionUIRequestEvent;
 
 // ============================================================================
@@ -431,4 +496,8 @@ export type RpcEventEnvelope =
 export type RpcMessage = RpcCommand | RpcResponse | RpcEventEnvelope;
 export type { UiMessageMeta } from '../core/session/types';
 export type { SlashCommandInfo, SlashCommandSource } from '../core/commands/types';
-export type { ExtensionDescriptor, ExtensionError } from '../core/extensions/types';
+export type {
+  ExtensionDescriptor,
+  ExtensionError,
+  ExtensionWidget,
+} from '../core/extensions/types';

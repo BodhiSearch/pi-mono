@@ -32,16 +32,24 @@ import type { AgentSession } from '../core/agent-session';
 import type { CommandRegistry } from '../core/commands';
 import {
   ExtensionRunner,
+  ReadonlySessionForwarder,
   loadExtensionsFromVault,
   wrapRegisteredTools,
+  type AfterCompactEvent,
+  type BeforeCompactEvent,
+  type BeforeCompactOutcome,
   type Extension,
   type ExtensionContext,
   type ExtensionDescriptor,
   type ExtensionError,
   type ExtensionUIContext,
+  type SessionLoadedReason,
 } from '../core/extensions';
+import type { SessionManager } from '../core/session/session-manager';
 import type { VaultOperations } from '../fs/zenfs-operations';
 import type { RpcEventEnvelope } from '../rpc/rpc-types';
+import type { ExtensionProviderController } from './extension-provider-controller';
+import type { ExtensionSkillController } from './extension-skill-controller';
 import type { ExtensionUIController } from './extension-ui-controller';
 
 /**
@@ -60,6 +68,16 @@ export interface ExtensionHostDeps {
   emitEvent(event: RpcEventEnvelope): void;
   /** UI controller that backs `ctx.ui` / `pi.ui`. */
   uiController: ExtensionUIController;
+  /** Provider controller that backs `pi.registerProvider`. */
+  providerController: ExtensionProviderController;
+  /** Skill controller that backs `pi.registerSkill`. */
+  skillController: ExtensionSkillController;
+  /**
+   * Supplier for the active `SessionManager`. Extensions see it via
+   * `ctx.session` through a `ReadonlySessionForwarder` that pins the
+   * id current at `buildContext` time — swaps mid-handler throw.
+   */
+  getSessionManager(): SessionManager | null;
 }
 
 export class ExtensionHostController {
@@ -131,19 +149,39 @@ export class ExtensionHostController {
     this.runner.setExtensions(result.extensions);
     this.descriptors = result.descriptors;
     this.deps.commands.setExtensionCommands(this.runner.getRegisteredCommands());
+    // Reconcile contributed providers + skills after every load so the
+    // composite provider, the provider-list RPC event, and the slash
+    // palette reflect the freshly loaded set. Both controllers are
+    // idempotent on unchanged input.
+    this.deps.providerController.setFromExtensions(result.extensions);
+    this.deps.skillController.setFromExtensions(result.extensions);
     this.ensureToolCallHook();
     this.ensureTransformContextHook();
     this.ensureBeforeToolCallHook();
   }
 
   /**
-   * Fire the `session_loaded` extension event. Phase 2a only invokes
-   * this from the `/reload` path — initial mount and dev-seed happen
-   * before extensions subscribe, so no one is listening yet. Phase 3
-   * needs to revisit the boot lifecycle.
+   * Fire the `session_loaded` extension event. Phase 2b widens the
+   * reason to every session-transition path — mount / reload / switch
+   * / fork / new / navigate — so extensions get one observable call
+   * per transition.
    */
-  async emitSessionLoaded(reason: 'reload' = 'reload'): Promise<void> {
+  async emitSessionLoaded(reason: SessionLoadedReason): Promise<void> {
     await this.runner.emitSessionLoaded({ type: 'session_loaded', reason }, this.buildContext());
+  }
+
+  /**
+   * Fire the `before_compact` extension event. Returns the merged
+   * `{ cutIndex?, preserveEntries? }` the worker should apply before
+   * preparing the summary. Error-isolated inside the runner.
+   */
+  async emitBeforeCompact(event: BeforeCompactEvent): Promise<BeforeCompactOutcome | undefined> {
+    return this.runner.emitBeforeCompact(event, this.buildContext());
+  }
+
+  /** Fire the `after_compact` extension event. Observer only. */
+  async emitAfterCompact(event: AfterCompactEvent): Promise<void> {
+    await this.runner.emitAfterCompact(event, this.buildContext());
   }
 
   /** `set_extension_states` RPC command entry point. */
@@ -173,6 +211,8 @@ export class ExtensionHostController {
     this.runner.clear();
     this.descriptors = [];
     this.deps.commands.clearExtensionCommands();
+    this.deps.providerController.clear();
+    this.deps.skillController.clear();
     // Cancel any in-flight UI requests; late replies are dropped.
     this.deps.uiController.cancelAllForSession('vault unmount');
   }
@@ -226,12 +266,18 @@ export class ExtensionHostController {
   /** Build a fresh `ExtensionContext` per call so handlers see live state. */
   buildContext(extensionPath?: string): ExtensionContext {
     const ui = this.buildUIContextFor(extensionPath);
+    // Issue a fresh forwarder per `buildContext` call so the pinned
+    // session id tracks the id that was active when the handler was
+    // dispatched. Late reads after a session swap throw
+    // `InvalidSessionError`.
+    const session = ReadonlySessionForwarder.from(() => this.deps.getSessionManager());
     return {
       cwd: this.deps.isVaultAttached() ? this.deps.getVaultMount() : undefined,
       isIdle: () => !this.deps.session.isStreaming(),
       abort: () => this.deps.session.abort(),
       ui,
       hasUI: true,
+      session,
     };
   }
 

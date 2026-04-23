@@ -6,6 +6,10 @@ import { wrapRegisteredTool, wrapRegisteredTools } from './wrapper';
 const noopUI: ExtensionUIContext = {
   notify: () => {},
   setStatus: () => {},
+  setTitle: () => {},
+  setWidget: () => {},
+  setEditorText: () => {},
+  editor: async () => undefined,
   select: async () => undefined,
   confirm: async () => false,
   input: async () => undefined,
@@ -39,6 +43,7 @@ describe('wrapRegisteredTool', () => {
       abort: () => {},
       ui: noopUI,
       hasUI: true,
+      session: null,
     };
     const wrapped = wrapRegisteredTool(makeRegistered(), () => current);
 
@@ -48,7 +53,14 @@ describe('wrapRegisteredTool', () => {
     const first = await wrapped.execute('call-1', { name: 'Alice' }, undefined, undefined);
     expect(first.content[0]).toMatchObject({ text: 'call-1:Alice:/vault' });
 
-    current = { cwd: '/other', isIdle: () => false, abort: () => {}, ui: noopUI, hasUI: true };
+    current = {
+      cwd: '/other',
+      isIdle: () => false,
+      abort: () => {},
+      ui: noopUI,
+      hasUI: true,
+      session: null,
+    };
     const second = await wrapped.execute('call-2', { name: 'Bob' }, undefined, undefined);
     expect(second.content[0]).toMatchObject({ text: 'call-2:Bob:/other' });
   });
@@ -60,6 +72,7 @@ describe('wrapRegisteredTool', () => {
       abort: () => {},
       ui: noopUI,
       hasUI: true,
+      session: null,
     };
     const a = makeRegistered();
     const b = makeRegistered();
@@ -82,6 +95,7 @@ describe('wrapRegisteredTool', () => {
       abort: () => {},
       ui: noopUI,
       hasUI: true,
+      session: null,
     }));
     expect(wrapped.prepareArguments).toBe(prepare);
     expect(wrapped.executionMode).toBe('sequential');

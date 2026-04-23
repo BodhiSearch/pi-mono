@@ -8,6 +8,8 @@ import { useSkillSandbox } from '@/hooks/useSkillSandbox';
 import { useExtensionState } from '@/hooks/useExtensionState';
 import { useExtensionUI } from '@/hooks/useExtensionUI';
 import ExtensionUIRenderer from '@/components/extensions/ExtensionUIRenderer';
+import ExtensionTitleSlot from '@/components/extensions/ExtensionTitleSlot';
+import ExtensionWidgetSlot from '@/components/extensions/ExtensionWidgetSlot';
 import { SessionPicker } from '@/components/sessions/SessionPicker';
 import type { McpToolDescriptor, ToolCallHandler } from '@/worker-agent';
 import ChatMessages from './ChatMessages';
@@ -46,6 +48,9 @@ export default function ChatDemo() {
     activeDialog,
     respond: respondToDialog,
     dismissActive: dismissExtensionDialog,
+    title: extensionTitle,
+    titleExtensionPath: extensionTitlePath,
+    widgets: extensionWidgets,
   } = useExtensionUI();
 
   // Merge MCP tools with the bash-skill shim so the worker sees one
@@ -108,6 +113,11 @@ export default function ChatDemo() {
           onDelete={sessions.delete}
           onRename={sessions.rename}
         />
+        <ExtensionTitleSlot
+          title={extensionTitle}
+          extensionPath={extensionTitlePath}
+          className="ml-auto"
+        />
       </div>
       <ChatMessages
         messages={messages}
@@ -123,6 +133,8 @@ export default function ChatDemo() {
           void sessions.navigateToLeaf(entryId);
         }}
       />
+      <ExtensionWidgetSlot widgets={extensionWidgets} />
+
       <ChatInput
         onSendMessage={sendMessage}
         onClearMessages={clearMessages}

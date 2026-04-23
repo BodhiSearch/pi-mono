@@ -19,10 +19,12 @@
  */
 
 import type {
+  ExtensionEditorOptions,
   ExtensionSelectOption,
   ExtensionUIContext,
   ExtensionUIDialogOptions,
   ExtensionUINotifyType,
+  ExtensionWidget,
 } from '../core/extensions/types';
 import type {
   ExtensionUIRequestEvent,
@@ -74,9 +76,13 @@ export class ExtensionUIController {
     return {
       notify: (message, type) => this.notify(extensionPath, message, type),
       setStatus: text => this.setStatus(extensionPath, text),
+      setTitle: text => this.setTitle(extensionPath, text ?? null),
+      setWidget: (widgetId, widget) => this.setWidget(extensionPath, widgetId, widget),
       select: (title, options, opts) => this.select(extensionPath, title, options, opts),
       confirm: (title, message, opts) => this.confirm(extensionPath, title, message, opts),
       input: (title, placeholder, opts) => this.input(extensionPath, title, placeholder, opts),
+      editor: (title, prefill, opts) => this.editor(extensionPath, title, prefill, opts),
+      setEditorText: text => this.setEditorText(extensionPath, text),
     };
   }
 
@@ -103,6 +109,56 @@ export class ExtensionUIController {
       extensionPath,
       kind: 'setStatus',
       payload: { text: text ?? null },
+    });
+  }
+
+  /**
+   * Fire-and-forget chat-header title update. `null` clears the slot;
+   * the main-thread hook resolves the "current title" to the most
+   * recently updated non-null entry across extensions.
+   */
+  setTitle(extensionPath: string, text: string | null): void {
+    const requestId = this.idFactory();
+    this.emitRequest({
+      type: 'extension_ui_request',
+      requestId,
+      extensionPath,
+      kind: 'setTitle',
+      payload: { text: text ?? null },
+    });
+  }
+
+  /**
+   * Fire-and-forget widget slot update. `widget=null` removes the slot
+   * keyed by `widgetId`; the main-thread hook renders non-null widgets
+   * in the transcript region.
+   */
+  setWidget(extensionPath: string, widgetId: string, widget: ExtensionWidget | null): void {
+    const requestId = this.idFactory();
+    this.emitRequest({
+      type: 'extension_ui_request',
+      requestId,
+      extensionPath,
+      kind: 'setWidget',
+      payload: { widgetId, widget: widget ?? null },
+    });
+  }
+
+  /**
+   * Fire-and-forget editor buffer mutation. The main-thread hook
+   * ignores the call when no editor is open for this extension. No
+   *-op on the worker if there is no editor — we still emit so
+   * `pi.ui.setEditorText` is observable from the main thread during
+   * tests.
+   */
+  setEditorText(extensionPath: string, text: string): void {
+    const requestId = this.idFactory();
+    this.emitRequest({
+      type: 'extension_ui_request',
+      requestId,
+      extensionPath,
+      kind: 'setEditorText',
+      payload: { text },
     });
   }
 
@@ -158,6 +214,27 @@ export class ExtensionUIController {
       extensionPath,
       kind: 'input',
       payload: { title, placeholder: placeholder ?? null },
+      opts,
+      cancelValue: null,
+    });
+    return result === null || result === undefined ? undefined : result;
+  }
+
+  async editor(
+    extensionPath: string,
+    title: string,
+    prefill?: string,
+    opts?: (ExtensionEditorOptions & ExtensionUIDialogOptions) | undefined
+  ): Promise<string | undefined> {
+    const result = await this.request<string | null>({
+      extensionPath,
+      kind: 'editor',
+      payload: {
+        title,
+        prefill: prefill ?? '',
+        language: opts?.language ?? null,
+        placeholder: opts?.placeholder ?? null,
+      },
       opts,
       cancelValue: null,
     });

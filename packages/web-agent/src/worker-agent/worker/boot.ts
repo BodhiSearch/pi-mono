@@ -13,7 +13,6 @@
  */
 
 import { AgentSession } from '../core/agent-session';
-import { createStreamFn } from '../llm/stream';
 import { MemorySessionStore } from '../core/session/memory-store';
 import { RpcClient } from '../rpc/rpc-client';
 import { RpcServer } from '../rpc/rpc-server';
@@ -92,7 +91,9 @@ function bootOnce(options: GetAgentWorkerOptions): AgentWorkerBoot {
 function bootInProcess(agentOptions?: WebAgentOptions): AgentWorkerBoot {
   const provider = new BodhiProvider();
   const session = new AgentSession({});
-  session.setStreamFn(createStreamFn(provider));
+  // `WorkerAgentHost` sets `session.setStreamFn` using its composite
+  // LLM provider (base + extension contributions), so we no longer
+  // install a streamFn here.
   // No vfs port in fallback; vault tools won't work, but the agent does.
   const fakePort = makeFakePort();
   // In-process fallback uses MemorySessionStore so jsdom tests don't need IDB.
