@@ -4,46 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project focus
 
-Active initiative: **web-agent** at `packages/web-agent/` — a browser-native coding-agent harness. The worker-side runtime lives at `packages/web-agent/src/worker-agent/` and is the extraction target for the forthcoming `@bodhiapp/bodhi-web-agent` library; the enclosing `packages/web-agent/` folder is the reference app that consumes it.
+Active initiative: **web-acp** at `packages/web-acp/` — a browser-native agent that speaks the **Agent Client Protocol (ACP)** as its internal wire protocol. Main thread hosts the ACP client (React UI, `/vault` mount, fs/* delegation, permission prompts). Web Worker hosts the ACP agent (turn loop, LLM calls via `@mariozechner/pi-ai`, tool invocations). The transport between them frames ACP JSON-RPC 2.0 over `MessageChannel` today, and is explicitly designed to be swappable (future HTTP/SSE for remote-agent deployments).
+
+`packages/web-agent/` shipped M0–M8 and is now a **frozen reference spike** — no new features land, consulted for session/tool/extension-hook patterns only. See `ai-docs/web-agent/README.md` for the archive marker and the list of specific architectural drifts that motivated the pivot.
 
 Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `pods`) are upstream libraries we consume and occasionally patch. Do not extend them unless explicitly asked.
 
-## Hard constraint
+## Hard constraints
 
-**`packages/web-agent/` must not depend on `packages/coding-agent`.** No imports, no workspace entry, nothing. web-agent is heavily influenced by coding-agent — we study its session shape, RPC schema, extension hooks, and tool "operations" pattern, and we port those patterns for the browser runtime. But coding-agent pulls node-only deps (`fs`, `child_process`, jiti, `pi-tui`) that break browser bundling and would block the Phase 6 extraction into `@bodhiapp/bodhi-web-agent`. Copy the source, trim the node bits, accept the short-term duplication. `grep -r "pi-coding-agent\|packages/coding-agent" packages/web-agent/src/worker-agent/` must return zero.
+- **`packages/web-acp/` must not import from `packages/web-agent/` or `packages/coding-agent/`.** web-agent is a frozen spike with known compromises we are moving away from; coding-agent pulls node-only deps (`fs`, `child_process`, jiti, `pi-tui`) that break browser bundling. Both are reference material — copy the pattern, re-derive the types. `grep -r "packages/web-agent\|packages/coding-agent" packages/web-acp/src/` must always return zero.
+- **ACP is the wire protocol.** No bespoke RPC between client and agent. Extensions to ACP go via `_meta` / namespaced notifications first, upstream RFD second, sub-protocols as a documented last resort.
+- **Transport is swappable.** The framing layer imports zero `MessagePort`/`Worker`/DOM references. Browser is today's default; HTTP/SSE is tomorrow's. A test-double transport exists by M0.b to prove the boundary.
+- **Storage is IndexedDB, not OPFS.** Rationale carried from web-agent (`ai-docs/web-agent/04-principles.md` § 2).
 
 ## Steering docs (load on demand)
 
-- @ai-docs/00-vision.md — vision
-- @ai-docs/01-goals.md — capability checklist
-- @ai-docs/02-architecture.md — RPC + ZenFS + FSA + extension sandboxing
-- @ai-docs/milestones/index.md — status board with progressive-disclosure hooks
-- @ai-docs/04-principles.md — working rules (read when a design choice is on the line)
-- @ai-docs/decisions/index.md — append-only decisions log
-- @ai-docs/specs/README.md — top-level navigation across all module specs
-- @ai-docs/specs/worker-agent/index.md — specs for `packages/web-agent/src/worker-agent/` (the extractable agent library)
-- @ai-docs/specs/worker-bodhi/index.md — specs for `packages/web-agent/src/worker-bodhi/` (the concrete Bodhi auth provider)
+- @ai-docs/web-acp/steering/00-vision.md — north star
+- @ai-docs/web-acp/steering/01-goals.md — capability checklist with test seams
+- @ai-docs/web-acp/steering/02-architecture.md — layer cake, transport boundary, ZenFS + ACP fs/* mapping
+- @ai-docs/web-acp/steering/04-principles.md — rules that survive plans
+- @ai-docs/web-acp/milestones/index.md — status board with load-when hooks
 
-Per-deliverable plans at `ai-docs/plans/*.md` are disposable; the files above are durable.
+### Reference (web-agent archive)
 
-## Functional specs
+- @ai-docs/web-agent/README.md — frozen-archive marker + what shipped + why we pivoted
+- @ai-docs/web-agent/00-vision.md — original web-agent vision
+- @ai-docs/web-agent/02-architecture.md — original web-agent architecture (useful for ZenFS layout + testing-seam patterns that port)
+- @ai-docs/web-agent/milestones/index.md — web-agent M0–M9 status board
+- @ai-docs/specs/worker-agent/index.md — technical specs for the web-agent worker-agent library; crib sheet for session shape, tool operations, extension hook signatures
 
-`ai-docs/specs/` holds the living specs for the extractable worker-agent library and its concrete implementations. Each module has its own folder with an `index.md` entry point; topic files inside each folder combine the functional (what / why) and technical (how / where) views since splitting them leads to duplication and drift.
-
-Conventions:
-
-- Each module folder has `index.md` (overview, navigation, change procedure) and one file per topic / submodule.
-- Technical content references files by **repo-relative paths** and symbols by **method / field name**, never line numbers.
-- Specs are living documents. Changes to the code and changes to the matching spec ship together.
-
-**Rule:** any plan that changes files under `packages/web-agent/src/worker-agent/` or `packages/web-agent/src/worker-bodhi/` MUST include an explicit task to update the matching topic file(s) before the plan is considered complete. The spec update is part of the change, not a follow-up. When the functional / technical surface is unchanged (pure internal refactor), state that explicitly in the plan rather than skipping the check.
-
-Currently tracked:
-
-| Folder | Spec |
-| --- | --- |
-| `packages/web-agent/src/worker-agent/` | `ai-docs/specs/worker-agent/` (see its `index.md` for the topic map) |
-| `packages/web-agent/src/worker-bodhi/` | `ai-docs/specs/worker-bodhi/` (see its `index.md` for the topic map) |
+Per-milestone plans at `ai-docs/web-acp/plans/*.md` are disposable. The steering docs above and the milestone previews at `ai-docs/web-acp/milestones/` are durable.
 
 ## Dev commands
 
@@ -52,11 +42,21 @@ Repo root:
 ```bash
 npm install                 # install all workspaces
 npm run build               # build packages in dependency order
-npm run check               # biome + tsgo + browser-smoke + web-ui + web-agent
+npm run check               # biome + tsgo + browser-smoke + web-ui + web-agent (web-acp to be added at M0)
 npm test                    # vitest across workspaces --if-present
 ```
 
-`packages/web-agent/`:
+`packages/web-acp/` (active):
+
+```bash
+npm run dev                 # vite dev server
+npm run build               # tsc -b && vite build
+npm test                    # vitest (unit)
+npm run test:e2e            # Playwright — real LLM via .env.test (wired at M0)
+npm run check               # lint + typecheck
+```
+
+`packages/web-agent/` (frozen — reference only, do not extend):
 
 ```bash
 npm run dev                 # vite dev server on :5173
@@ -68,10 +68,16 @@ npm run check               # lint + typecheck (uses tsc -b)
 
 ## Footguns
 
-- **Authoritative typecheck is `tsc -b`, not `tsc --noEmit`.** The project-references tsconfig in `packages/web-agent/` makes `--noEmit` check zero files.
+- **Authoritative typecheck is `tsc -b`, not `tsc --noEmit`** in packages using project references. web-agent's `packages/web-agent/` is one such; verify for `packages/web-acp/` at M0.
 - **Do not run `npm run build` in `packages/ai`** unless you want to regenerate `src/models.generated.ts` from live upstream APIs — it can break existing tests when upstream removes a model. Use `npx tsgo -p tsconfig.build.json` for a TS-only rebuild.
 
 ## Reference projects (read-only, not dependencies)
 
-- **`bodhiapps/zenfs-browser`** — ZenFS mount lifecycle, FSA handle persistence, dev-seed testing pattern.
-- **`packages/coding-agent`** — architectural reference for session shape, RPC schema, extension hooks, tool "operations" pattern. Copy patterns, **do not import** (it pulls node-only deps that break browser bundling and block Phase 6 extraction).
+- **`agentclientprotocol/agent-client-protocol`** at `/Users/amir36/Documents/workspace/src/github.com/agentclientprotocol/agent-client-protocol/` — the Agent Client Protocol itself. `schema/schema.json` is ground truth for wire shapes; `docs/protocol/` is the conceptual model; `src/` is the reference TS implementation. ACP library dependency choice (consume vs vendor vs hand-roll) settled at M0.
+- **`svkozak/pi-acp`** at `/Users/amir36/Documents/workspace/src/github.com/svkozak/pi-acp/` — the closest existing "ACP agent in TypeScript" (Node/stdio, fronts `coding-agent`). Prior art, not a dependency. `src/acp/agent.ts`, `session.ts`, `session-store.ts`, `slash-commands.ts` are the most instructive files; the stdio plumbing does not port.
+- **`bodhiapps/zenfs-browser`** — ZenFS mount lifecycle, FSA handle persistence, dev-seed testing pattern. Used by web-agent; pattern carries to web-acp.
+- **`packages/coding-agent`** — architectural reference for session shape, RPC schema, extension hooks, tool "operations" pattern. Copy patterns, **do not import** (it pulls node-only deps that break browser bundling).
+
+## AGENTS.md
+
+See `AGENTS.md` for development rules (conversational style, code quality, command policy, PR workflow, changelog, git safety). Those rules apply unchanged to `packages/web-acp/` work.
