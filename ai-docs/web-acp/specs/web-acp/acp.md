@@ -10,10 +10,10 @@ The `src/acp/` subtree holds the ACP wire surface and the
 Bodhi-specific extensions layered on top of the
 `@agentclientprotocol/sdk@0.17.0` primitives. Three files:
 
-- **`index.ts`** — SDK re-exports + the two Bodhi-specific
-  constants (`BODHI_AUTH_METHOD_ID`, `BODHI_LIST_MODELS_METHOD`)
-  + the `_meta` shapes that travel alongside ACP's standard
-  payloads.
+- **`index.ts`** — SDK re-exports + the Bodhi-specific constants
+  (`BODHI_AUTH_METHOD_ID`, `BODHI_LIST_MODELS_METHOD`,
+  `BODHI_LIST_SESSIONS_METHOD`) + the `_meta` shapes that travel
+  alongside ACP's standard payloads.
 - **`client.ts`** — `AcpClient`, a thin wrapper over
   `ClientSideConnection` that `useAcp` consumes on the main
   thread.
@@ -23,14 +23,19 @@ Bodhi-specific extensions layered on top of the
 
 Scope invariants:
 
-- **ACP is the only wire protocol.** The adapter's only deviation
-  from stock ACP is the `bodhi-token` auth method (advertised via
-  the standard `authMethods` response array) and the
-  `bodhi/listModels` extension method (served via `Agent.extMethod`,
-  a standard SDK escape hatch). Both ride on `_meta`.
-- **The two Bodhi constants are defined once.** `acp/index.ts` is
-  the single source; `client.ts` and `agent-adapter.ts` import
-  from it. `useAcp` never inlines either string literal.
+- **ACP is the only wire protocol.** The adapter's deviations
+  from stock ACP are the `bodhi-token` auth method (advertised via
+  the standard `authMethods` response array) and the two extension
+  methods `bodhi/listModels` + `bodhi/listSessions` (served via
+  `Agent.extMethod`, a standard SDK escape hatch). Session-scoped
+  `_meta` on `session/prompt` carries the selected model id.
+  `bodhi/listSessions` is used in preference to the upstream
+  `session/list` because the latter lives under the SDK's
+  `schema.unstable.json` surface; this repo only consumes the
+  stable schema (see [`./index.md`](./index.md)).
+- **The Bodhi constants are defined once.** `acp/index.ts` is the
+  single source; `client.ts` and `agent-adapter.ts` import from it.
+  `useAcp` never inlines any of the string literals.
 - **No framing here.** Byte-stream plumbing lives in
   [`./transport.md`](./transport.md). Worker spawn lives in
   [`./agent.md`](./agent.md).
@@ -54,6 +59,8 @@ Public surface:
   `AuthenticateRequest.methodId`.
 - `BODHI_LIST_MODELS_METHOD = 'bodhi/listModels'` — the extension
   method id consumed by `conn.extMethod(...)`.
+- `BODHI_LIST_SESSIONS_METHOD = 'bodhi/listSessions'` — the
+  extension method id for picker feed (M1).
 - `BodhiAuthenticateMeta = { token: string; baseUrl: string }` —
   the `_meta` shape on `authenticate`.
 - `BodhiModelDescriptor = { id: string; apiFormat: string }` —
@@ -62,6 +69,14 @@ Public surface:
 - `BodhiListModelsResponse extends Record<string, unknown>` with
   `models: BodhiModelDescriptor[]` — the return shape of
   `bodhi/listModels`.
+- `BodhiSessionSummary = { id, title, createdAt, updatedAt,
+  turnCount, lastModelId }` — picker row shape; mirrors
+  `SessionSummary` from `agent/session-store` but is the wire
+  contract, kept independent so store internals can evolve
+  without breaking clients.
+- `BodhiListSessionsResponse extends Record<string, unknown>` with
+  `sessions: BodhiSessionSummary[]` — return shape of
+  `bodhi/listSessions`.
 
 ### `acp/client.ts`
 
@@ -102,6 +117,13 @@ Public surface:
   const raw = await this.#conn.extMethod(BODHI_LIST_MODELS_METHOD, {});
   return (raw as BodhiListModelsResponse).models ?? [];
   ```
+- **`listSessions()`.**
+  ```
+  const raw = await this.#conn.extMethod(BODHI_LIST_SESSIONS_METHOD, {});
+  return (raw as BodhiListSessionsResponse).sessions ?? [];
+  ```
+  Returns picker-ready rows ordered by `updatedAt DESC` (the
+  adapter delegates to `SessionStore.listSummaries`).
 - **`newSession()`.** `return this.#conn.newSession({cwd: '/',
   mcpServers: []})`. `cwd` and `mcpServers` are stubs — M0's
   adapter ignores both. They're present because the SDK types
@@ -241,10 +263,18 @@ values for request/response.
     }))
   };
   ```
-  Otherwise throws `"Unknown extension method: <name>"` so the
-  SDK serialises a JSON-RPC error back. Full catalog flattening
-  lives in [`./agent.md`](./agent.md); `apiFormatOfModel` is the
-  inverse of `apiFormatToPiApi` used during flattening.
+  If `method === BODHI_LIST_SESSIONS_METHOD`:
+  ```
+  const summaries = this.#store ? await this.#store.listSummaries() : [];
+  return { sessions: summaries };
+  ```
+  An empty array is returned when the store is not configured
+  (e.g. in unit tests that instantiate the adapter without a
+  store). Otherwise throws `"Unknown extension method: <name>"`
+  so the SDK serialises a JSON-RPC error back. Full catalog
+  flattening lives in [`./agent.md`](./agent.md);
+  `apiFormatOfModel` is the inverse of `apiFormatToPiApi` used
+  during flattening.
 
 #### Private helpers
 
@@ -310,9 +340,9 @@ M1 plan adds vitest coverage of at least:
 
 ## Constraints
 
-- The two Bodhi constants must not be inlined elsewhere; grep
-  `'bodhi-token'` and `'bodhi/listModels'` across `src/` to
-  enforce.
+- The Bodhi constants must not be inlined elsewhere; grep
+  `'bodhi-token'`, `'bodhi/listModels'`, and
+  `'bodhi/listSessions'` across `src/` to enforce.
 - The `Agent` interface is the extraction boundary. If a future
   milestone wants a non-SDK hook (e.g., direct event emission
   into the worker-main channel), add it **outside** the

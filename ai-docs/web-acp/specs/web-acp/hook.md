@@ -26,18 +26,21 @@ Responsibilities:
 4. Drive the per-prompt turn: append user message, ensure
    session, stream-aware state updates, finalise assistant
    message on `end_turn`.
-5. Provide `stop`, `clearMessages`, `clearError`, `loadModels`
-   affordances.
+5. Provide `stop`, `clearMessages`, `clearError`, `loadModels`,
+   `refreshSessions` affordances.
 6. Collapse state to empty when `isAuthenticated === false` so
    unauthenticated renders show a clean UI regardless of
    lingering internal state.
+7. Keep the picker feed (`sessions: BodhiSessionSummary[]`) in
+   sync with the worker's `SessionStore` by calling
+   `bodhi/listSessions` on auth and after every completed turn.
 
 Non-responsibilities:
 
 - OAuth flow — owned by `@bodhiapp/bodhi-js-react`'s
   `BodhiProvider` + `useBodhi`.
-- Message persistence — M1.
-- Session list / switch — M1.
+- Message persistence — delegated to the worker-owned
+  `SessionStore` (see [`./sessions.md`](./sessions.md)).
 - Error formatting beyond the shared `getErrorMessage(err,
   fallback)` helper in `src/lib/utils.ts`.
 - Transcript compaction, skills, extensions, tool execution —
@@ -110,6 +113,9 @@ Key design notes:
 - `selectedModel: string` — the chosen model id.
 - `selectedApiFormat: ApiFormat` — the format tied to the
   selected model; threaded to the combobox.
+- `sessions: BodhiSessionSummary[]` — the picker feed (M1).
+  Populated from `bodhi/listSessions` on auth and after every
+  completed turn. Empty array when unauthenticated.
 
 ### Refs
 
@@ -154,6 +160,13 @@ Key design notes:
    When `isAuthenticated === false` and `_session` exists,
    fires `client.cancel(_session)` (best-effort) and clears
    `_session`.
+5. **Sessions refresh.** `useEffect(() => {...},
+   [refreshSessions])`. Triggers `bodhi/listSessions` via the
+   async `run()` indirection required by
+   `react-hooks/set-state-in-effect`. `refreshSessions` itself
+   is a `useCallback` over `isAuthenticated`, so the effect
+   re-fires on sign-in / sign-out as well as identity-stable
+   renders.
 
 ### Callbacks
 
@@ -186,8 +199,17 @@ Key design notes:
      prompt, selectedModel)`.
   6. On `stopReason !== 'cancelled'` and non-empty
      `streamingRef.current`, append the draft to `messages`.
-  7. `finally`: reset `streamingRef`, `streamingMessageIdRef`,
+  7. Fires `refreshSessions()` so the picker reflects the new
+     row (first turn) or the bumped `updatedAt` (subsequent
+     turns).
+  8. `finally`: reset `streamingRef`, `streamingMessageIdRef`,
      `streamingMessage`, `isStreaming`.
+- **`refreshSessions()`.** Returns early (and clears the
+  `sessions` state) when unauthenticated. Otherwise awaits
+  `runtime.initialize` and calls
+  `AcpClient.listSessions()`. Store / transport errors are
+  logged but not surfaced to the user — a stale picker is
+  better than a toast.
 - **`stop()`.** No-op if `_session` is null. Otherwise fires
   `client.cancel(_session)` and does not await — cancellation
   is a notification in ACP and a best-effort operation on our
@@ -216,6 +238,8 @@ Key design notes:
   models: BodhiModelInfo[];
   isLoadingModels: boolean;
   loadModels: () => Promise<void>;
+  sessions: BodhiSessionSummary[];
+  refreshSessions: () => Promise<void>;
 }
 ```
 
@@ -225,20 +249,20 @@ The collapse happens in the **return** expression, not in the
 state itself, so a rapid sign-in/sign-out toggle doesn't race
 the underlying state clear.
 
-## Known M0 limitations
+## Known limitations
 
-- **No persistence.** Page reload drops `_session` and the
-  entire `messages` state. M1 fixes this.
-- **Single session.** `_session` is a scalar; there's no UI or
-  state for multiple concurrent chats. M1 introduces the
-  session list / switcher.
 - **Transcript drift on `clearMessages`.** See
   [`./startup-sequence.md § Phase 4`](./startup-sequence.md#phase-4--subsequent-prompts)
   — `clearMessages()` resets the main-thread view and cancels
   the current session; the next prompt gets a fresh
   `session/new`. The worker's `InlineAgent` transcript still
   lives in memory until the next `authenticate` (which calls
-  `inline.clearMessages`); this is a wart we live with in M0.
+  `inline.clearMessages`); acceptable because `session/load`
+  always reseeds via `InlineAgent.restoreMessages`.
+- **Single live session in `_session`.** `_session` is a
+  scalar; the picker does not yet rebind it on click. M1
+  phase C wires `session/load` + switches `_session` to the
+  loaded id.
 - **No tool-call UI.** `sessionUpdate.update.sessionUpdate`
   values other than `agent_message_chunk` are silently ignored.
 - **No progressive catalog update.** The auth effect fetches

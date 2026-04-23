@@ -9,9 +9,12 @@ import type {
 import {
   BODHI_AUTH_METHOD_ID,
   BODHI_LIST_MODELS_METHOD,
+  BODHI_LIST_SESSIONS_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiListModelsResponse,
+  type BodhiListSessionsResponse,
   type BodhiModelDescriptor,
+  type BodhiSessionSummary,
 } from './index';
 
 export type SessionUpdateListener = (notification: SessionNotification) => void;
@@ -57,6 +60,12 @@ export class AcpClient {
     const raw = await this.#conn.extMethod(BODHI_LIST_MODELS_METHOD, {});
     const payload = raw as BodhiListModelsResponse;
     return payload.models ?? [];
+  }
+
+  async listSessions(): Promise<BodhiSessionSummary[]> {
+    const raw = await this.#conn.extMethod(BODHI_LIST_SESSIONS_METHOD, {});
+    const payload = raw as BodhiListSessionsResponse;
+    return payload.sessions ?? [];
   }
 
   async newSession(): Promise<NewSessionResponse> {

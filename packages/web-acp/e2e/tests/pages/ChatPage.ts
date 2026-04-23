@@ -19,11 +19,21 @@ export class ChatPage {
     chatProcessing: '[data-testid="chat-processing"]',
     message: (turn: number, role: string) =>
       `[data-testid="chat-message-turn-${turn}"][data-messagetype="${role}"]`,
+    sessionPicker: '[data-testid="session-picker"]',
+    sessionRow: (id: string) => `[data-testid="session-row-${id}"]`,
+    sessionPickerEmpty: '[data-testid="session-picker-empty"]',
   };
 
   async waitServerReady(bodhiServerUrl: string): Promise<void> {
     await this.page.locator(this.selectors.appTitle).waitFor();
-    await this.walkSetupModal(bodhiServerUrl);
+    // Setup overlay only appears on first boot or when the stored
+    // server URL is unreachable. After a reload (IndexedDB + Bodhi
+    // session restored) the badges go ready directly, so gate the
+    // walkthrough on the overlay being visible.
+    const overlay = this.page.locator(this.selectors.setupOverlay);
+    if (await overlay.isVisible().catch(() => false)) {
+      await this.walkSetupModal(bodhiServerUrl);
+    }
     await this.page.locator(this.selectors.clientReady).waitFor();
     await this.page.locator(this.selectors.serverReady).waitFor();
   }
@@ -112,5 +122,28 @@ export class ChatPage {
 
   async getAssistantText(turn: number): Promise<string> {
     return (await this.page.locator(this.selectors.message(turn, 'assistant')).textContent()) ?? '';
+  }
+
+  async waitForSessionCount(expected: number, opts: { timeout?: number } = {}): Promise<void> {
+    const timeout = opts.timeout ?? 10000;
+    await this.page
+      .locator(`${this.selectors.sessionPicker}[data-testsessions="${expected}"]`)
+      .waitFor({ timeout });
+  }
+
+  async listSessionIds(): Promise<string[]> {
+    return this.page
+      .locator(`${this.selectors.sessionPicker} [data-sessionid]`)
+      .evaluateAll(els => els.map(el => el.getAttribute('data-sessionid') ?? ''));
+  }
+
+  async getSessionTitle(sessionId: string): Promise<string> {
+    return (
+      (await this.page.locator(this.selectors.sessionRow(sessionId)).textContent())?.trim() ?? ''
+    );
+  }
+
+  async getSelectedModel(): Promise<string> {
+    return (await this.page.locator(this.selectors.modelSelector).textContent())?.trim() ?? '';
   }
 }

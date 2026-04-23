@@ -21,8 +21,10 @@ import type { SessionStore } from '@/agent/session-store';
 import {
   BODHI_AUTH_METHOD_ID,
   BODHI_LIST_MODELS_METHOD,
+  BODHI_LIST_SESSIONS_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiListModelsResponse,
+  type BodhiListSessionsResponse,
 } from './index';
 
 interface SessionState {
@@ -169,6 +171,11 @@ export class AcpAgentAdapter implements Agent {
       const response: BodhiListModelsResponse = {
         models: this.#models.map(m => ({ id: m.id, apiFormat: apiFormatOfModel(m) })),
       };
+      return response;
+    }
+    if (method === BODHI_LIST_SESSIONS_METHOD) {
+      const summaries = this.#store ? await this.#store.listSummaries() : [];
+      const response: BodhiListSessionsResponse = { sessions: summaries };
       return response;
     }
     throw new Error(`Unknown extension method: ${method}`);

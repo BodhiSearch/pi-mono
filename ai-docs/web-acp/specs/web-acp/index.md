@@ -59,9 +59,10 @@ drill into the per-module specs:
 2. Establish a `MessageChannel`-backed ACP connection using
    `@agentclientprotocol/sdk@0.17.0`'s `ClientSideConnection` +
    `AgentSideConnection` + `ndJsonStream`.
-3. Announce one auth method (`bodhi-token`) and one extension
-   method (`bodhi/listModels`); everything Bodhi-specific rides
-   through ACP's standard `_meta` / `extMethod` escape hatches.
+3. Announce one auth method (`bodhi-token`) and the extension
+   methods (`bodhi/listModels`, `bodhi/listSessions`); everything
+   Bodhi-specific rides through ACP's standard `_meta` / `extMethod`
+   escape hatches.
 4. Forward the Bodhi access token from `@bodhiapp/bodhi-js-react`
    to the worker on every auth-state change.
 5. Fetch the Bodhi model catalog from inside the worker; surface
@@ -152,10 +153,11 @@ reference app itself. The files that will form the library
 boundary at extraction time (M7) are:
 
 - `src/acp/index.ts` — `BODHI_AUTH_METHOD_ID`,
-  `BODHI_LIST_MODELS_METHOD`, `BodhiAuthenticateMeta`,
-  `BodhiModelDescriptor`, `BodhiListModelsResponse`, plus
-  re-exported SDK types. This is the contract every ACP client of
-  the worker consumes.
+  `BODHI_LIST_MODELS_METHOD`, `BODHI_LIST_SESSIONS_METHOD`,
+  `BodhiAuthenticateMeta`, `BodhiModelDescriptor`,
+  `BodhiListModelsResponse`, `BodhiSessionSummary`,
+  `BodhiListSessionsResponse`, plus re-exported SDK types. This
+  is the contract every ACP client of the worker consumes.
 - `src/acp/client.ts` — `AcpClient`.
 - `src/acp/agent-adapter.ts` — `AcpAgentAdapter`.
 - `src/agent/inline-agent.ts` — `InlineAgent`, `createInlineAgent`.

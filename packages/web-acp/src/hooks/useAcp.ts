@@ -5,7 +5,7 @@ import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
-import type { BodhiModelDescriptor } from '@/acp/index';
+import type { BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
 import { createMessagePortStream } from '@/transport/worker-stream';
 import { getErrorMessage } from '@/lib/utils';
 import { getServerUrlOrThrow } from '@/lib/agent-model';
@@ -13,6 +13,7 @@ import type { BodhiModelInfo } from '@/lib/bodhi-models';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 const EMPTY_MODELS: BodhiModelInfo[] = [];
+const EMPTY_SESSIONS: BodhiSessionSummary[] = [];
 
 interface AcpRuntime {
   worker: Worker;
@@ -117,6 +118,7 @@ export function useAcp() {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedModel, setSelectedModelState] = useState<string>('');
   const [selectedApiFormat, setSelectedApiFormat] = useState<ApiFormat>('openai');
+  const [sessions, setSessions] = useState<BodhiSessionSummary[]>([]);
 
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
@@ -249,6 +251,36 @@ export function useAcp() {
     setSelectedApiFormat(fmt);
   }, []);
 
+  const refreshSessions = useCallback(async () => {
+    if (!isAuthenticated) {
+      setSessions([]);
+      return;
+    }
+    try {
+      const runtime = ensureRuntime();
+      await runtime.initialize;
+      const list = await runtime.client.listSessions();
+      setSessions(list);
+    } catch (err) {
+      console.error('bodhi/listSessions failed:', err);
+    }
+  }, [isAuthenticated]);
+
+  // Refresh sessions once auth is in place; list persists across reload
+  // because the worker writes to IndexedDB. `refreshSessions` already
+  // clears state when unauthenticated.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (cancelled) return;
+      await refreshSessions();
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSessions]);
+
   const ensureSession = useCallback(async (): Promise<string> => {
     if (_session) return _session;
     if (_sessionPromise) return _sessionPromise;
@@ -298,6 +330,7 @@ export function useAcp() {
         if (finalMsg && response.stopReason !== 'cancelled') {
           setMessages(prev => [...prev, finalMsg]);
         }
+        void refreshSessions();
       } catch (err) {
         console.error('session/prompt failed:', err);
         setError(getErrorMessage(err, 'Failed to send message'));
@@ -308,7 +341,7 @@ export function useAcp() {
         setIsStreaming(false);
       }
     },
-    [selectedModel, ensureSession]
+    [selectedModel, ensureSession, refreshSessions]
   );
 
   const stop = useCallback(() => {
@@ -359,5 +392,7 @@ export function useAcp() {
     models: isAuthenticated ? displayModels : EMPTY_MODELS,
     isLoadingModels: isAuthenticated ? isLoadingModels : false,
     loadModels,
+    sessions: isAuthenticated ? sessions : EMPTY_SESSIONS,
+    refreshSessions,
   };
 }

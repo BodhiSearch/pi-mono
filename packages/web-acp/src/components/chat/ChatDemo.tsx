@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { useAcp } from '@/hooks/useAcp';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
+import SessionPicker from './SessionPicker';
 
 export default function ChatDemo() {
   const {
@@ -18,6 +19,8 @@ export default function ChatDemo() {
     models,
     isLoadingModels,
     loadModels,
+    sessions,
+    refreshSessions,
   } = useAcp();
 
   useEffect(() => {
@@ -29,23 +32,32 @@ export default function ChatDemo() {
     }
   }, [chatError, clearChatError]);
 
+  const handleSelectSession = (_id: string) => {
+    // Phase C wires this to session/load; for now the picker is
+    // informational so a reload demonstrates persistence.
+    void refreshSessions();
+  };
+
   return (
-    <>
-      <ChatMessages
-        messages={messages}
-        streamingMessage={streamingMessage}
-        isStreaming={isStreaming}
-        error={chatError}
-      />
-      <ChatInput
-        onSendMessage={sendMessage}
-        onClearMessages={clearMessages}
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
-        models={models}
-        isLoadingModels={isLoadingModels}
-        onRefreshModels={loadModels}
-      />
-    </>
+    <div className="flex flex-1 min-h-0">
+      <SessionPicker sessions={sessions} activeSessionId={null} onSelect={handleSelectSession} />
+      <div className="flex flex-col flex-1 min-w-0">
+        <ChatMessages
+          messages={messages}
+          streamingMessage={streamingMessage}
+          isStreaming={isStreaming}
+          error={chatError}
+        />
+        <ChatInput
+          onSendMessage={sendMessage}
+          onClearMessages={clearMessages}
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+          models={models}
+          isLoadingModels={isLoadingModels}
+          onRefreshModels={loadModels}
+        />
+      </div>
+    </div>
   );
 }

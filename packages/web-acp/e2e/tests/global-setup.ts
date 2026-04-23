@@ -36,6 +36,10 @@ export const API_MODEL_PREFIX = 'oai/';
 export const API_MODEL_NAME = 'gpt-4.1-nano';
 export const FULL_MODEL_ID = `${API_MODEL_PREFIX}${API_MODEL_NAME}`;
 
+export const ANTHROPIC_API_MODEL_PREFIX = 'anthropic/';
+export const ANTHROPIC_API_MODEL_NAME = 'claude-haiku-4-5-20251001';
+export const SECOND_FULL_MODEL_ID = `${ANTHROPIC_API_MODEL_PREFIX}${ANTHROPIC_API_MODEL_NAME}`;
+
 function isPortInUse(port: number): Promise<boolean> {
   return new Promise(resolve => {
     const socket = createConnection({ port, host: 'localhost' });
@@ -69,6 +73,7 @@ const REQUIRED_ENV_VARS = [
   'BODHIAPP_AUTH_URL',
   'BODHIAPP_AUTH_REALM',
   'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
 ];
 
 function getEnv(key: string): string {
@@ -152,6 +157,12 @@ async function globalSetup(_: FullConfig) {
       getEnv('OPENAI_API_KEY'),
       API_MODEL_PREFIX,
       API_MODEL_NAME
+    );
+    await apiModelsPage.configureApiModel(
+      getEnv('ANTHROPIC_API_KEY'),
+      ANTHROPIC_API_MODEL_PREFIX,
+      ANTHROPIC_API_MODEL_NAME,
+      'anthropic'
     );
   } catch (err) {
     setupFailed = true;
