@@ -10,6 +10,7 @@ import { createMessagePortStream } from '@/transport/worker-stream';
 import { attachVolumeChannel } from './volume-channel';
 import { VolumeRegistry, type VolumeInit } from './volume-mount';
 import { createFeatureStore } from '@/features/feature-store';
+import { createMcpToggleStore } from '@/mcp/toggle-store';
 
 export interface AgentWorkerInitMessage {
   type: 'init';
@@ -56,6 +57,7 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
   const db = openSessionDb();
   const store = createStoreFromDb(db);
   const features = createFeatureStore(db);
+  const mcpToggles = createMcpToggleStore(db);
   const registry = new VolumeRegistry();
   attachVolumeChannel(scope, registry);
   // Mount any seeded volumes before the ACP connection starts taking
@@ -73,7 +75,8 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
         registry,
         features,
         streamOverrides,
-        mcpPool
+        mcpPool,
+        mcpToggles
       ),
     stream
   );

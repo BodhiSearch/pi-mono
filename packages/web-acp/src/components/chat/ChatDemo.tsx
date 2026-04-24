@@ -57,7 +57,12 @@ export default function ChatDemo() {
           onChange={setFeature}
           disabled={isStreaming}
         />
-        <McpPanel instances={mcp.instances} states={mcp.states} />
+        <McpPanel
+          instances={mcp.instances}
+          states={mcp.states}
+          toggles={mcp.toggles}
+          onSetToggle={mcp.setToggle}
+        />
         <div className="flex-1 min-h-0">
           <SessionPicker
             sessions={sessions}

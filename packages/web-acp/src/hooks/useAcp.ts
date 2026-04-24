@@ -7,7 +7,7 @@ import type { Client, McpServerHttp, SessionNotification } from '@agentclientpro
 import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
 import type { BodhiFeatureBag, BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
-import { composeMcpServers } from '@/mcp/compose-mcp-servers';
+import { composeMcpServers, type McpToggleSnapshot } from '@/mcp/compose-mcp-servers';
 import type { McpConnectionMeta, McpInstanceView } from '@/mcp/types';
 import { useMcpInstances } from '@/mcp/useMcpInstances';
 import { createMessagePortStream } from '@/transport/worker-stream';
@@ -26,6 +26,10 @@ const EMPTY_FEATURES: BodhiFeatureBag = {};
 const EMPTY_TOOL_CALLS: ToolCallView[] = [];
 const EMPTY_MCP_STATES: Record<string, McpConnectionMeta> = {};
 const EMPTY_MCP_INSTANCES: McpInstanceView[] = [];
+const EMPTY_MCP_TOGGLES: McpToggleSnapshot = Object.freeze({
+  servers: Object.freeze({}) as Record<string, boolean>,
+  tools: Object.freeze({}) as Record<string, Record<string, boolean>>,
+}) as McpToggleSnapshot;
 
 export interface ToolCallView {
   toolCallId: string;
@@ -268,6 +272,7 @@ export function useAcp() {
   const [featureDefaults, setFeatureDefaults] = useState<BodhiFeatureBag>({});
   const [toolCalls, setToolCalls] = useState<ToolCallView[]>([]);
   const [mcpStates, setMcpStates] = useState<Record<string, McpConnectionMeta>>(EMPTY_MCP_STATES);
+  const [mcpToggles, setMcpToggles] = useState<McpToggleSnapshot>(EMPTY_MCP_TOGGLES);
   const toolCallsRef = useRef<Map<string, ToolCallView>>(new Map());
   const turnIndexRef = useRef(0);
   const mcpInstancesRef = useRef<McpInstanceView[]>(EMPTY_MCP_INSTANCES);
@@ -278,6 +283,17 @@ export function useAcp() {
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
   const loadingModelsRef = useRef(false);
+  // Remembers the last `auth.accessToken` we *handed to the worker*.
+  // The first auth effect fire (token A after `null`) is the ordinary
+  // login path; subsequent transitions (A → B, both non-null) are
+  // rotations that force a `session/load` rebuild so the pool picks
+  // up the new `Bearer` header. See `mcp.md` for the rotation
+  // decision log.
+  const lastWorkerTokenRef = useRef<string | null>(null);
+  const mcpTogglesRef = useRef<McpToggleSnapshot>(EMPTY_MCP_TOGGLES);
+  useEffect(() => {
+    mcpTogglesRef.current = mcpToggles;
+  }, [mcpToggles]);
   // When `session/load` is replaying stored notifications back at us, we
   // ignore them in the live stream handler — the UI rehydrates from
   // the `bodhi/getSession` snapshot instead, which is already the
@@ -374,11 +390,13 @@ export function useAcp() {
       _authKey = null;
       _authPromise = null;
       _authModels = [];
+      lastWorkerTokenRef.current = null;
       return;
     }
 
     loadingModelsRef.current = true;
     let cancelled = false;
+    const prevWorkerToken = lastWorkerTokenRef.current;
 
     const run = async () => {
       setIsLoadingModels(true);
@@ -396,6 +414,7 @@ export function useAcp() {
         }
         await _authPromise;
         if (cancelled) return;
+        lastWorkerTokenRef.current = token;
         setModels(_authModels);
         if (_authModels.length > 0) {
           setSelectedModelState(prev => {
@@ -404,6 +423,25 @@ export function useAcp() {
             setSelectedApiFormat(first.apiFormat as ApiFormat);
             return first.id;
           });
+        }
+        // Token *rotation* (A → B, both non-null) on an already-active
+        // session: the worker's MCP pool still holds the stale
+        // `Bearer A` header, so re-issue `session/load` with freshly
+        // composed servers. The pool evicts + reconnects on the auth
+        // fingerprint change. New-login (null → A) path is handled by
+        // the auto-`ensureSession` effect below.
+        if (prevWorkerToken && prevWorkerToken !== token && _session) {
+          try {
+            const servers = composeMcpServers(
+              mcpInstancesRef.current,
+              token,
+              serverUrl,
+              mcpTogglesRef.current
+            );
+            await runtime.client.loadSession(_session, servers);
+          } catch (rotErr) {
+            console.error('[useAcp] token-rotation session/load failed:', rotErr);
+          }
         }
       } catch (err) {
         console.error('ACP authenticate/listModels failed:', err);
@@ -519,17 +557,52 @@ export function useAcp() {
     [refreshFeatures]
   );
 
-  const composeCurrentMcpServers = useCallback((): McpServerHttp[] => {
-    const token = auth.accessToken;
-    if (!token) return [];
-    try {
-      const baseUrl = getServerUrlOrThrow(bodhiClient.getState());
-      return composeMcpServers(mcpInstancesRef.current, token, baseUrl);
-    } catch (err) {
-      console.warn('[useAcp] composeMcpServers failed:', err);
-      return [];
-    }
-  }, [auth.accessToken, bodhiClient]);
+  const composeCurrentMcpServers = useCallback(
+    (toggles?: McpToggleSnapshot): McpServerHttp[] => {
+      const token = auth.accessToken;
+      if (!token) return [];
+      try {
+        const baseUrl = getServerUrlOrThrow(bodhiClient.getState());
+        return composeMcpServers(mcpInstancesRef.current, token, baseUrl, toggles);
+      } catch (err) {
+        console.warn('[useAcp] composeMcpServers failed:', err);
+        return [];
+      }
+    },
+    [auth.accessToken, bodhiClient]
+  );
+
+  /**
+   * Flip a per-session MCP toggle. `toolName` omitted toggles the
+   * server; otherwise toggles the individual tool. The worker responds
+   * with the full snapshot so we rehydrate local state in one shot.
+   *
+   * A server-level toggle change implies a new `mcpServers` composition
+   * for the worker's pool (the disabled server must come off / come
+   * back on). We re-issue `session/load` with the freshly composed
+   * array so the worker releases / acquires the right connections —
+   * tool-only toggles just trickle through to the next `prompt` turn
+   * since the pool is unchanged.
+   */
+  const setMcpToggle = useCallback(
+    async (serverSlug: string, value: boolean, toolName?: string) => {
+      if (!_session) return;
+      const runtime = ensureRuntime();
+      try {
+        const payload = await runtime.client.setMcpToggle(_session, serverSlug, value, toolName);
+        const nextToggles = (payload.toggles ?? { servers: {}, tools: {} }) as McpToggleSnapshot;
+        setMcpToggles(nextToggles);
+        if (!toolName) {
+          const servers = composeCurrentMcpServers(nextToggles);
+          await runtime.client.loadSession(_session, servers);
+        }
+      } catch (err) {
+        console.error('_bodhi/mcp/toggles/set failed:', err);
+        setError(getErrorMessage(err, 'Failed to toggle MCP'));
+      }
+    },
+    [composeCurrentMcpServers]
+  );
 
   const ensureSession = useCallback(async (): Promise<string> => {
     if (_session) return _session;
@@ -537,6 +610,7 @@ export function useAcp() {
     const runtime = ensureRuntime();
     _sessionPromise = (async () => {
       await runtime.initialize;
+      // Fresh session: no stored toggles yet so everything defaults to on.
       const servers = composeCurrentMcpServers();
       const response = await runtime.client.newSession(servers);
       _session = response.sessionId;
@@ -545,6 +619,7 @@ export function useAcp() {
     try {
       const id = await _sessionPromise;
       setCurrentSessionId(id);
+      setMcpToggles(EMPTY_MCP_TOGGLES);
       void refreshFeatures(id);
       return id;
     } finally {
@@ -608,12 +683,19 @@ export function useAcp() {
             /* handled by auth effect */
           }
         }
-        const servers = composeCurrentMcpServers();
-        await runtime.client.loadSession(sessionId, servers);
+        // Fetch the persisted snapshot (messages + lastModelId + toggles)
+        // *before* `session/load` so we can filter the composed
+        // `mcpServers` with the stored per-session toggles. `getSession`
+        // reads straight from Dexie — it does not require the session
+        // to be resident in the worker's in-memory map.
         const snapshot = await runtime.client.getSession(sessionId);
+        const toggles = snapshot.mcpToggles ?? { servers: {}, tools: {} };
+        const servers = composeCurrentMcpServers(toggles);
+        await runtime.client.loadSession(sessionId, servers);
         _session = sessionId;
         setCurrentSessionId(sessionId);
         setMessages((snapshot.messages ?? []) as AgentMessage[]);
+        setMcpToggles(toggles);
         void refreshFeatures(sessionId);
         toolCallsRef.current.clear();
         turnIndexRef.current = 0;
@@ -703,6 +785,7 @@ export function useAcp() {
     setCurrentSessionId(null);
     setFeatures({});
     setMcpStates(EMPTY_MCP_STATES);
+    setMcpToggles(EMPTY_MCP_TOGGLES);
     toolCallsRef.current.clear();
     turnIndexRef.current = 0;
     setToolCalls([]);
@@ -761,9 +844,11 @@ export function useAcp() {
     mcp: {
       instances: isAuthenticated ? mcpInstances.instances : EMPTY_MCP_INSTANCES,
       states: isAuthenticated ? mcpStates : EMPTY_MCP_STATES,
+      toggles: isAuthenticated ? mcpToggles : EMPTY_MCP_TOGGLES,
       isLoading: mcpInstances.isLoading,
       error: mcpInstances.error,
       refresh: mcpInstances.refresh,
+      setToggle: setMcpToggle,
     },
   };
 }

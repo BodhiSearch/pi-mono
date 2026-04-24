@@ -30,6 +30,12 @@ export const BODHI_VOLUMES_LIST_METHOD = '_bodhi/volumes/list';
 export const BODHI_FEATURES_LIST_METHOD = '_bodhi/features/list';
 export const BODHI_FEATURES_SET_METHOD = '_bodhi/features/set';
 
+// M3 phase B: per-session MCP server / tool toggles. Defaults are all
+// "on"; only explicit overrides travel on the wire. See
+// `specs/web-acp/mcp.md` for the snapshot contract returned via
+// `bodhi/getSession` and the mutation handler below.
+export const BODHI_MCP_TOGGLES_SET_METHOD = '_bodhi/mcp/toggles/set';
+
 export interface BodhiVolumeDescriptor {
   mountName: string;
   description?: string;
@@ -105,4 +111,32 @@ export interface BodhiGetSessionResponse extends Record<string, unknown> {
   messages: unknown[];
   lastModelId: string | null;
   title: string | null;
+  mcpToggles: BodhiMcpToggleSnapshot;
+}
+
+/**
+ * Per-session MCP toggle snapshot surfaced on `bodhi/getSession`.
+ * Absence of a key means "default on" — the worker never materialises
+ * a `true` entry just to mirror the default. Added in M3 phase B.
+ */
+export interface BodhiMcpToggleSnapshot extends Record<string, unknown> {
+  servers: Record<string, boolean>;
+  tools: Record<string, Record<string, boolean>>;
+}
+
+/**
+ * Mutation payload for `_bodhi/mcp/toggles/set`. Exactly one of
+ * `serverSlug` (for a server-level override) or
+ * `{ serverSlug, toolName }` (for a per-tool override) must be
+ * provided. `value` is the new desired on/off state.
+ */
+export interface BodhiMcpTogglesSetRequest extends Record<string, unknown> {
+  sessionId: string;
+  serverSlug: string;
+  toolName?: string;
+  value: boolean;
+}
+
+export interface BodhiMcpTogglesSetResponse extends Record<string, unknown> {
+  toggles: BodhiMcpToggleSnapshot;
 }

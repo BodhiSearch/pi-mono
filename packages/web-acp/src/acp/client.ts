@@ -16,6 +16,7 @@ import {
   BODHI_GET_SESSION_METHOD,
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
+  BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiFeaturesListResponse,
@@ -23,6 +24,7 @@ import {
   type BodhiGetSessionResponse,
   type BodhiListModelsResponse,
   type BodhiListSessionsResponse,
+  type BodhiMcpTogglesSetResponse,
   type BodhiModelDescriptor,
   type BodhiSessionSummary,
   type BodhiVolumeDescriptor,
@@ -121,6 +123,27 @@ export class AcpClient {
   ): Promise<BodhiFeaturesSetResponse> {
     const raw = await this.#conn.extMethod(BODHI_FEATURES_SET_METHOD, { sessionId, key, value });
     return raw as BodhiFeaturesSetResponse;
+  }
+
+  /**
+   * Mutate per-session MCP toggles. Pass `toolName` to flip a per-tool
+   * override; omit it to flip the server-level override. The response
+   * returns the full toggle snapshot so callers can update local UI
+   * without a follow-up `getSession` round-trip.
+   */
+  async setMcpToggle(
+    sessionId: string,
+    serverSlug: string,
+    value: boolean,
+    toolName?: string
+  ): Promise<BodhiMcpTogglesSetResponse> {
+    const raw = await this.#conn.extMethod(BODHI_MCP_TOGGLES_SET_METHOD, {
+      sessionId,
+      serverSlug,
+      toolName,
+      value,
+    });
+    return raw as BodhiMcpTogglesSetResponse;
   }
 
   async prompt(sessionId: string, text: string, modelId: string): Promise<PromptResponse> {

@@ -20,7 +20,7 @@ test.describe('MCP connect smoke', () => {
     const chat = new ChatPage(page);
     await page.goto('/');
     await chat.waitServerReady(bodhiServerUrl);
-    await chat.login({ username, password }, { acceptMcps: [mcpEverythingSlug] });
+    await chat.login({ username, password }, { acceptMcps: [mcpEverythingUrl] });
 
     // MCP panel must expose a row for the enabled instance right after
     // login (before we even start a session).

@@ -45,6 +45,8 @@ import { createBashTool } from '@/agent/tools/bash-tool';
 import type { VolumeRegistry } from '@/agent/volume-mount';
 import type { FeatureSnapshot, FeatureStore } from '@/features/feature-store';
 import { FEATURE_DEFAULTS, isFeatureKey } from '@/features/feature-store';
+import type { McpToggleSnapshot, McpToggleStore } from '@/mcp/toggle-store';
+import { isToolEnabled } from '@/mcp/toggle-store';
 import {
   BODHI_AUTH_METHOD_ID,
   BODHI_FEATURES_LIST_METHOD,
@@ -52,6 +54,7 @@ import {
   BODHI_GET_SESSION_METHOD,
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
+  BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiFeaturesListResponse,
@@ -61,6 +64,9 @@ import {
   type BodhiGetSessionResponse,
   type BodhiListModelsResponse,
   type BodhiListSessionsResponse,
+  type BodhiMcpToggleSnapshot,
+  type BodhiMcpTogglesSetRequest,
+  type BodhiMcpTogglesSetResponse,
   type BodhiVolumesListResponse,
 } from './index';
 
@@ -106,6 +112,7 @@ export class AcpAgentAdapter implements Agent {
   readonly #store: SessionStore | undefined;
   readonly #registry: VolumeRegistry | undefined;
   readonly #features: FeatureStore | undefined;
+  readonly #mcpToggles: McpToggleStore | undefined;
   readonly #streamOverrides: StreamOverridesRef | undefined;
   readonly #mcpPool: McpConnectionPool;
   readonly #mcpSubscription: () => void;
@@ -137,7 +144,8 @@ export class AcpAgentAdapter implements Agent {
     registry?: VolumeRegistry,
     features?: FeatureStore,
     streamOverrides?: StreamOverridesRef,
-    mcpPool?: McpConnectionPool
+    mcpPool?: McpConnectionPool,
+    mcpToggles?: McpToggleStore
   ) {
     this.#conn = conn;
     this.#inline = inline;
@@ -145,6 +153,7 @@ export class AcpAgentAdapter implements Agent {
     this.#store = store;
     this.#registry = registry;
     this.#features = features;
+    this.#mcpToggles = mcpToggles;
     this.#streamOverrides = streamOverrides;
     this.#mcpPool = mcpPool ?? new McpConnectionPool();
     this.#mcpSubscription = this.#mcpPool.subscribe(event => {
@@ -290,6 +299,7 @@ export class AcpAgentAdapter implements Agent {
     }
 
     const featureSnapshot = await this.#readFeatures(params.sessionId);
+    const mcpToggleSnapshot = await this.#readMcpToggles(params.sessionId);
     const volumes = this.#registry?.list() ?? [];
     const tools: AgentTool<TSchema>[] = [];
     const hasVolumes = volumes.length > 0;
@@ -298,7 +308,7 @@ export class AcpAgentAdapter implements Agent {
       const bashTool = createBashTool({ registry: this.#registry });
       tools.push(bindAbortSignal(bashTool, this.#turnAbort.signal) as AgentTool<TSchema>);
     }
-    for (const mcpTool of this.#mcpToolsForSession(session)) {
+    for (const mcpTool of this.#mcpToolsForSession(session, mcpToggleSnapshot)) {
       tools.push(bindAbortSignal(mcpTool, this.#turnAbort.signal) as AgentTool<TSchema>);
     }
     const systemPrompt = composeSystemPrompt(volumes);
@@ -433,12 +443,35 @@ export class AcpAgentAdapter implements Agent {
           }
         }
       }
+      const mcpToggles = await this.#readMcpToggles(req.sessionId);
       const response: BodhiGetSessionResponse = {
         sessionId: row.id,
         messages,
         lastModelId: row.lastModelId,
         title: row.title,
+        mcpToggles: toWireMcpToggles(mcpToggles),
       };
+      return response;
+    }
+    if (method === BODHI_MCP_TOGGLES_SET_METHOD) {
+      if (!this.#mcpToggles) {
+        throw new Error(`${BODHI_MCP_TOGGLES_SET_METHOD}: mcp toggle store unavailable`);
+      }
+      const req = _params as BodhiMcpTogglesSetRequest;
+      if (
+        !req ||
+        typeof req.sessionId !== 'string' ||
+        typeof req.serverSlug !== 'string' ||
+        typeof req.value !== 'boolean'
+      ) {
+        throw new Error(
+          `${BODHI_MCP_TOGGLES_SET_METHOD}: params must be { sessionId, serverSlug, toolName?, value: boolean }`
+        );
+      }
+      const next = req.toolName
+        ? await this.#mcpToggles.setTool(req.sessionId, req.serverSlug, req.toolName, req.value)
+        : await this.#mcpToggles.setServer(req.sessionId, req.serverSlug, req.value);
+      const response: BodhiMcpTogglesSetResponse = { toggles: toWireMcpToggles(next) };
       return response;
     }
     throw new Error(`Unknown extension method: ${method}`);
@@ -467,19 +500,35 @@ export class AcpAgentAdapter implements Agent {
    * Build the per-turn MCP tool list for the session by reading the
    * cached `tools/list` catalog from the pool and adapting every tool
    * into an `AgentTool`. Tools from servers that failed to connect
-   * are silently omitted.
+   * are silently omitted. Per-tool toggles filter further here
+   * (server-level toggles are already applied upstream in
+   * `composeMcpServers`, so the worker never sees those servers).
    */
-  #mcpToolsForSession(session: SessionState): AgentTool<TSchema, McpToolDetails>[] {
+  #mcpToolsForSession(
+    session: SessionState,
+    toggles: McpToggleSnapshot
+  ): AgentTool<TSchema, McpToolDetails>[] {
     const out: AgentTool<TSchema, McpToolDetails>[] = [];
     for (const cfg of session.mcpServers) {
       const client = this.#mcpPool.getClient(cfg);
       if (!client) continue;
       const tools = this.#mcpPool.getTools(cfg);
       for (const tool of tools) {
+        if (!isToolEnabled(toggles, cfg.name, tool.name)) continue;
         out.push(createMcpAgentTool({ client, serverName: cfg.name, tool }));
       }
     }
     return out;
+  }
+
+  async #readMcpToggles(sessionId: string): Promise<McpToggleSnapshot> {
+    if (!this.#mcpToggles) return { servers: {}, tools: {} };
+    try {
+      return await this.#mcpToggles.get(sessionId);
+    } catch (err) {
+      console.error('[acp-agent-adapter] failed to load mcp toggles:', err);
+      return { servers: {}, tools: {} };
+    }
   }
 
   /**
@@ -488,6 +537,14 @@ export class AcpAgentAdapter implements Agent {
    * doesn't define a first-class transport-level verb, so we ride on
    * an empty `agent_message_chunk` — the main thread's hook filters
    * by `_meta.bodhi.mcp` before touching the message stream.
+   *
+   * These events are **transient**: they describe the live state of
+   * the worker's pool, which is rebuilt from scratch on every
+   * `session/load`. We send them to the client directly but do NOT
+   * persist them via `recordNotification`, because otherwise a
+   * subsequent `loadSession` would replay stale `connecting` /
+   * `connected` events after the pool has already emitted a fresh
+   * `disconnected` (e.g. following a per-server toggle flip).
    */
   async #broadcastMcpPoolEvent(event: McpPoolEvent): Promise<void> {
     const affected = new Set<string>();
@@ -509,7 +566,7 @@ export class AcpAgentAdapter implements Agent {
     };
     await Promise.all(
       [...affected].map(sessionId =>
-        this.#emit({
+        this.#conn.sessionUpdate({
           sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
@@ -746,6 +803,22 @@ function poolEventToState(
   event: 'connecting' | 'connected' | 'error' | 'disconnected'
 ): 'connecting' | 'connected' | 'error' | 'disconnected' {
   return event;
+}
+
+/**
+ * Convert a worker-side `McpToggleSnapshot` into the spec-surface
+ * shape the wire contract expects. The worker stores empty maps as
+ * `Record<string, ...>`; on the wire we want plain object literals
+ * so existing JSON-RPC serialisation through
+ * `AgentSideConnection.extMethod` doesn't drag unexpected keys.
+ */
+function toWireMcpToggles(snapshot: McpToggleSnapshot): BodhiMcpToggleSnapshot {
+  return {
+    servers: { ...snapshot.servers },
+    tools: Object.fromEntries(
+      Object.entries(snapshot.tools).map(([slug, toolMap]) => [slug, { ...toolMap }])
+    ),
+  };
 }
 
 function toolTitle(toolName: string, args: unknown): string {

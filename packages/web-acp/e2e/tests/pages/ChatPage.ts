@@ -78,25 +78,37 @@ export class ChatPage {
     await this.page.fill('#password', credentials.password);
     await this.page.click('#kc-login');
 
-    // Access request review: by default (no acceptMcps) uncheck every MCP
-    // toggle so approve isn't gated on MCP instances existing on the
-    // server → approve role-only. With `acceptMcps`, leave toggles for
-    // those slugs checked and uncheck the rest so the session boots
-    // with only the requested MCP instances pre-authorised.
+    // Access request review. BodhiApp keys every MCP the client requests
+    // by its upstream URL — the testid shape is
+    // `review-mcp-toggle-<url>` for the checkbox and
+    // `review-mcp-select-trigger-<url>` for the "Select an MCP
+    // instance…" dropdown. The approve button stays disabled until
+    // either (a) every requested MCP is unchecked or (b) every checked
+    // MCP has an instance bound. `acceptMcps` is the list of upstream
+    // URLs we want to leave checked + bound; everything else is
+    // unchecked so approve falls back to role-only.
     await this.page.waitForURL(/\/access-requests\/review/);
     const approveButton = this.page.getByTestId('review-approve-button');
     await approveButton.waitFor();
     const accept = new Set(opts.acceptMcps ?? []);
     const mcpToggles = this.page.locator('[data-testid^="review-mcp-toggle-"]');
-    const count = await mcpToggles.count();
-    for (let i = 0; i < count; i++) {
-      const toggle = mcpToggles.nth(i);
-      const testid = (await toggle.getAttribute('data-testid')) ?? '';
-      const slug = testid.replace(/^review-mcp-toggle-/, '');
+    const toggleIds: string[] = await mcpToggles.evaluateAll(els =>
+      els.map(el => el.getAttribute('data-testid') ?? '')
+    );
+    for (const testid of toggleIds) {
+      const url = testid.replace(/^review-mcp-toggle-/, '');
+      const toggle = this.page.locator(`[data-testid="${testid}"]`);
       const currentlyChecked = (await toggle.getAttribute('aria-checked')) === 'true';
-      const desired = accept.has(slug);
+      const desired = accept.has(url);
       if (currentlyChecked !== desired) {
         await toggle.click();
+      }
+      if (desired) {
+        // Radix Select renders items into a portal with role="option";
+        // clicking the first option selects the only instance the
+        // global-setup seeded for this MCP server.
+        await this.page.locator(`[data-testid="review-mcp-select-trigger-${url}"]`).click();
+        await this.page.locator('[role="option"]').first().click();
       }
     }
     await expect(approveButton).toBeEnabled();

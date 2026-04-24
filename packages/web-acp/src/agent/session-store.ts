@@ -82,10 +82,37 @@ export interface FeatureRow {
   updatedAt: number;
 }
 
+/**
+ * Per-session MCP toggle row — one entry per ACP session storing the
+ * user's per-server on/off flags and, nested under each server slug,
+ * per-tool on/off flags. Added in M3 phase B (Dexie v3); see
+ * `src/mcp/toggle-store.ts` for the wrapper contract and
+ * `specs/web-acp/mcp.md` for the public wire shape returned by
+ * `bodhi/getSession` + mutated via `_bodhi/mcp/toggles/set`.
+ *
+ * Semantics:
+ * - **Absent keys mean "default on".** We never materialise a
+ *   `true` entry just to mirror the default — that way the ACP wire
+ *   shape stays compact and newly-discovered servers/tools opt in
+ *   automatically.
+ * - `servers[slug] === false` → skip server in the composed
+ *   `McpServerHttp[]` passed to `session/load`.
+ * - `tools[slug][toolName] === false` → server stays registered but
+ *   that specific tool is filtered from the adapter's `setModel`
+ *   registration.
+ */
+export interface McpTogglesRow {
+  sessionId: string;
+  servers: Record<string, boolean>;
+  tools: Record<string, Record<string, boolean>>;
+  updatedAt: number;
+}
+
 export class SessionStoreDb extends Dexie {
   sessions!: Table<SessionRow, string>;
   entries!: Table<SessionEntry, [string, number]>;
   features!: Table<FeatureRow, string>;
+  mcpToggles!: Table<McpTogglesRow, string>;
 
   constructor(dbName: string) {
     super(dbName);
@@ -97,6 +124,12 @@ export class SessionStoreDb extends Dexie {
       sessions: '&id, updatedAt',
       entries: '&[sessionId+seq], sessionId',
       features: '&sessionId',
+    });
+    this.version(3).stores({
+      sessions: '&id, updatedAt',
+      entries: '&[sessionId+seq], sessionId',
+      features: '&sessionId',
+      mcpToggles: '&sessionId',
     });
   }
 }
@@ -206,8 +239,10 @@ export function createStoreFromDb(db: SessionStoreDb): SessionStore {
     },
 
     async deleteSession(id) {
-      await db.transaction('rw', db.sessions, db.entries, async () => {
+      await db.transaction('rw', db.sessions, db.entries, db.features, db.mcpToggles, async () => {
         await db.entries.where('sessionId').equals(id).delete();
+        await db.features.delete(id);
+        await db.mcpToggles.delete(id);
         await db.sessions.delete(id);
       });
     },
