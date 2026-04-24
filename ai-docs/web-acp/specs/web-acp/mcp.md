@@ -284,10 +284,17 @@ Consumers:
 - The main-thread `useAcp` hook filters on `_meta.bodhi.mcp` and
   routes the payload into `mcpStates` without touching the
   message stream.
-- The notification is still recorded via the session store so
-  replay is faithful; the replay guard is bypassed for MCP meta
-  specifically so the chip accurately reflects the *current*
-  connection state after reload.
+- MCP lifecycle events are **transient** — they describe the live
+  state of the worker's pool, which is rebuilt from scratch on
+  every `session/load` (the adapter releases every config the
+  session was holding and re-acquires against the freshly
+  composed list). The adapter therefore sends these notifications
+  directly via `conn.sessionUpdate` and deliberately skips
+  `recordNotification`: otherwise a subsequent `session/load`
+  would replay stale `connecting` / `connected` entries on top of
+  a fresh live state (e.g. after a per-server toggle flip the
+  pool emits `disconnected`, and replay would re-hydrate
+  `connected`).
 
 This is a deliberate extensibility pattern: ACP doesn't ship a
 transport-level verb for connection events, but `_meta` is the

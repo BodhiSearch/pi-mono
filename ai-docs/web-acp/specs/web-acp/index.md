@@ -3,11 +3,13 @@
 **Source of truth:** `packages/web-acp/src/`
 
 **Status:** living document — update as part of any plan that
-changes the source folder. Reflects the **M2 exit state** —
-multi-volume mount, `just-bash` integration, the `bash` tool,
-`_bodhi/features/*` toggle surface, and the `fs/*`
-IDE-integration seam all shipped; see
-[`../../milestones/m2-tools.md`](../../milestones/m2-tools.md).
+changes the source folder. Reflects the **M3 exit state** —
+multi-volume mount + `just-bash` `bash` tool (M2), the
+`_bodhi/features/*` toggle surface (M2), the `fs/*` IDE-
+integration seam (M2), and MCP-over-Streamable-HTTP with
+per-session toggles (M3) all shipped; see
+[`../../milestones/m2-tools.md`](../../milestones/m2-tools.md)
+and [`../../milestones/m3-mcp.md`](../../milestones/m3-mcp.md).
 
 ## Purpose
 
@@ -89,8 +91,10 @@ drill into the per-module specs:
 - Permission bridge — just-bash transform plugin →
   `session/request_permission` — carved out of M2.3; see
   [`../../milestones/deferred.md`](../../milestones/deferred.md).
-- Agent-side HTTP MCP client + provider-native tool passthrough
-  (**M3**).
+- Provider-native tool passthrough (OpenAI `web_search`,
+  Anthropic `web_search` / computer-use, etc.) — carved out of
+  M3.3; see
+  [`../../milestones/deferred.md`](../../milestones/deferred.md).
 - Slash commands / prompt templates / skills (**M4**).
 - `/vault/.bodhi/extensions/` runtime (**M5**).
 - Session tree — `session/fork` (unstable, flag-gated) +
@@ -143,11 +147,21 @@ packages/web-acp/src/
 │   ├── agent-worker.ts    # Web Worker entry; wires AcpAgentAdapter
 │   ├── inline-agent.ts    # pi-agent-core wrapper
 │   ├── bodhi-provider.ts  # BodhiProvider (LlmProvider implementation)
-│   ├── session-store.ts   # Dexie-backed SessionStore (M1)
+│   ├── session-store.ts   # Dexie-backed SessionStore (v3: sessions + features + mcpToggles)
 │   ├── stream-fn.ts       # createStreamFn(provider) → pi-ai bridge
 │   ├── volume-mount.ts    # VolumeRegistry (worker-side ZenFS mounts, M2)
 │   ├── volume-channel.ts  # raw-postMessage volume-control bridge (M2)
 │   └── system-prompt.ts   # composeSystemPrompt(volumes) (M2)
+├── agent/mcp/             # worker-side MCP runtime (M3)
+│   ├── client.ts          # createMcpClient (StreamableHTTPClientTransport)
+│   ├── connection-pool.ts # McpConnectionPool (refcounted, fingerprint eviction)
+│   └── tool-adapter.ts    # MCP tool descriptor → AgentTool<TSchema>
+├── mcp/                   # main-thread MCP surface (M3)
+│   ├── types.ts           # McpInstanceView, McpConnectionState, BodhiMcpUpdateMeta
+│   ├── useMcpInstances.ts # React hook over bodhiClient.mcps.list() (live fetch)
+│   ├── compose-mcp-servers.ts # pure compose(instances, jwt, baseUrl, toggles?)
+│   ├── toggle-store.ts    # worker-side per-session mcpToggles store (Dexie v3)
+│   └── McpPanel.tsx       # status chips + per-server/per-tool toggle UI
 ├── vault/
 │   ├── fsa-handle-store.ts # idb-keyval-backed FSA handle persistence (M2)
 │   └── main-zenfs.ts      # main-thread ZenFS duplicate-mount manager (M2.3)

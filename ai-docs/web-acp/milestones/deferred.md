@@ -104,6 +104,76 @@ same ticket.
 
 ---
 
+## Provider-native tool passthrough — carved out of M3.3
+
+**What was deferred.** Per-model toggles for provider-native
+tools (OpenAI `web_search`, Anthropic `web_search`, etc.),
+capability discovery via a new `_bodhi/providers/nativeTools`
+extension method, per-session persistence of which native tools
+are enabled, and the provider → ACP `tool_call` /
+`tool_call_update` passthrough.
+
+Originally scoped as M3.3 with four piece-parts:
+
+- `_bodhi/providers/nativeTools` (client → agent request) so the
+  settings UI can render supported native tools per model. `pi-ai`
+  already knows which provider exposes which native tool; the
+  adapter just needs to surface that map.
+- Settings UI with per-model toggles (default off) wired to the
+  existing `_bodhi/features/*` pattern (or a sibling surface
+  depending on discovery UX).
+- Per-session persistence of enabled native tools, extending the
+  `bodhi/getSession` snapshot with a `nativeTools` field so
+  reloads rehydrate the toggle state.
+- Passthrough: when a toggled-on native tool fires mid-turn, the
+  agent observes the provider's tool-call events from the SSE
+  stream and re-emits them as standard ACP
+  `session/update (tool_call)` + `tool_call_update` + result,
+  preserving the tool name, arguments, and output for the UI.
+
+**Why deferred.** M3 targets a clean MCP-over-HTTP landing: the
+generic tool-registration wire (`<srv>__<tool>` namespacing,
+refcounted pool, per-session toggles) is a foundation that
+provider-native tools can layer onto without churning. Splitting
+the two lets M3's diff stay focused on the MCP transport and
+proxy story, and avoids entangling per-model toggle plumbing with
+the MCP toggle plumbing. The UI affordance is identical
+(`tool_call` in the transcript), so the passthrough piece is a
+small follow-up that does not reshape the shipped M3 wire.
+
+**When it re-enters.** At a milestone kickoff after M3 exit —
+typically alongside either M4 (commands + skills) or a dedicated
+short milestone if the permission bridge re-enters first. The
+re-entry ticket covers:
+
+1. `_bodhi/providers/nativeTools` request wiring in
+   `AcpAgentAdapter` + `AcpClient`.
+2. Per-model toggle UI — either a new panel or an extension of
+   the existing feature-toggle surface.
+3. Per-session persistence: extend `BodhiGetSessionResponse` with
+   `nativeTools` and hydrate on `loadSession`.
+4. Provider-side passthrough in `BodhiProvider` /
+   `InlineAgent` so tool-call events land as ACP notifications.
+
+**What has to exist before re-entry** (satisfied by M3 exit):
+
+- Tool registry composes MCP + `bash` through a single path
+  (`InlineAgent.setModel({ tools })`) — native tools slot in the
+  same way.
+- `bodhi/getSession` snapshot returns per-session state and
+  `session/load` rehydrates it — `nativeTools` extends the
+  existing shape without a schema churn.
+- `tool_call` / `tool_call_update` emission is fully exercised by
+  the MCP path — native tools reuse it verbatim.
+
+**ACP-compliance note.** Deferral does not move the compliance
+row: provider-native tools, when they land, ride the stable
+`session/update (tool_call)` wire. The row in the compliance-at-
+a-glance table is marked `deferred (see deferred.md)` while the
+feature is not shipped.
+
+---
+
 ## How to add a deferred entry
 
 When carving something out of an in-flight milestone:

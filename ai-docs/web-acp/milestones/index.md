@@ -50,7 +50,7 @@ gate file lands with the first real milestone if the rules diverge.
 | M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
 | M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
 | M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | **shipped** | [m2-tools.md](m2-tools.md) |
-| M3  | MCP over HTTP + provider-native tool passthrough                       | next    | [m3-mcp.md](m3-mcp.md) |
+| M3  | MCP over HTTP (provider-native tools deferred)                         | **shipped** | [m3-mcp.md](m3-mcp.md) |
 | M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
 | M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
@@ -65,8 +65,8 @@ gate file lands with the first real milestone if the rules diverge.
 | Tool reporting       | `session/update (tool_call)` + `tool_call_update`             | Same; CommandCollector maps bash sub-commands when useful              | compliant |
 | Permission           | `session/request_permission`                                  | Bridge from destructive bash commands is **deferred** to post-M2; see [deferred.md](deferred.md) | **deferred (see deferred.md)** |
 | Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
-| MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; HTTP transport only (M3)                          | compliant |
-| Provider-native tools | Reported as standard `tool_call` notifications                | Same — OpenAI `web_search` etc. surface via `tool_call` (M3)           | compliant |
+| MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; Streamable HTTP only; JWT in `McpServerHttp.headers` (M3 shipped) | compliant |
+| Provider-native tools | Reported as standard `tool_call` notifications                | **Deferred** — M3 ships MCP only; provider-native passthrough parked to a later milestone (see [deferred.md](deferred.md)) | **deferred (see deferred.md)** |
 | Slash commands       | Advertised via `available_commands_update`; expanded client-side | Same (M4)                                                              | compliant |
 | Extension methods    | `_`-prefixed, namespaced                                      | `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15 | compliant |
 | Session fork         | `session/fork` (unstable schema)                              | Adopted behind a feature flag, pinned SDK version (M6)                 | unstable-with-flag |
@@ -102,10 +102,14 @@ advertising `fs/*` as a future IDE-integration seam.
   as-is; the destructive-command gate layers on later without
   reshaping the tool-call wire. Re-enters at the milestone
   kickoff following M2 exit.
-- **M3 is now MCP + provider-native tools**, not session tree.
-  Rationale: in the web-agent spike, MCP was the hard part; we
-  tackle it early while the tool surface is minimal and the
-  session model is stable. See [m3-mcp.md](m3-mcp.md).
+- **M3 was originally MCP + provider-native tools**, not session
+  tree. Rationale: in the web-agent spike, MCP was the hard part;
+  we tackled it early while the tool surface was minimal and the
+  session model stable. **Provider-native tools were deferred
+  out of M3** after MCP landed — the `_bodhi/providers/nativeTools`
+  extension + per-model toggle UI are parked to [deferred.md](deferred.md)
+  so M3's shipped diff stays focused on the MCP wire. See
+  [m3-mcp.md](m3-mcp.md).
 - **Session tree (fork / branch) has moved to M6.** Rationale:
   the session model is already solid after M1 — fork is a
   UX amplifier, not a blocker. Landing tools + MCP + commands +
@@ -152,14 +156,18 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   decision gets carved out of an in-flight milestone, or when
   the scope of a future milestone needs to pick up a deferred
   item. Currently tracks the permission bridge + allow-always
-  persistence carried out of M2.
-- **[m3-mcp.md](m3-mcp.md)** —
-  load when adding MCP servers to the worker and surfacing
-  provider-native tools. Agent is the MCP client (HTTP only).
-  Provider-native tools (OpenAI `web_search` etc.) surface as
-  regular `tool_call` notifications for observability. For
-  current code-level reference once Phase A ships, read
+  persistence carried out of M2, and provider-native tool
+  passthrough carried out of M3.
+- **[m3-mcp.md](m3-mcp.md)** — **shipped.** Load for historical
+  reference on the MCP-over-HTTP integration: live catalog fetch,
+  JWT-in-`McpServerHttp.headers`, refcounted worker pool,
+  `<srv>__<tool>` namespacing, per-session `mcpToggles`
+  (Dexie v3 + `_bodhi/mcp/toggles/set`), and the `_meta.bodhi.mcp`
+  lifecycle notification contract. For current code-level
+  reference, read
   [`../specs/web-acp/mcp.md`](../specs/web-acp/mcp.md).
+  Provider-native tools were carved out of M3 — see
+  [deferred.md](deferred.md).
 - **[m4-commands-and-skills.md](m4-commands-and-skills.md)** —
   load when picking up slash commands, prompt templates, and
   skills. Commands advertised via ACP `available_commands_update`;
