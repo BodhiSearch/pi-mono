@@ -8,6 +8,8 @@ import type {
   InitializeResponse,
   LoadSessionRequest,
   LoadSessionResponse,
+  McpServer,
+  McpServerHttp,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -22,16 +24,24 @@ import type {
   AgentMessage,
   AgentMessage as CoreMessage,
   AgentTool,
+  AgentToolResult,
+  AgentToolUpdateCallback,
 } from '@mariozechner/pi-agent-core';
 import type { TSchema } from '@sinclair/typebox';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { BodhiProvider } from '@/agent/bodhi-provider';
 import { apiFormatOfModel } from '@/agent/bodhi-provider';
 import type { InlineAgent } from '@/agent/inline-agent';
+import {
+  createMcpAgentTool,
+  McpConnectionPool,
+  type McpPoolEvent,
+  type McpToolDetails,
+} from '@/agent/mcp';
 import type { SessionStore } from '@/agent/session-store';
 import type { StreamOptionOverrides } from '@/agent/stream-fn';
 import { composeSystemPrompt } from '@/agent/system-prompt';
-import { createBashTool, type BashToolDetails } from '@/agent/tools/bash-tool';
+import { createBashTool } from '@/agent/tools/bash-tool';
 import type { VolumeRegistry } from '@/agent/volume-mount';
 import type { FeatureSnapshot, FeatureStore } from '@/features/feature-store';
 import { FEATURE_DEFAULTS, isFeatureKey } from '@/features/feature-store';
@@ -56,6 +66,8 @@ import {
 
 interface SessionState {
   id: string;
+  /** MCP server configs this session acquired on `session/new` or `session/load`. */
+  mcpServers: McpServerHttp[];
 }
 
 interface BodhiPromptMeta {
@@ -95,6 +107,8 @@ export class AcpAgentAdapter implements Agent {
   readonly #registry: VolumeRegistry | undefined;
   readonly #features: FeatureStore | undefined;
   readonly #streamOverrides: StreamOverridesRef | undefined;
+  readonly #mcpPool: McpConnectionPool;
+  readonly #mcpSubscription: () => void;
   readonly #sessions = new Map<string, SessionState>();
   #models: Model<Api>[] = [];
   #cancelled = false;
@@ -122,7 +136,8 @@ export class AcpAgentAdapter implements Agent {
     store?: SessionStore,
     registry?: VolumeRegistry,
     features?: FeatureStore,
-    streamOverrides?: StreamOverridesRef
+    streamOverrides?: StreamOverridesRef,
+    mcpPool?: McpConnectionPool
   ) {
     this.#conn = conn;
     this.#inline = inline;
@@ -131,6 +146,10 @@ export class AcpAgentAdapter implements Agent {
     this.#registry = registry;
     this.#features = features;
     this.#streamOverrides = streamOverrides;
+    this.#mcpPool = mcpPool ?? new McpConnectionPool();
+    this.#mcpSubscription = this.#mcpPool.subscribe(event => {
+      void this.#broadcastMcpPoolEvent(event);
+    });
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
@@ -138,6 +157,10 @@ export class AcpAgentAdapter implements Agent {
       protocolVersion: 1,
       agentCapabilities: {
         loadSession: this.#store !== undefined,
+        mcpCapabilities: {
+          http: true,
+          sse: false,
+        },
         promptCapabilities: {
           image: false,
           audio: false,
@@ -169,14 +192,16 @@ export class AcpAgentAdapter implements Agent {
     return {};
   }
 
-  async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
+  async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = `bodhi-${crypto.randomUUID()}`;
-    this.#sessions.set(sessionId, { id: sessionId });
+    const mcpServers = filterHttpServers(params.mcpServers ?? []);
+    this.#sessions.set(sessionId, { id: sessionId, mcpServers });
     if (this.#store) {
       await this.#store.createSession(sessionId);
     }
     this.#inline.clearMessages();
     this.#activeInlineSessionId = sessionId;
+    await this.#acquireMcpConnections(sessionId, mcpServers);
     return { sessionId };
   }
 
@@ -201,7 +226,18 @@ export class AcpAgentAdapter implements Agent {
     if (!row) {
       throw new Error(`session/load: unknown session '${params.sessionId}'`);
     }
-    this.#sessions.set(params.sessionId, { id: params.sessionId });
+    const mcpServers = filterHttpServers(params.mcpServers ?? []);
+    const existing = this.#sessions.get(params.sessionId);
+    if (existing) {
+      // Releasing via a full `releaseAll` would also drop servers the
+      // caller wants to keep; instead release exactly the configs the
+      // session was previously holding so the pool can re-evaluate
+      // refcounts and re-key under the new headers.
+      await Promise.all(
+        existing.mcpServers.map(cfg => this.#mcpPool.release(params.sessionId, cfg))
+      );
+    }
+    this.#sessions.set(params.sessionId, { id: params.sessionId, mcpServers });
 
     const entries = await this.#store.readEntries(params.sessionId);
     let lastTurnMessages: AgentMessage[] | undefined;
@@ -224,6 +260,7 @@ export class AcpAgentAdapter implements Agent {
       this.#inline.clearMessages();
     }
     this.#activeInlineSessionId = params.sessionId;
+    await this.#acquireMcpConnections(params.sessionId, mcpServers);
     return {};
   }
 
@@ -260,6 +297,9 @@ export class AcpAgentAdapter implements Agent {
     if (featureSnapshot.bashEnabled && hasVolumes && this.#registry) {
       const bashTool = createBashTool({ registry: this.#registry });
       tools.push(bindAbortSignal(bashTool, this.#turnAbort.signal) as AgentTool<TSchema>);
+    }
+    for (const mcpTool of this.#mcpToolsForSession(session)) {
+      tools.push(bindAbortSignal(mcpTool, this.#turnAbort.signal) as AgentTool<TSchema>);
     }
     const systemPrompt = composeSystemPrompt(volumes);
     this.#inline.setModel(model, { tools, systemPrompt });
@@ -402,6 +442,95 @@ export class AcpAgentAdapter implements Agent {
       return response;
     }
     throw new Error(`Unknown extension method: ${method}`);
+  }
+
+  /**
+   * Acquire each MCP server for the given session. Errors from the
+   * pool are swallowed here — the pool already emits `error` events
+   * that travel through `#broadcastMcpPoolEvent`, and the session
+   * itself should still be usable even if a single MCP server fails
+   * to connect (the tool simply won't be registered).
+   */
+  async #acquireMcpConnections(sessionId: string, servers: McpServerHttp[]): Promise<void> {
+    await Promise.all(
+      servers.map(async cfg => {
+        try {
+          await this.#mcpPool.acquire(sessionId, cfg);
+        } catch (err) {
+          console.error(`[acp-agent-adapter] MCP acquire failed for ${cfg.name}:`, err);
+        }
+      })
+    );
+  }
+
+  /**
+   * Build the per-turn MCP tool list for the session by reading the
+   * cached `tools/list` catalog from the pool and adapting every tool
+   * into an `AgentTool`. Tools from servers that failed to connect
+   * are silently omitted.
+   */
+  #mcpToolsForSession(session: SessionState): AgentTool<TSchema, McpToolDetails>[] {
+    const out: AgentTool<TSchema, McpToolDetails>[] = [];
+    for (const cfg of session.mcpServers) {
+      const client = this.#mcpPool.getClient(cfg);
+      if (!client) continue;
+      const tools = this.#mcpPool.getTools(cfg);
+      for (const tool of tools) {
+        out.push(createMcpAgentTool({ client, serverName: cfg.name, tool }));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Forward MCP pool lifecycle events to every known session as a
+   * `session/update` notification carrying `_meta.bodhi.mcp`. ACP
+   * doesn't define a first-class transport-level verb, so we ride on
+   * an empty `agent_message_chunk` — the main thread's hook filters
+   * by `_meta.bodhi.mcp` before touching the message stream.
+   */
+  async #broadcastMcpPoolEvent(event: McpPoolEvent): Promise<void> {
+    const affected = new Set<string>();
+    for (const [sessionId, state] of this.#sessions) {
+      if (state.mcpServers.some(cfg => cfg.name === event.server && cfg.url === event.url)) {
+        affected.add(sessionId);
+      }
+    }
+    if (affected.size === 0) return;
+    const meta = {
+      bodhi: {
+        mcp: {
+          server: event.server,
+          state: poolEventToState(event.type),
+          ...(event.error ? { error: event.error } : {}),
+          ...(event.tools ? { tools: event.tools } : {}),
+        },
+      },
+    };
+    await Promise.all(
+      [...affected].map(sessionId =>
+        this.#emit({
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '' },
+          },
+          _meta: meta,
+        } as SessionNotification)
+      )
+    );
+  }
+
+  /**
+   * Release every MCP connection the adapter holds and clean up the
+   * pool subscription. Worker teardown calls this via the
+   * `AgentSideConnection` disconnect path.
+   */
+  async dispose(): Promise<void> {
+    this.#mcpSubscription();
+    const sessionIds = [...this.#sessions.keys()];
+    await Promise.all(sessionIds.map(id => this.#mcpPool.releaseAll(id)));
+    this.#sessions.clear();
   }
 
   async #readFeatures(sessionId: string): Promise<FeatureSnapshot> {
@@ -559,16 +688,21 @@ export class AcpAgentAdapter implements Agent {
  * cancellation signal owned by the adapter. pi-agent-core passes its
  * internal abort signal (for LLM streaming) into `execute`, but for
  * tool cancellation we also want the adapter's `session/cancel`
- * controller to short-circuit the current bash run.
+ * controller to short-circuit the current run (bash, MCP, or other).
  */
-function bindAbortSignal<T extends AgentTool<TSchema, BashToolDetails>>(
-  tool: T,
+function bindAbortSignal<TParams extends TSchema, TDetails>(
+  tool: AgentTool<TParams, TDetails>,
   turnSignal: AbortSignal
-): T {
+): AgentTool<TParams, TDetails> {
   const originalExecute = tool.execute.bind(tool);
   return {
     ...tool,
-    execute: (toolCallId, params, signal, onUpdate) => {
+    execute: (
+      toolCallId: string,
+      params,
+      signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback<TDetails>
+    ): Promise<AgentToolResult<TDetails>> => {
       const controller = new AbortController();
       if (turnSignal.aborted) controller.abort(turnSignal.reason);
       else
@@ -582,7 +716,36 @@ function bindAbortSignal<T extends AgentTool<TSchema, BashToolDetails>>(
       }
       return originalExecute(toolCallId, params, controller.signal, onUpdate);
     },
-  } as T;
+  };
+}
+
+/**
+ * Retain only `type: 'http'` servers from the raw ACP `McpServer`
+ * union. web-acp advertises `mcpCapabilities.http = true` only, but
+ * clients can still send stdio/sse entries — we drop them
+ * deliberately rather than throwing so one misconfigured entry never
+ * breaks a session.
+ */
+function filterHttpServers(servers: McpServer[]): McpServerHttp[] {
+  const out: McpServerHttp[] = [];
+  for (const server of servers) {
+    if (!server || typeof server !== 'object') continue;
+    if ('type' in server && server.type !== 'http') continue;
+    if (!('url' in server) || typeof (server as { url: unknown }).url !== 'string') continue;
+    // `McpServer::Http` when present always carries a string name and headers array.
+    out.push({
+      name: (server as { name: string }).name,
+      url: (server as { url: string }).url,
+      headers: (server as { headers?: Array<{ name: string; value: string }> }).headers ?? [],
+    });
+  }
+  return out;
+}
+
+function poolEventToState(
+  event: 'connecting' | 'connected' | 'error' | 'disconnected'
+): 'connecting' | 'connected' | 'error' | 'disconnected' {
+  return event;
 }
 
 function toolTitle(toolName: string, args: unknown): string {

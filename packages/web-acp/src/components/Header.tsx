@@ -5,6 +5,26 @@ import StatusIndicator from './StatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 
+/**
+ * Resolve the upstream MCP URL that the login flow requests access to
+ * before approval. Production / dev builds read from
+ * `VITE_MCP_EVERYTHING_URL`. E2E tests inject
+ * `window.__mcpEverythingUrl` via Playwright's `addInitScript` so the
+ * harness can point login at the everything-server fixture it spun up
+ * in `global-setup.ts`. When nothing is configured we skip
+ * `addMcpServer` entirely; the app still works against whatever MCP
+ * instances already exist on the Bodhi server.
+ */
+function resolveEverythingMcpUrl(): string | undefined {
+  if (typeof window !== 'undefined') {
+    const override = (window as unknown as { __mcpEverythingUrl?: unknown }).__mcpEverythingUrl;
+    if (typeof override === 'string' && override.length > 0) return override;
+  }
+  const fromEnv = import.meta.env.VITE_MCP_EVERYTHING_URL as string | undefined;
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
+  return undefined;
+}
+
 export default function Header() {
   const {
     clientState,
@@ -21,11 +41,12 @@ export default function Header() {
   } = useBodhi();
 
   const handleLogin = async () => {
-    const loginOptions = new LoginOptionsBuilder()
-      .setFlowType('redirect')
-      .setRole('scope_user_user')
-      .addMcpServer('https://mcp.exa.ai/mcp')
-      .build();
+    const builder = new LoginOptionsBuilder().setFlowType('redirect').setRole('scope_user_user');
+    const mcpUrl = resolveEverythingMcpUrl();
+    if (mcpUrl) {
+      builder.addMcpServer(mcpUrl);
+    }
+    const loginOptions = builder.build();
     const authState = await login(loginOptions);
     if (authState?.status === 'error' && authState.error) {
       toast.error(authState.error.message);

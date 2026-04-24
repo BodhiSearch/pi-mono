@@ -6,6 +6,7 @@ import ChatInput from './ChatInput';
 import SessionPicker from './SessionPicker';
 import VolumesPanel from '@/components/volumes/VolumesPanel';
 import FeaturePanel from '@/components/features/FeaturePanel';
+import McpPanel from '@/mcp/McpPanel';
 
 export default function ChatDemo() {
   const {
@@ -29,6 +30,7 @@ export default function ChatDemo() {
     featureDefaults,
     setFeature,
     toolCalls,
+    mcp,
   } = useAcp();
 
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function ChatDemo() {
           onChange={setFeature}
           disabled={isStreaming}
         />
+        <McpPanel instances={mcp.instances} states={mcp.states} />
         <div className="flex-1 min-h-0">
           <SessionPicker
             sessions={sessions}

@@ -6,8 +6,14 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { BodhiServerManager } from './utils/bodhi-server-manager';
+import {
+  EverythingMcpManager,
+  EVERYTHING_MCP_PORT,
+  EVERYTHING_MCP_URL,
+} from './utils/everything-mcp-manager';
 import { LoginPage } from './pages/LoginPage';
 import { ApiModelsPage } from './pages/ApiModelsPage';
+import { McpsPage } from './pages/McpsPage';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +24,8 @@ export interface TestState {
   bodhiServerUrl: string;
   username: string;
   password: string;
+  mcpEverythingSlug: string;
+  mcpEverythingUrl: string;
 }
 
 export function getTestState(): TestState {
@@ -54,7 +62,7 @@ function isPortInUse(port: number): Promise<boolean> {
 }
 
 async function assertPortsFree(): Promise<void> {
-  const portsToCheck = [BODHI_SERVER_PORT, BODHI_DEFAULT_PORT];
+  const portsToCheck = [BODHI_SERVER_PORT, BODHI_DEFAULT_PORT, EVERYTHING_MCP_PORT];
   for (const port of portsToCheck) {
     if (await isPortInUse(port)) {
       throw new Error(
@@ -105,6 +113,11 @@ function buildUserAgent(): string {
 }
 
 let bodhiServer: BodhiServerManager | null = null;
+let everythingMcp: EverythingMcpManager | null = null;
+
+export const MCP_EVERYTHING_SERVER_NAME = 'web-acp-everything';
+export const MCP_EVERYTHING_INSTANCE_NAME = 'Everything MCP';
+export const MCP_EVERYTHING_INSTANCE_SLUG = 'everything';
 
 async function globalSetup(_: FullConfig) {
   loadEnv({ path: path.join(E2E_DIR, '.env.test'), quiet: true });
@@ -136,6 +149,9 @@ async function globalSetup(_: FullConfig) {
 
   const serverUrl = await bodhiServer.start();
 
+  everythingMcp = new EverythingMcpManager({ logToStdout: !!process.env.CI });
+  await everythingMcp.start();
+
   const headless = isHeadless;
   const videoDir = path.join(E2E_DIR, 'test-results', 'global-setup');
   const browser = await chromium.launch({ headless });
@@ -164,6 +180,23 @@ async function globalSetup(_: FullConfig) {
       ANTHROPIC_API_MODEL_NAME,
       'anthropic'
     );
+
+    // MCP bootstrap for M3 Phase A: register the local "everything"
+    // reference server on the Bodhi side so the user-facing app gets a
+    // live instance with a real upstream when the web-acp login flow
+    // runs `LoginOptionsBuilder.addMcpServer(...)` against it.
+    const mcpsPage = new McpsPage(page, serverUrl);
+    await mcpsPage.createMcpServer(
+      everythingMcp!.getUrl(),
+      MCP_EVERYTHING_SERVER_NAME,
+      'everything MCP reference server (e2e fixture)'
+    );
+    await mcpsPage.createMcpInstance(
+      MCP_EVERYTHING_SERVER_NAME,
+      MCP_EVERYTHING_INSTANCE_NAME,
+      MCP_EVERYTHING_INSTANCE_SLUG,
+      'Public everything MCP instance — seeded by web-acp global-setup'
+    );
   } catch (err) {
     setupFailed = true;
     const shotPath = path.join(E2E_DIR, 'test-results', 'global-setup-failure.png');
@@ -189,7 +222,9 @@ async function globalSetup(_: FullConfig) {
       bodhiServerUrl: serverUrl,
       username: getEnv('BODHIAPP_USERNAME'),
       password: getEnv('BODHIAPP_PASSWORD'),
-    })
+      mcpEverythingSlug: MCP_EVERYTHING_INSTANCE_SLUG,
+      mcpEverythingUrl: EVERYTHING_MCP_URL,
+    } satisfies TestState)
   );
   console.log(`[global-setup] Ready. Bodhi server at ${serverUrl}`);
 
@@ -197,6 +232,10 @@ async function globalSetup(_: FullConfig) {
     if (bodhiServer) {
       await bodhiServer.stop();
       bodhiServer = null;
+    }
+    if (everythingMcp) {
+      await everythingMcp.stop();
+      everythingMcp = null;
     }
     try {
       unlinkSync(STATE_FILE);

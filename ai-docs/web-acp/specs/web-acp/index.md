@@ -56,6 +56,7 @@ drill into the per-module specs:
 | [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/`, `src/acp/fs-handlers.ts` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, the worker-side `VolumeRegistry`, and the main-thread `fs/*` IDE-integration seam (M2). |
 | [`tools.md`](./tools.md) | `src/agent/tools/` — the `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation (M2). |
 | [`features.md`](./features.md) | `src/features/`, `src/components/features/` — per-session feature-toggle store (Dexie v2 `features` table), `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). |
+| [`mcp.md`](./mcp.md) | `src/mcp/`, `src/agent/mcp/` — main-thread MCP catalog + `McpServerHttp` composition, worker-side `@modelcontextprotocol/sdk` client, refcounted connection pool, tool adapter, `_meta.bodhi.mcp` lifecycle events (M3). |
 
 ## Overview
 

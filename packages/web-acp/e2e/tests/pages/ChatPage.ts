@@ -61,7 +61,10 @@ export class ChatPage {
     await this.page.locator(this.selectors.setupOverlay).waitFor({ state: 'hidden' });
   }
 
-  async login(credentials: { username: string; password: string }): Promise<void> {
+  async login(
+    credentials: { username: string; password: string },
+    opts: { acceptMcps?: string[] } = {}
+  ): Promise<void> {
     await this.page.locator(this.selectors.loginButton).click();
 
     // Bodhi server branded login page → click Login → redirects to Keycloak
@@ -75,16 +78,24 @@ export class ChatPage {
     await this.page.fill('#password', credentials.password);
     await this.page.click('#kc-login');
 
-    // Access request review → uncheck every MCP checkbox so approve isn't
-    // gated on MCP instances existing on the server → approve role-only.
+    // Access request review: by default (no acceptMcps) uncheck every MCP
+    // toggle so approve isn't gated on MCP instances existing on the
+    // server → approve role-only. With `acceptMcps`, leave toggles for
+    // those slugs checked and uncheck the rest so the session boots
+    // with only the requested MCP instances pre-authorised.
     await this.page.waitForURL(/\/access-requests\/review/);
     const approveButton = this.page.getByTestId('review-approve-button');
     await approveButton.waitFor();
+    const accept = new Set(opts.acceptMcps ?? []);
     const mcpToggles = this.page.locator('[data-testid^="review-mcp-toggle-"]');
     const count = await mcpToggles.count();
     for (let i = 0; i < count; i++) {
       const toggle = mcpToggles.nth(i);
-      if ((await toggle.getAttribute('aria-checked')) === 'true') {
+      const testid = (await toggle.getAttribute('data-testid')) ?? '';
+      const slug = testid.replace(/^review-mcp-toggle-/, '');
+      const currentlyChecked = (await toggle.getAttribute('aria-checked')) === 'true';
+      const desired = accept.has(slug);
+      if (currentlyChecked !== desired) {
         await toggle.click();
       }
     }

@@ -3,6 +3,7 @@ import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import { AcpAgentAdapter } from '@/acp/agent-adapter';
 import { BodhiProvider } from './bodhi-provider';
 import { createInlineAgent } from './inline-agent';
+import { McpConnectionPool } from './mcp';
 import { createStoreFromDb, openSessionDb } from './session-store';
 import { createStreamFn, type StreamOptionOverrides } from './stream-fn';
 import { createMessagePortStream } from '@/transport/worker-stream';
@@ -61,8 +62,19 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
   // prompts so the first `prompt` turn already sees the right
   // `/mnt/<name>` entries.
   await registry.mountAll(volumes);
+  const mcpPool = new McpConnectionPool();
   const _connection = new AgentSideConnection(
-    conn => new AcpAgentAdapter(conn, inline, provider, store, registry, features, streamOverrides),
+    conn =>
+      new AcpAgentAdapter(
+        conn,
+        inline,
+        provider,
+        store,
+        registry,
+        features,
+        streamOverrides,
+        mcpPool
+      ),
     stream
   );
   void _connection;

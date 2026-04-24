@@ -27,6 +27,7 @@
     "@bodhiapp/bodhi-js-react": "^0.0.37",
     "@mariozechner/pi-agent-core": "^0.67.3",
     "@mariozechner/pi-ai": "^0.67.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-slot": "^1.2.4",
@@ -50,6 +51,7 @@
   "devDependencies": {
     "@bodhiapp/app-bindings": "0.0.42",
     "@eslint/js": "^9.39.1",
+    "@modelcontextprotocol/server-everything": "^2026.1.26",
     "@playwright/test": "^1.57.0",
     "@tailwindcss/vite": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",

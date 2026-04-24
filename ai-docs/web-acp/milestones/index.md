@@ -50,7 +50,7 @@ gate file lands with the first real milestone if the rules diverge.
 | M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
 | M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
 | M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | **shipped** | [m2-tools.md](m2-tools.md) |
-| M3  | MCP over HTTP + provider-native tool passthrough                       | next    | [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md) |
+| M3  | MCP over HTTP + provider-native tool passthrough                       | next    | [m3-mcp.md](m3-mcp.md) |
 | M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
 | M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
@@ -105,7 +105,7 @@ advertising `fs/*` as a future IDE-integration seam.
 - **M3 is now MCP + provider-native tools**, not session tree.
   Rationale: in the web-agent spike, MCP was the hard part; we
   tackle it early while the tool surface is minimal and the
-  session model is stable. See [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md).
+  session model is stable. See [m3-mcp.md](m3-mcp.md).
 - **Session tree (fork / branch) has moved to M6.** Rationale:
   the session model is already solid after M1 — fork is a
   UX amplifier, not a blocker. Landing tools + MCP + commands +
@@ -116,7 +116,7 @@ advertising `fs/*` as a future IDE-integration seam.
 - **Compaction (M7) lands after extensions** because extensions
   may want to hook compaction (`before_compact` / `after_compact`).
 - The MCP surface that used to live as M2.3 has moved to M3
-  proper; see [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md).
+  proper; see [m3-mcp.md](m3-mcp.md).
 
 ## Load-when hooks
 
@@ -153,11 +153,13 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   the scope of a future milestone needs to pick up a deferred
   item. Currently tracks the permission bridge + allow-always
   persistence carried out of M2.
-- **[m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md)** —
+- **[m3-mcp.md](m3-mcp.md)** —
   load when adding MCP servers to the worker and surfacing
   provider-native tools. Agent is the MCP client (HTTP only).
   Provider-native tools (OpenAI `web_search` etc.) surface as
-  regular `tool_call` notifications for observability.
+  regular `tool_call` notifications for observability. For
+  current code-level reference once Phase A ships, read
+  [`../specs/web-acp/mcp.md`](../specs/web-acp/mcp.md).
 - **[m4-commands-and-skills.md](m4-commands-and-skills.md)** —
   load when picking up slash commands, prompt templates, and
   skills. Commands advertised via ACP `available_commands_update`;

@@ -3,6 +3,8 @@ import type {
   ClientSideConnection,
   InitializeResponse,
   LoadSessionResponse,
+  McpServer,
+  McpServerHttp,
   NewSessionResponse,
   PromptResponse,
   SessionNotification,
@@ -81,12 +83,19 @@ export class AcpClient {
     return payload.sessions ?? [];
   }
 
-  async newSession(): Promise<NewSessionResponse> {
-    return this.#conn.newSession({ cwd: '/', mcpServers: [] });
+  async newSession(mcpServers: McpServerHttp[] = []): Promise<NewSessionResponse> {
+    return this.#conn.newSession({ cwd: '/', mcpServers: toMcpServers(mcpServers) });
   }
 
-  async loadSession(sessionId: string): Promise<LoadSessionResponse> {
-    return this.#conn.loadSession({ sessionId, cwd: '/', mcpServers: [] });
+  async loadSession(
+    sessionId: string,
+    mcpServers: McpServerHttp[] = []
+  ): Promise<LoadSessionResponse> {
+    return this.#conn.loadSession({
+      sessionId,
+      cwd: '/',
+      mcpServers: toMcpServers(mcpServers),
+    });
   }
 
   async getSession(sessionId: string): Promise<BodhiGetSessionResponse> {
@@ -144,6 +153,14 @@ export class AcpClient {
       }
     }
   }
+}
+
+/**
+ * Coerce composed `McpServerHttp` entries into the wire-shape `McpServer`
+ * union the ACP SDK accepts on `session/new` / `session/load`.
+ */
+function toMcpServers(servers: McpServerHttp[]): McpServer[] {
+  return servers.map(server => ({ ...server, type: 'http' as const }));
 }
 
 export function buildClientHandler(client: AcpClient): Client {

@@ -3,10 +3,13 @@ import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
-import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
+import type { Client, McpServerHttp, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
 import type { BodhiFeatureBag, BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
+import { composeMcpServers } from '@/mcp/compose-mcp-servers';
+import type { McpConnectionMeta, McpInstanceView } from '@/mcp/types';
+import { useMcpInstances } from '@/mcp/useMcpInstances';
 import { createMessagePortStream } from '@/transport/worker-stream';
 import { createVolumeControl, type VolumeControl } from '@/transport/volume-control';
 import { getErrorMessage } from '@/lib/utils';
@@ -21,6 +24,8 @@ const EMPTY_MODELS: BodhiModelInfo[] = [];
 const EMPTY_SESSIONS: BodhiSessionSummary[] = [];
 const EMPTY_FEATURES: BodhiFeatureBag = {};
 const EMPTY_TOOL_CALLS: ToolCallView[] = [];
+const EMPTY_MCP_STATES: Record<string, McpConnectionMeta> = {};
+const EMPTY_MCP_INSTANCES: McpInstanceView[] = [];
 
 export interface ToolCallView {
   toolCallId: string;
@@ -218,8 +223,35 @@ function mapToolStatus(
   return undefined;
 }
 
+function extractMcpMeta(meta: unknown): McpConnectionMeta | undefined {
+  if (!meta || typeof meta !== 'object') return undefined;
+  const bodhi = (meta as { bodhi?: unknown }).bodhi;
+  if (!bodhi || typeof bodhi !== 'object') return undefined;
+  const mcp = (bodhi as { mcp?: unknown }).mcp;
+  if (!mcp || typeof mcp !== 'object') return undefined;
+  const rec = mcp as Record<string, unknown>;
+  const server = rec.server;
+  const state = rec.state;
+  if (typeof server !== 'string') return undefined;
+  if (
+    state !== 'disconnected' &&
+    state !== 'connecting' &&
+    state !== 'connected' &&
+    state !== 'error'
+  ) {
+    return undefined;
+  }
+  const out: McpConnectionMeta = { server, state };
+  if (typeof rec.error === 'string') out.error = rec.error;
+  if (Array.isArray(rec.tools) && rec.tools.every(t => typeof t === 'string')) {
+    out.tools = rec.tools as string[];
+  }
+  return out;
+}
+
 export function useAcp() {
   const { client: bodhiClient, auth, isAuthenticated, isReady } = useBodhi();
+  const mcpInstances = useMcpInstances();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [streamingMessage, setStreamingMessage] = useState<AgentMessage | undefined>(undefined);
@@ -235,8 +267,13 @@ export function useAcp() {
   const [features, setFeatures] = useState<BodhiFeatureBag>({});
   const [featureDefaults, setFeatureDefaults] = useState<BodhiFeatureBag>({});
   const [toolCalls, setToolCalls] = useState<ToolCallView[]>([]);
+  const [mcpStates, setMcpStates] = useState<Record<string, McpConnectionMeta>>(EMPTY_MCP_STATES);
   const toolCallsRef = useRef<Map<string, ToolCallView>>(new Map());
   const turnIndexRef = useRef(0);
+  const mcpInstancesRef = useRef<McpInstanceView[]>(EMPTY_MCP_INSTANCES);
+  useEffect(() => {
+    mcpInstancesRef.current = mcpInstances.instances;
+  }, [mcpInstances.instances]);
 
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
@@ -268,6 +305,14 @@ export function useAcp() {
   useEffect(() => {
     const runtime = ensureRuntime();
     const unsub = runtime.client.onSessionUpdate(notification => {
+      // MCP connection lifecycle events ride on empty `agent_message_chunk`
+      // notifications with `_meta.bodhi.mcp` set; they must be routed
+      // regardless of replay guard.
+      const mcpMeta = extractMcpMeta(notification._meta);
+      if (mcpMeta) {
+        setMcpStates(prev => ({ ...prev, [mcpMeta.server]: mcpMeta }));
+        return;
+      }
       if (isReplayingRef.current) return;
       const update = notification.update;
       if (update.sessionUpdate === 'agent_message_chunk') {
@@ -474,13 +519,26 @@ export function useAcp() {
     [refreshFeatures]
   );
 
+  const composeCurrentMcpServers = useCallback((): McpServerHttp[] => {
+    const token = auth.accessToken;
+    if (!token) return [];
+    try {
+      const baseUrl = getServerUrlOrThrow(bodhiClient.getState());
+      return composeMcpServers(mcpInstancesRef.current, token, baseUrl);
+    } catch (err) {
+      console.warn('[useAcp] composeMcpServers failed:', err);
+      return [];
+    }
+  }, [auth.accessToken, bodhiClient]);
+
   const ensureSession = useCallback(async (): Promise<string> => {
     if (_session) return _session;
     if (_sessionPromise) return _sessionPromise;
     const runtime = ensureRuntime();
     _sessionPromise = (async () => {
       await runtime.initialize;
-      const response = await runtime.client.newSession();
+      const servers = composeCurrentMcpServers();
+      const response = await runtime.client.newSession(servers);
       _session = response.sessionId;
       return _session;
     })();
@@ -492,14 +550,22 @@ export function useAcp() {
     } finally {
       _sessionPromise = null;
     }
-  }, [refreshFeatures]);
+  }, [composeCurrentMcpServers, refreshFeatures]);
 
   // Ensure a session exists once auth lands so feature defaults are
   // fetched before the user interacts with the feature panel. This
   // also gives `_bodhi/features/set` a sessionId to write against.
+  //
+  // The MCP instances fetch kicks off from `useMcpInstances` at the
+  // same moment auth lands. We gate `ensureSession` on `isReady` —
+  // which is cleared synchronously the instant auth flips — so the
+  // worker pool receives the composed `McpServerHttp[]` on the very
+  // first `session/new`. Fetch failures still flip `isReady: true`
+  // with an empty list, so the gate never deadlocks.
   useEffect(() => {
     if (!isAuthenticated) return;
     if (currentSessionId) return;
+    if (!mcpInstances.isReady) return;
     let cancelled = false;
     const run = async () => {
       if (_authPromise) {
@@ -520,7 +586,7 @@ export function useAcp() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, currentSessionId, ensureSession]);
+  }, [isAuthenticated, currentSessionId, ensureSession, mcpInstances.isReady]);
 
   const loadSession = useCallback(
     async (sessionId: string) => {
@@ -542,7 +608,8 @@ export function useAcp() {
             /* handled by auth effect */
           }
         }
-        await runtime.client.loadSession(sessionId);
+        const servers = composeCurrentMcpServers();
+        await runtime.client.loadSession(sessionId, servers);
         const snapshot = await runtime.client.getSession(sessionId);
         _session = sessionId;
         setCurrentSessionId(sessionId);
@@ -566,7 +633,7 @@ export function useAcp() {
         setIsLoadingSession(false);
       }
     },
-    [refreshFeatures]
+    [composeCurrentMcpServers, refreshFeatures]
   );
 
   const sendMessage = useCallback(
@@ -635,6 +702,7 @@ export function useAcp() {
     setError(null);
     setCurrentSessionId(null);
     setFeatures({});
+    setMcpStates(EMPTY_MCP_STATES);
     toolCallsRef.current.clear();
     turnIndexRef.current = 0;
     setToolCalls([]);
@@ -690,6 +758,13 @@ export function useAcp() {
     featureDefaults,
     setFeature,
     toolCalls: isAuthenticated ? toolCalls : EMPTY_TOOL_CALLS,
+    mcp: {
+      instances: isAuthenticated ? mcpInstances.instances : EMPTY_MCP_INSTANCES,
+      states: isAuthenticated ? mcpStates : EMPTY_MCP_STATES,
+      isLoading: mcpInstances.isLoading,
+      error: mcpInstances.error,
+      refresh: mcpInstances.refresh,
+    },
   };
 }
 

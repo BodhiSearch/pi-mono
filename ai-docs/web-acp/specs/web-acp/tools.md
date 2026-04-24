@@ -134,3 +134,11 @@ renderer; the `ToolCallView` record shape is stable for that.
 - **e2e (Playwright):** `bash-smoke.spec.ts` seeds a volume with the
   dev helper, asks the model to run a scripted `cat`, and asserts on
   `data-testid="tool-call-*"` progressions.
+
+## Related surfaces
+
+M3 adds a second tool family registered alongside `bash`: MCP tools
+from the app-wide catalog. The adapter's registration loop treats
+both identically (`bindAbortSignal`, `tool_call` / `tool_call_update`,
+`tool_execution_end`); the MCP-specific machinery lives at
+[`./mcp.md`](./mcp.md).
