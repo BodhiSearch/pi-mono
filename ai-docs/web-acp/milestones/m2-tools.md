@@ -1,5 +1,77 @@
 # M2 — Multi-volume Mount + just-bash Shell Tool
 
+**Status:** **shipped** (phases A–D, April 2026). Commits:
+
+- Phase A — `web-acp: M2 phase A — multi-volume mount (worker-side)`
+- Phase B — `web-acp: M2 phase B — just-bash integration + bash tool + feature toggles`
+- Phase C — `web-acp: M2 phase C — fs/* client handlers as IDE seam`
+- Phase D — `web-acp: M2 phase D — M2 exit gate`
+
+## Decision log
+
+1. **Structured-clone transfer for FSA handles.** FSA
+   `FileSystemDirectoryHandle`s cannot ride JSON-RPC (not
+   serialisable), so the main thread transfers them to the worker
+   through a second raw-`postMessage` control channel
+   (`transport/volume-control.ts` ↔ `agent/volume-channel.ts`). ACP
+   stays the only wire on the primary `MessageChannel`. Rejected:
+   reload-on-every-mount (too disruptive), stringifying handles
+   (loses the handle).
+2. **Name-collision re-use policy.** `deriveUniqueMountName` appends
+   `-1`, `-2`, … on collision; when a volume is removed its slot is
+   freed, so re-adding the same directory reclaims the original
+   name. The alternative (permanent slot reservation) complicated
+   the FSA handle store without a user-visible benefit.
+3. **DEV-only `forceToolCall`.** Gated via Vite `define:
+   __WEB_ACP_DEV__` (worker) + `import.meta.env.DEV` (main) so the
+   toggle vanishes from the DOM in production builds. The feature
+   exists only to drive the bash path deterministically in e2e
+   without `page.evaluate`; leaking it to users would let them
+   force arbitrary tool calls.
+4. **`tool_choice: 'required'` is one-shot per turn.** Applying it
+   on every internal LLM call inside a single turn produced an
+   infinite tool-call loop (the agent never produced a final text
+   response). `createStreamFn` now accepts a `consumeOverrides`
+   lambda that clears `streamOverrides.current` after the first
+   read, so only the first LLM call in a turn is forced.
+5. **Main-thread ZenFS duplicates FSA mounts.** The M2.3 `fs/*`
+   handlers need to read the same bytes the worker reads without
+   round-tripping. FSA handles are structured-cloneable and the
+   underlying storage is shared by the OS, so we mount the same
+   handle on both sides. Caveat documented in `vault.md`:
+   concurrent writes from inside and outside the worker aren't
+   coordinated; the built-in `bash` never uses `fs/*`, and a future
+   milestone will add lease/versioning when external agents arrive.
+
+## Tests inventory
+
+**Vitest (10 files, 65 cases):**
+
+| File | Scope |
+| --- | --- |
+| `src/agent/system-prompt.test.ts` | System-prompt composition from mounted volumes |
+| `src/agent/volume-mount.test.ts` | `VolumeRegistry` mount/unmount/listener lifecycle |
+| `src/agent/session-store.test.ts` | Session persistence (inherited from M1) + feature column |
+| `src/agent/tools/volume-filesystem.test.ts` | `IFileSystem` round-trip over ZenFS |
+| `src/agent/tools/bash-tool.test.ts` | `bash` `AgentTool`: cat, write, truncation, exitCode, abort |
+| `src/vault/fsa-handle-store.test.ts` | `idb-keyval` persistence + permission partition + collision suffix |
+| `src/features/feature-store.test.ts` | Dexie v2 `features` table + defaults + DEV-only guard |
+| `src/acp/agent-adapter.tool-call.test.ts` | `tool_execution_*` → ACP `tool_call` / `tool_call_update` |
+| `src/acp/fs-handlers.test.ts` | Path safety: outside `/mnt`, unknown mount, `..` escape, symlink |
+| `src/acp/fs-handlers.integration.test.ts` | Double-mount read/write equivalence against real ZenFS |
+
+**Playwright (7 specs):**
+
+| Spec | Scope |
+| --- | --- |
+| `e2e/chat.spec.ts` | Baseline chat turn (unchanged since M0) |
+| `e2e/sessions-persist.spec.ts` | Session reload (unchanged since M1) |
+| `e2e/sessions-resume.spec.ts` | Model selection + transcript per-session (unchanged since M1) |
+| `e2e/volumes.spec.ts` | Multi-volume seed → panel → system prompt reach |
+| `e2e/bash-smoke.spec.ts` | Forced `tool_choice: required` → bash tool call → LLM reads `/mnt/wiki` |
+| `e2e/features.spec.ts` (default) | `bashEnabled` off suppresses tool registration |
+| `e2e/features.spec.ts` (prod project) | `forceToolCall` toggle hidden in production build |
+
 ## ACP compliance header
 
 **Posture.** Thick agent, **agent-owned filesystem**. This is a

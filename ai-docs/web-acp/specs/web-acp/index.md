@@ -3,8 +3,11 @@
 **Source of truth:** `packages/web-acp/src/`
 
 **Status:** living document — update as part of any plan that
-changes the source folder. Reflects the M0 exit state (Phase A–D
-of `web-acp_m0_phased_rework_eb57e580.plan.md`).
+changes the source folder. Reflects the **M2 exit state** —
+multi-volume mount, `just-bash` integration, the `bash` tool,
+`_bodhi/features/*` toggle surface, and the `fs/*`
+IDE-integration seam all shipped; see
+[`../../milestones/m2-tools.md`](../../milestones/m2-tools.md).
 
 ## Purpose
 
@@ -56,7 +59,7 @@ drill into the per-module specs:
 
 ## Overview
 
-### Scope in (M0)
+### Scope in (M0 → M2, all shipped)
 
 1. Spawn exactly one agent Web Worker per tab.
 2. Establish a `MessageChannel`-backed ACP connection using
@@ -82,21 +85,9 @@ drill into the per-module specs:
 ### Scope out (deferred)
 
 - Session rename / delete UI (M1.x).
-- Vault mount — FSA picker + worker-side ZenFS + dev seed
-  (**M2.1**).
-- just-bash integration + single `bash` tool registered with the
-  LLM (**M2.2**). Adoption of
-  [`vercel-labs/just-bash`](/Users/amir36/Documents/workspace/src/github.com/vercel-labs/just-bash)
-  as the LLM-facing tool surface collapses the original
-  `read/write/edit/ls/glob/grep` six-tool plan into one
-  strictly-richer `bash` tool and forces the agent-owned FS
-  posture. See
-  [`../../steering/02-architecture.md § ACP architectural postures`](../../steering/02-architecture.md#acp-architectural-postures)
-  for the reasoning.
 - Permission bridge — just-bash transform plugin →
-  `session/request_permission` (**M2.3**).
-- `fs/*` client handlers — advertised as an IDE-integration seam,
-  not used by the default bash tool (**M2.4**).
+  `session/request_permission` — carved out of M2.3; see
+  [`../../milestones/deferred.md`](../../milestones/deferred.md).
 - Agent-side HTTP MCP client + provider-native tool passthrough
   (**M3**).
 - Slash commands / prompt templates / skills (**M4**).

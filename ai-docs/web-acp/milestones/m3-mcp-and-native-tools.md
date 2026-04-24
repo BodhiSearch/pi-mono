@@ -96,19 +96,20 @@ Deliverables:
 - MCP invocation wraps `tools/call` against the server, streams
   any server-side progress as `tool_call_update`, reports final
   content as the tool-call result.
-- Permission gating for MCP tools uses the same
-  `session/request_permission` surface as built-in tools. Default
-  policy: prompt on first call per server per session (session-
-  scoped allowlist, same pattern as M2.3). Configurable in
-  settings.
+- MCP tools run **without a permission prompt** in M3. The
+  permission bridge (`session/request_permission` + allow-always
+  persistence) remains deferred per
+  [`deferred.md`](deferred.md); it re-enters in a later
+  milestone and will cover both `bash` and MCP tools uniformly
+  without reshaping the tool-call wire.
 - MCP-side error envelopes translate into ACP tool-call errors
   with the server's error text preserved.
 
 **ACP surface touched:**
 
 - Existing `session/update (tool_call)` +
-  `tool_call_update` + `session/request_permission`. No new
-  extension surface.
+  `tool_call_update`. No new extension surface; no
+  `session/request_permission` (deferred).
 
 **Gate items:**
 
@@ -118,9 +119,6 @@ Deliverables:
 - Mixed turn: one `bash` call and one MCP tool call inside the
   same turn; both land in the transcript as separate
   `tool_call`s.
-- Permission bridge: first MCP call prompts; subsequent calls
-  in the same session don't (when the user selected
-  `allow_always`).
 
 ### M3.3 — Provider-native tool passthrough
 
@@ -170,8 +168,9 @@ Deliverables:
 - **M1** — session persistence so tool calls (built-in, MCP,
   native) survive reload.
 - **M2** — the agent-side tool registry exists; MCP tools
-  register alongside `bash`. Permission bridge from M2.3
-  generalises to MCP.
+  register alongside `bash`. The permission bridge originally
+  slated for M2.3 was deferred out of M2; when it re-enters, it
+  will cover both `bash` and MCP tools uniformly.
 
 ## Out of scope
 

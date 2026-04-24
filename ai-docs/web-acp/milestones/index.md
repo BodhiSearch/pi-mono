@@ -49,8 +49,8 @@ gate file lands with the first real milestone if the rules diverge.
 | --- | ---------------------------------------------------------------------- | ------- | ---- |
 | M0  | Foundation: scaffold + inline agent + real-LLM e2e, then Worker + ACP framing | **shipped** | [m0-foundation.md](m0-foundation.md) |
 | M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
-| M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | next    | [m2-tools.md](m2-tools.md) |
-| M3  | MCP over HTTP + provider-native tool passthrough                       | planned | [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md) |
+| M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | **shipped** | [m2-tools.md](m2-tools.md) |
+| M3  | MCP over HTTP + provider-native tool passthrough                       | next    | [m3-mcp-and-native-tools.md](m3-mcp-and-native-tools.md) |
 | M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
 | M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
@@ -137,16 +137,17 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   `session/load` replay, and the `bodhi/getSession` snapshot
   companion that restores the per-session model selector.
   Delivery plan at [`../plans/m1-sessions.md`](../plans/m1-sessions.md).
-- **[m2-tools.md](m2-tools.md)** — load when standing up the
-  multi-volume mount and the just-bash shell tool. Ships in
-  four slices: M2.1 multi-volume mount (FSA + ZenFS worker-
-  side, `/mnt/<name>` naming, per-volume descriptions), M2.2
-  just-bash integration + single `bash` tool registration +
-  generic `_bodhi/features/*` toggle surface, M2.3 `fs/*`
-  client handlers as a future IDE-integration seam
-  (advertised, not used by built-ins), M2.4 polish + exit.
-  The permission bridge that used to live as M2.3 is
-  **deferred** to post-M2 — see [deferred.md](deferred.md).
+- **[m2-tools.md](m2-tools.md)** — **shipped.** Load for
+  historical reference on the multi-volume mount, the just-bash
+  shell tool, the generic `_bodhi/features/*` toggle surface, and
+  the `fs/*` client handlers that live on the main thread as an
+  IDE-integration seam (not used by the built-in bash). For
+  current code-level reference, read
+  [`../specs/web-acp/vault.md`](../specs/web-acp/vault.md),
+  [`../specs/web-acp/tools.md`](../specs/web-acp/tools.md), and
+  [`../specs/web-acp/features.md`](../specs/web-acp/features.md).
+  The permission bridge that used to live as M2.3 is **deferred**
+  to post-M2 — see [deferred.md](deferred.md).
 - **[deferred.md](deferred.md)** — load whenever a deferral
   decision gets carved out of an in-flight milestone, or when
   the scope of a future milestone needs to pick up a deferred
