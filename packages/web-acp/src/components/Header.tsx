@@ -25,6 +25,22 @@ function resolveEverythingMcpUrl(): string | undefined {
   return undefined;
 }
 
+/**
+ * Public Exa DeepWiki MCP. Hardcoded because it's a stable public
+ * endpoint with no per-environment variation; an env override is
+ * still honoured so deployments can pin to a self-hosted mirror or
+ * disable it entirely by setting an empty string.
+ */
+const DEEPWIKI_MCP_URL_DEFAULT = 'https://mcp.deepwiki.com/mcp';
+
+function resolveDeepwikiMcpUrl(): string | undefined {
+  const fromEnv = import.meta.env.VITE_MCP_DEEPWIKI_URL as string | undefined;
+  if (typeof fromEnv === 'string') {
+    return fromEnv.length > 0 ? fromEnv : undefined;
+  }
+  return DEEPWIKI_MCP_URL_DEFAULT;
+}
+
 export default function Header() {
   const {
     clientState,
@@ -45,6 +61,10 @@ export default function Header() {
     const mcpUrl = resolveEverythingMcpUrl();
     if (mcpUrl) {
       builder.addMcpServer(mcpUrl);
+    }
+    const deepwikiUrl = resolveDeepwikiMcpUrl();
+    if (deepwikiUrl) {
+      builder.addMcpServer(deepwikiUrl);
     }
     const loginOptions = builder.build();
     const authState = await login(loginOptions);
