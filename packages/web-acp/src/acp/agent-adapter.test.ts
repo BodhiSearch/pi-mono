@@ -10,8 +10,10 @@ import type { InlineAgent } from '@/agent/inline-agent';
 import {
   BODHI_GET_SESSION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
+  BODHI_SESSIONS_DELETE_METHOD,
   type BodhiGetSessionResponse,
   type BodhiMcpTogglesSetResponse,
+  type BodhiSessionsDeleteResponse,
 } from './index';
 
 function fakeConn(): AgentSideConnection {
@@ -109,6 +111,32 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
     await expect(
       adapter.extMethod(BODHI_MCP_TOGGLES_SET_METHOD, { sessionId: 's1', serverSlug: 'x' })
     ).rejects.toThrow(/params must be/);
+  });
+
+  it('_bodhi/sessions/delete removes the row and returns deleted: true', async () => {
+    await store.recordNotification('s1', {
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hi' } },
+    } as Parameters<SessionStore['recordNotification']>[1]);
+    const raw = await adapter.extMethod(BODHI_SESSIONS_DELETE_METHOD, { sessionId: 's1' });
+    const resp = raw as BodhiSessionsDeleteResponse;
+    expect(resp.deleted).toBe(true);
+    expect(await store.getSession('s1')).toBeUndefined();
+    expect(await store.readEntries('s1')).toHaveLength(0);
+  });
+
+  it('_bodhi/sessions/delete is idempotent — unknown ids resolve with deleted: false', async () => {
+    const raw = await adapter.extMethod(BODHI_SESSIONS_DELETE_METHOD, {
+      sessionId: 'does-not-exist',
+    });
+    const resp = raw as BodhiSessionsDeleteResponse;
+    expect(resp.deleted).toBe(false);
+  });
+
+  it('_bodhi/sessions/delete rejects malformed params', async () => {
+    await expect(adapter.extMethod(BODHI_SESSIONS_DELETE_METHOD, {})).rejects.toThrow(
+      /params\.sessionId is required/
+    );
   });
 
   it('bodhi/getSession reflects per-server + per-tool overrides accumulated via set calls', async () => {

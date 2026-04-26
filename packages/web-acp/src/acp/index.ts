@@ -36,6 +36,12 @@ export const BODHI_FEATURES_SET_METHOD = '_bodhi/features/set';
 // `bodhi/getSession` and the mutation handler below.
 export const BODHI_MCP_TOGGLES_SET_METHOD = '_bodhi/mcp/toggles/set';
 
+// Persistent removal of a session and its associated entries / features /
+// MCP toggles. ACP has no stable `session/delete`; `session/close` in the
+// unstable schema means "free in-memory resources", not "remove from
+// disk", so we ride a `_bodhi/*` extension per principle § 15.
+export const BODHI_SESSIONS_DELETE_METHOD = '_bodhi/sessions/delete';
+
 export interface BodhiVolumeDescriptor {
   mountName: string;
   description?: string;
@@ -139,4 +145,18 @@ export interface BodhiMcpTogglesSetRequest extends Record<string, unknown> {
 
 export interface BodhiMcpTogglesSetResponse extends Record<string, unknown> {
   toggles: BodhiMcpToggleSnapshot;
+}
+
+export interface BodhiSessionsDeleteRequest extends Record<string, unknown> {
+  sessionId: string;
+}
+
+/**
+ * `deleted: false` means the worker had no record of the session — the
+ * call is treated as a no-op rather than an error so clients can issue
+ * delete-after-delete (or race two delete clicks) without surfacing a
+ * spurious failure.
+ */
+export interface BodhiSessionsDeleteResponse extends Record<string, unknown> {
+  deleted: boolean;
 }

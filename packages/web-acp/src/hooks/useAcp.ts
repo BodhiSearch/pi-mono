@@ -791,6 +791,33 @@ export function useAcp() {
     setToolCalls([]);
   }, []);
 
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      const runtime = ensureRuntime();
+      try {
+        await runtime.initialize;
+        const isActive = sessionId === _session;
+        if (isActive) {
+          // Cancel any in-flight prompt before the row is destroyed
+          // so a late stream chunk can't reattach to a phantom row.
+          try {
+            await runtime.client.cancel(sessionId);
+          } catch {
+            /* swallow — worker may already have torn the session down */
+          }
+          clearMessages();
+        }
+        await runtime.client.deleteSession(sessionId);
+      } catch (err) {
+        console.error('_bodhi/sessions/delete failed:', err);
+        setError(getErrorMessage(err, 'Failed to delete session'));
+      } finally {
+        await refreshSessions();
+      }
+    },
+    [clearMessages, refreshSessions]
+  );
+
   const clearError = useCallback(() => {
     setError(null);
   }, []);
@@ -834,6 +861,7 @@ export function useAcp() {
     sessions: isAuthenticated ? sessions : EMPTY_SESSIONS,
     refreshSessions,
     loadSession,
+    deleteSession,
     currentSessionId: isAuthenticated ? currentSessionId : null,
     isLoadingSession: isAuthenticated ? isLoadingSession : false,
     volumes,

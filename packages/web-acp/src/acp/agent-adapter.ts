@@ -55,6 +55,7 @@ import {
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
+  BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiFeaturesListResponse,
@@ -67,6 +68,8 @@ import {
   type BodhiMcpToggleSnapshot,
   type BodhiMcpTogglesSetRequest,
   type BodhiMcpTogglesSetResponse,
+  type BodhiSessionsDeleteRequest,
+  type BodhiSessionsDeleteResponse,
   type BodhiVolumesListResponse,
 } from './index';
 
@@ -472,6 +475,31 @@ export class AcpAgentAdapter implements Agent {
         ? await this.#mcpToggles.setTool(req.sessionId, req.serverSlug, req.toolName, req.value)
         : await this.#mcpToggles.setServer(req.sessionId, req.serverSlug, req.value);
       const response: BodhiMcpTogglesSetResponse = { toggles: toWireMcpToggles(next) };
+      return response;
+    }
+    if (method === BODHI_SESSIONS_DELETE_METHOD) {
+      if (!this.#store) {
+        throw new Error(`${BODHI_SESSIONS_DELETE_METHOD}: no session store configured`);
+      }
+      const req = _params as BodhiSessionsDeleteRequest;
+      if (!req || typeof req.sessionId !== 'string') {
+        throw new Error(`${BODHI_SESSIONS_DELETE_METHOD}: params.sessionId is required`);
+      }
+      const row = await this.#store.getSession(req.sessionId);
+      if (!row) {
+        const response: BodhiSessionsDeleteResponse = { deleted: false };
+        return response;
+      }
+      // Drop in-memory state before the row vanishes so a stray late
+      // event for this session can't reattach to a phantom entry.
+      await this.#mcpPool.releaseAll(req.sessionId);
+      this.#sessions.delete(req.sessionId);
+      if (this.#activeInlineSessionId === req.sessionId) {
+        this.#activeInlineSessionId = null;
+        this.#inline.clearMessages();
+      }
+      await this.#store.deleteSession(req.sessionId);
+      const response: BodhiSessionsDeleteResponse = { deleted: true };
       return response;
     }
     throw new Error(`Unknown extension method: ${method}`);

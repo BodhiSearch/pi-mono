@@ -24,6 +24,7 @@ export default function ChatDemo() {
     loadModels,
     sessions,
     loadSession,
+    deleteSession,
     currentSessionId,
     volumes,
     features,
@@ -47,6 +48,10 @@ export default function ChatDemo() {
     void loadSession(id);
   };
 
+  const handleDeleteSession = (id: string) => {
+    void deleteSession(id);
+  };
+
   return (
     <div className="flex flex-1 min-h-0">
       <div className="flex flex-col w-64 shrink-0 border-r overflow-y-auto bg-gray-50">
@@ -68,6 +73,7 @@ export default function ChatDemo() {
             sessions={sessions}
             activeSessionId={currentSessionId}
             onSelect={handleSelectSession}
+            onDelete={handleDeleteSession}
           />
         </div>
       </div>

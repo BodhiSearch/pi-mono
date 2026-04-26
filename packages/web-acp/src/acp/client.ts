@@ -17,6 +17,7 @@ import {
   BODHI_LIST_MODELS_METHOD,
   BODHI_LIST_SESSIONS_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
+  BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
   type BodhiFeaturesListResponse,
@@ -26,6 +27,7 @@ import {
   type BodhiListSessionsResponse,
   type BodhiMcpTogglesSetResponse,
   type BodhiModelDescriptor,
+  type BodhiSessionsDeleteResponse,
   type BodhiSessionSummary,
   type BodhiVolumeDescriptor,
   type BodhiVolumesListResponse,
@@ -103,6 +105,19 @@ export class AcpClient {
   async getSession(sessionId: string): Promise<BodhiGetSessionResponse> {
     const raw = await this.#conn.extMethod(BODHI_GET_SESSION_METHOD, { sessionId });
     return raw as BodhiGetSessionResponse;
+  }
+
+  /**
+   * Persistently remove a session. Resolves with `true` if the worker
+   * found and deleted a row, `false` if it had no record (idempotent
+   * on repeat-deletes). The worker also releases any held MCP
+   * connections + clears its inline-agent buffer if the session was
+   * the active one.
+   */
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const raw = await this.#conn.extMethod(BODHI_SESSIONS_DELETE_METHOD, { sessionId });
+    const payload = raw as BodhiSessionsDeleteResponse;
+    return payload.deleted === true;
   }
 
   async listVolumes(): Promise<BodhiVolumeDescriptor[]> {

@@ -21,6 +21,7 @@ export class ChatPage {
       `[data-testid="chat-message-turn-${turn}"][data-messagetype="${role}"]`,
     sessionPicker: '[data-testid="session-picker"]',
     sessionRow: (id: string) => `[data-testid="session-row-${id}"]`,
+    sessionDelete: (id: string) => `[data-testid="session-delete-${id}"]`,
     sessionPickerEmpty: '[data-testid="session-picker-empty"]',
     newChatButton: '[data-testid="btn-new-chat"]',
   };
@@ -194,5 +195,19 @@ export class ChatPage {
     await this.page
       .locator(`${this.selectors.sessionRow(sessionId)}[data-teststate="active"]`)
       .waitFor();
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    // The delete button is hover-revealed (`opacity-0 group-hover:opacity-100`).
+    // Playwright's `click()` auto-hovers the target, but the surrounding
+    // `<li>` is what carries `group`, so we hover the row first to make
+    // the button visible; clicking with `force: true` would skip
+    // visibility/actionability checks but we want the real path.
+    await this.page.locator(this.selectors.sessionRow(sessionId)).hover();
+    await this.page.locator(this.selectors.sessionDelete(sessionId)).click();
+  }
+
+  async waitForSessionAbsent(sessionId: string): Promise<void> {
+    await this.page.locator(this.selectors.sessionRow(sessionId)).waitFor({ state: 'detached' });
   }
 }
