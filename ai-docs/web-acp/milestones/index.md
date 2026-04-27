@@ -34,11 +34,9 @@ remote-agent deployments. Living document.
 **Structure.** This index carries the canonical status board + a
 one-line load-hook per milestone so a session knows which detail
 file to actually read. Each milestone has its own file under
-`ai-docs/web-acp/milestones/`. Per-milestone plans land under
-`ai-docs/web-acp/plans/` when we actually pick up the milestone.
+`ai-docs/web-acp/milestones/`.
 
-**Process.** One milestone at a time: draft the per-milestone plan
-at `ai-docs/web-acp/plans/<milestone>.md` → implement → gate-check →
+**Process.** One milestone at a time: implement → gate-check →
 commit → move to next. The gate rules carry from
 `ai-docs/web-agent/milestones/gate.md` in spirit; a web-acp-specific
 gate file lands with the first real milestone if the rules diverge.
@@ -126,8 +124,7 @@ advertising `fs/*` as a future IDE-integration seam.
 
 Load the detail file only if its hook matches what you're about to
 do. Previews are deliberately non-committal — they capture
-**intent and sequencing**, not **plan-level detail**. Plan-level
-detail lives in `ai-docs/web-acp/plans/` per-milestone.
+**intent and sequencing**, not implementation detail.
 
 - **[m0-foundation.md](m0-foundation.md)** — **shipped.** Load
   for historical reference on what the rework delivered across
@@ -140,7 +137,6 @@ detail lives in `ai-docs/web-acp/plans/` per-milestone.
   historical reference on the worker-owned Dexie store,
   `session/load` replay, and the `bodhi/getSession` snapshot
   companion that restores the per-session model selector.
-  Delivery plan at [`../plans/m1-sessions.md`](../plans/m1-sessions.md).
 - **[m2-tools.md](m2-tools.md)** — **shipped.** Load for
   historical reference on the multi-volume mount, the just-bash
   shell tool, the generic `_bodhi/features/*` toggle surface, and

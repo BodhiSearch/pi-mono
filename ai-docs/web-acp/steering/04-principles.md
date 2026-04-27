@@ -185,24 +185,20 @@ adapters against an InMemory ZenFS, session-store serialisation,
 permission-policy edge cases. Do not write unit tests for pass-through
 hooks with no logic or trivial getters.
 
-## 10. Plans disposable, steering durable, decisions append-only
+## 10. Steering durable, decisions append-only
 
-**Why.** Carried from web-agent. Plans change every session; if
-they live next to steering they churn it. Decisions that get
-revisited lose their rationale if overwritten.
+**Why.** Decisions that get revisited lose their rationale if
+overwritten.
 
 **How to apply.**
 
-- Per-milestone plans at `ai-docs/web-acp/plans/mN-<name>.md`.
-  Disposable.
 - Steering at `ai-docs/web-acp/steering/*.md` — vision, goals,
   architecture, principles. Durable. Update in place.
 - Decisions append-only at `ai-docs/decisions/` (shared with
   web-agent's historical log; new entries are dated and scoped
   `web-acp:`).
 - Milestone previews at `ai-docs/web-acp/milestones/mN-*.md` —
-  non-committal one-pagers. Detail lives in the per-milestone plan
-  when that milestone is picked up.
+  non-committal one-pagers.
 
 ## 11. Ask before widening scope
 
@@ -211,9 +207,9 @@ diffs unreviewable.
 
 **How to apply.**
 
-- The milestone's plan file lists in-scope and out-of-scope items.
-  Notice something outside? Either add it to the plan (and get
-  approval) or file it as an explicit follow-up.
+- The milestone preview lists in-scope and out-of-scope items.
+  Notice something outside? Either get explicit approval to extend
+  scope or file it as a follow-up.
 - Use `AskUserQuestion` with two branches when unsure. Never
   "just do it" silently.
 - "It'll only take a minute" is exactly the wrong reason to widen

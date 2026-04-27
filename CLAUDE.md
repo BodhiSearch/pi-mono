@@ -22,7 +22,7 @@ Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `p
 - @ai-docs/web-acp/steering/00-vision.md — north star
 - @ai-docs/web-acp/steering/01-goals.md — capability checklist with test seams
 - @ai-docs/web-acp/steering/02-architecture.md — layer cake, transport boundary, ZenFS + ACP fs/* mapping
-- @ai-docs/web-acp/steering/04-principles.md — rules that survive plans
+- @ai-docs/web-acp/steering/04-principles.md
 - @ai-docs/web-acp/milestones/index.md — status board with load-when hooks
 
 ### Reference (web-agent archive)
@@ -32,8 +32,6 @@ Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `p
 - @ai-docs/web-agent/02-architecture.md — original web-agent architecture (useful for ZenFS layout + testing-seam patterns that port)
 - @ai-docs/web-agent/milestones/index.md — web-agent M0–M9 status board
 - @ai-docs/specs/worker-agent/index.md — technical specs for the web-agent worker-agent library; crib sheet for session shape, tool operations, extension hook signatures
-
-Per-milestone plans at `ai-docs/web-acp/plans/*.md` are disposable. The steering docs above and the milestone previews at `ai-docs/web-acp/milestones/` are durable.
 
 ## Dev commands
 

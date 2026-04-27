@@ -94,9 +94,8 @@ transport becomes a new file.
   events; the agent's tool registry is built at startup on the
   agent side.
 - `ReadableStream`, `AsyncIterator`, or a small `Transport { send;
-  onMessage; close }` interface — the shape is a decision for the
-  M0.b plan; this doc does not pre-commit. See
-  `04-principles.md` § "Transport is swappable".
+  onMessage; close }` interface — settled at M0.b; this doc does
+  not pre-commit. See `04-principles.md` § "Transport is swappable".
 
 ## ACP architectural postures
 
