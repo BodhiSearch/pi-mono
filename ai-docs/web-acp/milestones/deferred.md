@@ -174,6 +174,110 @@ feature is not shipped.
 
 ---
 
+## M0 hardening — second transport + worker-boundary e2e
+
+**What was deferred.** Two items the original M0.b gate listed
+that the phase-D rework did not carry:
+
+1. A minimal **in-memory test-double transport** paired with
+   `createMessagePortStream` so unit tests can frame-round-trip
+   the ACP stack without spinning up a real `MessageChannel`.
+   Forces the framing-layer interface boundary to be real per
+   principle § 3 (transport swappable).
+2. A **worker-boundary e2e assertion** — one Playwright step
+   confirming the worker boundary is real (e.g. a worker-only
+   global is not on `window`, or the worker's module graph
+   doesn't leak into the page's).
+
+Both are recorded in [`m0-foundation.md`](m0-foundation.md) §
+"M0 hardening follow-up" but were not surfaced here when M1
+landed.
+
+**Why deferred.** Phase D's rework already proved the framing
+layer separates cleanly from `MessagePort`-specific code (M1's
+persistence work became the second consumer of the client
+surface, exercising the same code paths a remote-agent transport
+will). The two items are belt-and-braces, not blocking. M1's
+real consumer was a stronger swappability proof than a synthetic
+test-double would have been on the M0 timeline.
+
+**When it re-enters.** Opportunistically. The natural time is
+the milestone that introduces the second transport for real
+(e.g. an HTTP/SSE remote-agent path during M8 polish + extract,
+or a dedicated short milestone if a third-party consumer needs
+one earlier). The worker-boundary assertion can ride any
+Playwright sweep that touches `useAcp` boot.
+
+**What has to exist before re-entry** (already satisfied):
+
+- The framing layer (`packages/web-acp/src/transport/`) imports
+  zero `MessagePort` / `Worker` / DOM references — verified at
+  M0 phase D's grep gate.
+- `createMessagePortStream` is the only `MessagePort` consumer
+  in the framing path; a sibling test-double can plug in via
+  the same `{readable, writable}` shape.
+
+**ACP-compliance note.** No compliance row affected — this is
+internal correctness scaffolding, not protocol surface.
+
+---
+
+## `bodhi/*` → `_bodhi/*` extension-method rename
+
+**What was deferred.** Renaming the three M0/M1 extension
+methods that pre-date principle § 15 (`_`-prefixed, namespaced
+extension methods) so the wire is consistent:
+
+- `bodhi/listModels` → `_bodhi/listModels` (or a structured
+  sub-namespace such as `_bodhi/models/list`).
+- `bodhi/listSessions` → `_bodhi/sessions/list`.
+- `bodhi/getSession` → `_bodhi/sessions/get`.
+
+The newer M2/M3/M3.5 extension methods (`_bodhi/volumes/list`,
+`_bodhi/features/{list,set}`, `_bodhi/mcp/toggles/set`,
+`_bodhi/sessions/delete`) already follow the convention.
+
+**Why deferred.** The unprefixed names predate the principle
+that codified the rule; they are wire-compatible with the
+current SDK and changing them is a breaking change to clients
+that may already snapshot the constants. The code at
+`packages/web-acp/src/acp/index.ts` flags this explicitly:
+
+> M2 extension methods use the spec-blessed `_`-prefix; the
+> older `bodhi/*` constants above stay unchanged to preserve
+> M1 client-side contracts (a rename is tracked as a deferred
+> cleanup item).
+
+We chose hygiene over churn at M2 kickoff and have not
+re-litigated since.
+
+**When it re-enters.** At the M8 library-extraction milestone,
+or earlier if an unrelated breaking change to the extension
+surface is already in flight. The migration ladder per
+principle § 15:
+
+1. Advertise both the old and new method names for one
+   release; route them to the same handler.
+2. Switch the in-tree client (and any consumer the library
+   gains) to the new names.
+3. Remove the legacy aliases in the next release after a
+   decision entry documenting the swap.
+
+**What has to exist before re-entry** (already satisfied):
+
+- Extension methods declared as constants in
+  `packages/web-acp/src/acp/index.ts` rather than inlined at
+  call sites — a single rename sweep covers every consumer.
+- A documented migration ladder in principle § 15.
+
+**ACP-compliance note.** Compliance row "Extension methods" in
+[`index.md`](index.md) currently reads "compliant" because
+principle § 15 explicitly carries the legacy aliases as a
+documented carry-over. The rename closes that hedge cleanly
+without changing the row.
+
+---
+
 ## How to add a deferred entry
 
 When carving something out of an in-flight milestone:

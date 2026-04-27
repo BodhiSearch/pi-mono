@@ -127,6 +127,12 @@ Neither is blocking for M1 itself: M1's persistence work gives
 us a second consumer of the client, which is the real test of
 swappability.
 
+> **As of M3.5 these are still outstanding** and are also tracked
+> in [`deferred.md`](deferred.md) § "M0 hardening — second
+> transport + worker-boundary e2e" so the next milestone that
+> introduces a real second transport (likely M8) picks them up
+> in the same ticket.
+
 ## Open questions — now resolved
 
 Recorded for traceability; the resolution is baked into the

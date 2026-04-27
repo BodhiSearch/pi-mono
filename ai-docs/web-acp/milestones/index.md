@@ -49,6 +49,7 @@ gate file lands with the first real milestone if the rules diverge.
 | M1  | ACP sessions: create, persist, reload, list, switch                    | **shipped** | [m1-sessions.md](m1-sessions.md) |
 | M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | **shipped** | [m2-tools.md](m2-tools.md) |
 | M3  | MCP over HTTP (provider-native tools deferred)                         | **shipped** | [m3-mcp.md](m3-mcp.md) |
+| —   | Post-M3 follow-ups: DeepWiki MCP login + `_bodhi/sessions/delete`      | **shipped** | [m3.5-followups.md](m3.5-followups.md) |
 | M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
 | M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
@@ -152,8 +153,10 @@ do. Previews are deliberately non-committal — they capture
   decision gets carved out of an in-flight milestone, or when
   the scope of a future milestone needs to pick up a deferred
   item. Currently tracks the permission bridge + allow-always
-  persistence carried out of M2, and provider-native tool
-  passthrough carried out of M3.
+  persistence carried out of M2, provider-native tool
+  passthrough carried out of M3, and two M0 carry-overs (the
+  second-transport / worker-boundary-e2e hardening pair and the
+  `bodhi/*` → `_bodhi/*` extension-method rename).
 - **[m3-mcp.md](m3-mcp.md)** — **shipped.** Load for historical
   reference on the MCP-over-HTTP integration: live catalog fetch,
   JWT-in-`McpServerHttp.headers`, refcounted worker pool,
@@ -164,6 +167,14 @@ do. Previews are deliberately non-committal — they capture
   [`../specs/web-acp/mcp.md`](../specs/web-acp/mcp.md).
   Provider-native tools were carved out of M3 — see
   [deferred.md](deferred.md).
+- **[m3.5-followups.md](m3.5-followups.md)** — **shipped.** Load
+  for historical reference on the two post-M3-exit-gate
+  follow-ups: a second `addMcpServer(...)` call requesting scope
+  for the public DeepWiki MCP at login (multi-server pattern
+  established without churning M3's wire) and the
+  `_bodhi/sessions/delete` extension method that closes the M1
+  session lifecycle (create / list / load / **delete**) with a
+  single-click affordance in the picker.
 - **[m4-commands-and-skills.md](m4-commands-and-skills.md)** —
   load when picking up slash commands, prompt templates, and
   skills. Commands advertised via ACP `available_commands_update`;

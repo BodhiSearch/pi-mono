@@ -47,6 +47,20 @@ the authoritative owner of session state.
   so this companion call is what lets the picker restore the
   model selector.
 
+> Both methods predate principle § 15 (`_`-prefixed extension
+> methods). The legacy `bodhi/*` names are preserved on the wire
+> for now; the rename to `_bodhi/sessions/list` /
+> `_bodhi/sessions/get` is tracked in
+> [`deferred.md`](deferred.md) § "`bodhi/*` → `_bodhi/*`
+> extension-method rename" and lands at M8 library extraction.
+
+> **Session lifecycle completed by M3.5.** `_bodhi/sessions/delete`
+> is the destructive sibling to the create / list / load methods
+> here. It cascades through `entries`, `features`, and
+> `mcpToggles` in a single Dexie transaction and releases pooled
+> MCP connections for the deleted session. See
+> [`m3.5-followups.md`](m3.5-followups.md) § M3.5.2.
+
 ## Decisions (with rationale)
 
 - **Use `session/load` (stable ACP) instead of app-level replay.**
