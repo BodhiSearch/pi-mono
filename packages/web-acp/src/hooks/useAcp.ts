@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
@@ -11,7 +12,19 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
-import type { BodhiFeatureBag, BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
+import type {
+  BodhiBuiltinTag,
+  BodhiFeatureBag,
+  BodhiModelDescriptor,
+  BodhiSessionSummary,
+} from '@/acp/index';
+import { isBuiltinName } from '@/agent/commands/builtins';
+import {
+  extractBuiltinMeta,
+  getBuiltinTag,
+  renderConversationMarkdown,
+  withBuiltinTag,
+} from '@/lib/builtin-format';
 import { composeMcpServers, type McpToggleSnapshot } from '@/mcp/compose-mcp-servers';
 import type { McpConnectionMeta, McpInstanceView } from '@/mcp/types';
 import { useMcpInstances } from '@/mcp/useMcpInstances';
@@ -203,6 +216,40 @@ function userMessage(text: string): AgentMessage {
   } as unknown as AgentMessage;
 }
 
+/**
+ * Recognise an agent-handled built-in invocation in raw user input
+ * (M4 phase B). Mirrors the worker's prefix rule (`/<name>` then
+ * end-of-string or whitespace) so client-side bubble tagging stays
+ * aligned with how the worker decides to dispatch the command.
+ */
+function detectBuiltinTag(text: string): BodhiBuiltinTag | undefined {
+  if (!text.startsWith('/')) return undefined;
+  const rest = text.slice(1);
+  const wsMatch = rest.match(/\s/);
+  const name = wsMatch ? rest.slice(0, wsMatch.index) : rest;
+  if (!isBuiltinName(name)) return undefined;
+  return { command: name };
+}
+
+async function dispatchBuiltinAction(kind: string, messages: AgentMessage[]): Promise<void> {
+  if (kind === 'copy') {
+    const markdown = renderConversationMarkdown(messages);
+    if (!markdown) {
+      toast.error('Nothing to copy yet');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(markdown);
+      toast.success('Copied conversation to clipboard');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Clipboard write failed';
+      toast.error(`Copy failed: ${message}`);
+    }
+    return;
+  }
+  toast.error(`Unknown built-in action: ${kind}`);
+}
+
 function toolCallContentText(
   content:
     | Array<{ type?: unknown; content?: { type?: unknown; text?: unknown } }>
@@ -290,6 +337,10 @@ export function useAcp() {
 
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
+  const messagesRef = useRef<AgentMessage[]>(EMPTY_MESSAGES);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const loadingModelsRef = useRef(false);
   // Remembers the last `auth.accessToken` we *handed to the worker*.
   // The first auth effect fire (token A after `null`) is the ordinary
@@ -348,6 +399,12 @@ export function useAcp() {
       }
       if (isReplayingRef.current) return;
       const update = notification.update;
+      // M4 phase B: built-in slash commands ride the standard
+      // `agent_message_chunk` wire with `_meta.bodhi.builtin` set
+      // so the bubble renders muted with a "not sent to LLM"
+      // badge. The tag is applied to the streaming message so it
+      // travels through the existing chunk-accumulation path.
+      const builtinMeta = extractBuiltinMeta(notification._meta);
       if (update.sessionUpdate === 'agent_message_chunk') {
         const content = update.content;
         if (!content || content.type !== 'text') return;
@@ -362,7 +419,9 @@ export function useAcp() {
 
         const current = streamingRef.current ?? emptyAssistantMessage();
         const nextText = getAssistantText(current) + delta;
-        const next = withAssistantText(current, nextText);
+        let next = withAssistantText(current, nextText);
+        const carriedTag = builtinMeta ?? getBuiltinTag(current);
+        if (carriedTag) next = withBuiltinTag(next, carriedTag);
         streamingRef.current = next;
         setStreamingMessage(next);
         return;
@@ -737,7 +796,11 @@ export function useAcp() {
 
   const sendMessage = useCallback(
     async (prompt: string) => {
-      if (!selectedModel) {
+      const builtinTag = detectBuiltinTag(prompt);
+      // Built-ins (M4 phase B) bypass the LLM entirely on the worker
+      // side, so the "no model selected" gate doesn't apply to them —
+      // /help, /version, /session, /copy must work without a model.
+      if (!builtinTag && !selectedModel) {
         setError('Please select a model first');
         return;
       }
@@ -755,7 +818,10 @@ export function useAcp() {
       }
 
       turnIndexRef.current += 1;
-      setMessages(prev => [...prev, userMessage(prompt)]);
+      const localUserMsg = builtinTag
+        ? withBuiltinTag(userMessage(prompt), builtinTag)
+        : userMessage(prompt);
+      setMessages(prev => [...prev, localUserMsg]);
       streamingRef.current = undefined;
       streamingMessageIdRef.current = undefined;
       setStreamingMessage(undefined);
@@ -767,6 +833,15 @@ export function useAcp() {
         const finalMsg = streamingRef.current;
         if (finalMsg && response.stopReason !== 'cancelled') {
           setMessages(prev => [...prev, finalMsg]);
+          // M4 phase B: dispatch any client-side action attached to a
+          // built-in's reply. We snapshot `messagesRef.current` here
+          // (one tick before the appended built-in pair lands) and let
+          // the markdown renderer drop built-in entries — that gives
+          // /copy the LLM-only conversation.
+          const replyTag = getBuiltinTag(finalMsg);
+          if (replyTag?.action) {
+            void dispatchBuiltinAction(replyTag.action.kind, messagesRef.current);
+          }
         }
         void refreshSessions();
       } catch (err) {

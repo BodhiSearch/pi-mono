@@ -25,7 +25,12 @@ import Dexie, { type Table } from 'dexie';
  * gating in the milestone that needs it.
  */
 
-export type SessionEntryKind = 'notification' | 'turn';
+// Adding a new kind here is on-disk compatible: the `entries` table
+// stores `payload` as a polymorphic blob keyed only by `[sessionId+seq]`,
+// so introducing `'builtin'` (M4 phase B) does not require a Dexie
+// version bump. Old DBs that never wrote a 'builtin' row read back
+// the same shape as before.
+export type SessionEntryKind = 'notification' | 'turn' | 'builtin';
 
 export interface TurnPayload {
   userText: string;
@@ -33,12 +38,32 @@ export interface TurnPayload {
   modelId: string;
 }
 
+/**
+ * Persisted record of a built-in slash-command exchange (M4 phase B).
+ * Built-ins bypass the LLM — the worker recognises `/help` etc. in
+ * `prompt()`, runs a handler, and writes one of these instead of a
+ * `'turn'` entry. Because they are not `'turn'` entries, they are
+ * naturally invisible to `inline.restoreMessages()` on reload, which
+ * keeps the LLM blind to built-in exchanges on subsequent prompts.
+ *
+ * `action` is an optional client-action descriptor (e.g.
+ * `{ kind: 'copy' }`); the client builds the actual payload at
+ * dispatch time. `kind` is open-ended for future commands like
+ * `/share`, `/export-html`, `/feedback`.
+ */
+export interface BuiltinPayload {
+  command: string;
+  userText: string;
+  replyText: string;
+  action?: { kind: string };
+}
+
 export interface SessionEntry {
   sessionId: string;
   seq: number;
   at: number;
   kind: SessionEntryKind;
-  payload: SessionNotification | TurnPayload;
+  payload: SessionNotification | TurnPayload | BuiltinPayload;
 }
 
 export interface SessionRow {
@@ -144,6 +169,7 @@ export interface SessionStore {
     modelId: string,
     at?: number
   ): Promise<void>;
+  recordBuiltin(id: string, payload: BuiltinPayload, at?: number): Promise<void>;
   listSummaries(): Promise<SessionSummary[]>;
   readEntries(id: string): Promise<SessionEntry[]>;
   getSession(id: string): Promise<SessionRow | undefined>;
@@ -211,6 +237,21 @@ export function createStoreFromDb(db: SessionStoreDb): SessionStore {
           title: nextTitle,
           lastModelId: modelId,
         });
+      });
+    },
+
+    async recordBuiltin(id, payload, at = Date.now()) {
+      await db.transaction('rw', db.sessions, db.entries, async () => {
+        const session = await db.sessions.get(id);
+        if (!session) {
+          throw new Error(`SessionStore.recordBuiltin: unknown session '${id}'`);
+        }
+        const seq = await nextSeq(db, id);
+        await db.entries.put({ sessionId: id, seq, at, kind: 'builtin', payload });
+        // Bumps `updatedAt` so the picker reflects activity, but does
+        // NOT bump `turnCount` (this isn't a model turn) and does NOT
+        // claim the title slot (the first real prompt still wins).
+        await db.sessions.update(id, { updatedAt: at });
       });
     },
 

@@ -50,7 +50,7 @@ gate file lands with the first real milestone if the rules diverge.
 | M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | **shipped** | [m2-tools.md](m2-tools.md) |
 | M3  | MCP over HTTP (provider-native tools deferred)                         | **shipped** | [m3-mcp.md](m3-mcp.md) |
 | —   | Post-M3 follow-ups: DeepWiki MCP login + `_bodhi/sessions/delete`      | **shipped** | [m3.5-followups.md](m3.5-followups.md) |
-| M4  | Commands + skills: slash commands, prompt templates, vault-sourced skills | planned | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
+| M4  | Commands + skills: vault commands (phase A) + agent-handled built-ins `/help` `/version` `/session` `/copy` (phase B); templates (M4.2) + skills (M4.3) pending | **phase A + B shipped, M4.2/M4.3 pending** | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
 | M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
 | M7  | Compaction: auto + manual + summary persistence                        | planned | [m7-compaction.md](m7-compaction.md) |
@@ -66,7 +66,7 @@ gate file lands with the first real milestone if the rules diverge.
 | Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
 | MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; Streamable HTTP only; JWT in `McpServerHttp.headers` (M3 shipped) | compliant |
 | Provider-native tools | Reported as standard `tool_call` notifications                | **Deferred** — M3 ships MCP only; provider-native passthrough parked to a later milestone (see [deferred.md](deferred.md)) | **deferred (see deferred.md)** |
-| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Same (M4)                                                              | compliant |
+| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands expand **agent-side** in `prompt()` (M4 phase A, shipped); built-in commands `/help` `/version` `/session` `/copy` intercepted before the LLM and replied via `_meta.bodhi.builtin` on `agent_message_chunk` (M4 phase B, shipped); both ride the same `available_commands_update` advertisement | compliant |
 | Extension methods    | `_`-prefixed, namespaced                                      | `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15 | compliant |
 | Session fork         | `session/fork` (unstable schema)                              | Adopted behind a feature flag, pinned SDK version (M6)                 | unstable-with-flag |
 
@@ -176,17 +176,27 @@ do. Previews are deliberately non-committal — they capture
   session lifecycle (create / list / load / **delete**) with a
   single-click affordance in the picker.
 - **[m4-commands-and-skills.md](m4-commands-and-skills.md)** —
-  load when picking up slash commands, prompt templates, and
-  skills. Commands advertised via ACP `available_commands_update`;
-  expansion is **agent-side** in `prompt()` for both plain
-  commands and skill-activating commands. Sources live under
-  `<mount>/.pi/commands/`, `<mount>/.pi/prompts/`,
-  `<mount>/.pi/skills/<name>/SKILL.md` (pi convention; the
-  earlier preview's `.bodhi/...` text was a misnomer corrected
-  at M4.1 kickoff). `AvailableCommand` has no `type` field, so
-  the original `type: prompt | type: action` framing is gone —
-  built-in actions like `/compact` arrive in M7 as agent-internal
-  keyword detection.
+  **phase A + B shipped, M4.2/M4.3 pending.** Phase A landed
+  vault-sourced slash commands at `<mount>/.pi/commands/**/*.md`
+  with agent-side template expansion in `prompt()`. Phase B added
+  agent-handled built-ins `/help`, `/version`, `/session`,
+  `/copy` that intercept in `prompt()` before any LLM resolution,
+  emit replies stamped with `_meta.bodhi.builtin = { command,
+  action? }` on `agent_message_chunk`, and persist as a new
+  `'builtin'` `SessionEntry` kind so the LLM never sees the
+  exchange even after `session/load`. `/copy` rides an
+  open-ended `action.kind` discriminator (no payload on the
+  wire — the client builds the markdown locally from
+  `messages` state). For current code-level reference, read
+  [`../specs/web-acp/commands.md`](../specs/web-acp/commands.md)
+  and [`../specs/web-acp/sessions.md`](../specs/web-acp/sessions.md)
+  (the `'builtin'` entry kind doc). Pending sub-milestones:
+  M4.2 prompt templates (`<mount>/.pi/prompts/**/*.md`); M4.3
+  skills (`<mount>/.pi/skills/<name>/SKILL.md`,
+  `_bodhi/skills/activate`). State-mutation built-ins
+  (`/name`, `/model`, `/new`, `/resume`, `/settings`, `/login`,
+  `/logout`) carved out as the next slice. `/compact` lands
+  with M7; `/fork` / `/tree` with M6.
 - **[m5-extensions.md](m5-extensions.md)** — load when
   extension runtime re-enters. Vault-sourced, fully-trusted.
   Start from ACP extensibility, not web-agent's Blob-URL loader.

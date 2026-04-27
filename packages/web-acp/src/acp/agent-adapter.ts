@@ -39,6 +39,11 @@ import {
   type CommandDef,
   type CommandsFs,
 } from '@/agent/commands';
+import {
+  builtinAvailableCommands,
+  findBuiltin,
+  type BuiltinHandlerCtx,
+} from '@/agent/commands/builtins';
 import type { InlineAgent } from '@/agent/inline-agent';
 import {
   createMcpAgentTool,
@@ -46,7 +51,7 @@ import {
   type McpPoolEvent,
   type McpToolDetails,
 } from '@/agent/mcp';
-import type { SessionStore } from '@/agent/session-store';
+import type { BuiltinPayload, SessionStore, TurnPayload } from '@/agent/session-store';
 import type { StreamOptionOverrides } from '@/agent/stream-fn';
 import { composeSystemPrompt } from '@/agent/system-prompt';
 import { createBashTool } from '@/agent/tools/bash-tool';
@@ -103,12 +108,14 @@ interface StreamOverridesRef {
 }
 
 /**
- * Constant pulled in via Vite's `define`. Declared in `src/vite-env.d.ts`.
- * `typeof` guard keeps this file buildable outside the Vite toolchain
+ * Constants pulled in via Vite's `define`. Declared in `src/vite-env.d.ts`.
+ * `typeof` guards keep this file buildable outside the Vite toolchain
  * (e.g. Vitest's transform path picks up `define`, but TypeScript
  * language servers running without the plugin don't).
  */
 const IS_DEV = typeof __WEB_ACP_DEV__ === 'boolean' ? __WEB_ACP_DEV__ : false;
+const BUILD_VERSION = typeof __WEB_ACP_VERSION__ === 'string' ? __WEB_ACP_VERSION__ : 'unknown';
+const ACP_SDK_VERSION = typeof __ACP_SDK_VERSION__ === 'string' ? __ACP_SDK_VERSION__ : 'unknown';
 
 /**
  * ACP agent handler that bridges the inline pi-agent-core runtime to the
@@ -296,6 +303,18 @@ export class AcpAgentAdapter implements Agent {
       throw new Error(`Unknown session: ${params.sessionId}`);
     }
 
+    // M4 phase B: built-in slash commands run before any model
+    // resolution / expansion so `/help`, `/version`, etc. work even
+    // when no model is selected and never count against the LLM
+    // history. The handler decides everything; we emit a chunk +
+    // persist a 'builtin' entry + return without touching the inline
+    // agent.
+    const rawText = this.#extractPromptText(params);
+    if (rawText) {
+      const handled = await this.#tryHandleBuiltin(params, rawText);
+      if (handled) return handled;
+    }
+
     const model = this.#resolveModel(params);
     if (!model) {
       throw new Error('No model selected: send session/prompt with _meta.bodhi.modelId');
@@ -452,13 +471,31 @@ export class AcpAgentAdapter implements Agent {
         throw new Error(`${BODHI_GET_SESSION_METHOD}: unknown session '${req.sessionId}'`);
       }
       const entries = await this.#store.readEntries(req.sessionId);
-      let messages: AgentMessage[] = [];
+      // Walk entries in seq order to build the rendered transcript:
+      // - 'turn' entries carry the cumulative LLM-visible history;
+      //   we append the delta from the previous turn's snapshot.
+      // - 'builtin' entries are inserted as a tagged user+assistant
+      //   pair so reload reproduces them in the right chronological
+      //   slot. They never feed `inline.restoreMessages()` because
+      //   that path consumes only 'turn' kinds.
+      let lastTurnMessages: AgentMessage[] = [];
+      const messages: unknown[] = [];
       for (const entry of entries) {
         if (entry.kind === 'turn') {
-          const payload = entry.payload as { finalMessages?: AgentMessage[] };
-          if (Array.isArray(payload.finalMessages)) {
-            messages = payload.finalMessages;
+          const payload = entry.payload as TurnPayload;
+          const next = Array.isArray(payload.finalMessages) ? payload.finalMessages : [];
+          if (next.length > lastTurnMessages.length) {
+            messages.push(...next.slice(lastTurnMessages.length));
           }
+          lastTurnMessages = next;
+        } else if (entry.kind === 'builtin') {
+          const payload = entry.payload as BuiltinPayload;
+          const tag = {
+            command: payload.command,
+            ...(payload.action ? { action: payload.action } : {}),
+          };
+          messages.push(makeBuiltinUserMessage(payload.userText, tag));
+          messages.push(makeBuiltinAssistantMessage(payload.replyText, tag));
         }
       }
       const mcpToggles = await this.#readMcpToggles(req.sessionId);
@@ -773,6 +810,10 @@ export class AcpAgentAdapter implements Agent {
    * cached `CommandDef[]` is shared across sessions because the vault
    * is per-worker, but each notification carries its own `sessionId`
    * so the persisted-replay path stays accurate.
+   *
+   * M4 phase B: agent-handled built-ins (`/help`, `/version`, …) ride
+   * the same wire — merged into the advertised list so the picker
+   * stays a black-box consumer of `AvailableCommand[]`.
    */
   async #refreshAvailableCommands(sessionId: string): Promise<void> {
     const mounts = this.#registry?.list() ?? [];
@@ -789,7 +830,10 @@ export class AcpAgentAdapter implements Agent {
       }
     }
     this.#availableCommands = defs;
-    const availableCommands = defs.map(toAvailableCommand);
+    const availableCommands: AvailableCommand[] = [
+      ...builtinAvailableCommands(),
+      ...defs.map(toAvailableCommand),
+    ];
     await this.#emit({
       sessionId,
       update: {
@@ -797,6 +841,104 @@ export class AcpAgentAdapter implements Agent {
         availableCommands,
       },
     });
+  }
+
+  /**
+   * Recognise an agent-handled built-in (M4 phase B). Returns a
+   * resolved `PromptResponse` when the input matched (the chunk + the
+   * `'builtin'` store entry have already been written) and `null`
+   * otherwise so the caller falls through to the normal LLM path.
+   *
+   * Built-ins emit via the raw connection (NOT `#emit`) so they don't
+   * also get persisted as `'notification'` entries — the `'builtin'`
+   * store entry plus the `bodhi/getSession` interleaving on reload is
+   * the single source of truth for replay.
+   */
+  async #tryHandleBuiltin(params: PromptRequest, rawText: string): Promise<PromptResponse | null> {
+    const match = findBuiltin(rawText);
+    if (!match) return null;
+    const sessionId = params.sessionId;
+    const ctx: BuiltinHandlerCtx = {
+      sessionId,
+      modelId: this.#resolveBuiltinModelId(params),
+      serverUrl: this.#bodhi.getBaseUrl?.() ?? null,
+      sessionStats: await this.#sessionStatsFor(sessionId),
+      mcpServersConnected: this.#mcpConnectedFor(sessionId),
+      advertisedCommands: [
+        ...builtinAvailableCommands(),
+        ...this.#availableCommands.map(toAvailableCommand),
+      ],
+      inlineMessages: this.#inline.getMessages(),
+      buildVersion: BUILD_VERSION,
+      acpSdkVersion: ACP_SDK_VERSION,
+    };
+    let result;
+    try {
+      result = await match.cmd.handler(match.args, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result = {
+        replyText: `Built-in \`/${match.cmd.name}\` failed: ${message}`,
+      };
+    }
+    const meta = {
+      bodhi: {
+        builtin: {
+          command: match.cmd.name,
+          ...(result.action ? { action: result.action } : {}),
+        },
+      },
+    };
+    await this.#conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: result.replyText },
+      },
+      _meta: meta,
+    } as SessionNotification);
+    if (this.#store) {
+      try {
+        await this.#store.recordBuiltin(sessionId, {
+          command: match.cmd.name,
+          userText: rawText,
+          replyText: result.replyText,
+          ...(result.action ? { action: result.action } : {}),
+        });
+      } catch (err) {
+        console.error('[acp-agent-adapter] failed to persist builtin entry:', err);
+      }
+    }
+    return { stopReason: 'end_turn' };
+  }
+
+  #resolveBuiltinModelId(params: PromptRequest): string | null {
+    // Best-effort: prefer the model id the client passed in this
+    // turn's `_meta.bodhi.modelId`. Built-ins still work without a
+    // model — handlers display `(none selected)`.
+    const meta = (params._meta ?? {}) as BodhiPromptMeta;
+    return meta.bodhi?.modelId ?? null;
+  }
+
+  async #sessionStatsFor(sessionId: string): Promise<{ turnCount: number; messageCount: number }> {
+    const messageCount = this.#inline.getMessages().length;
+    if (!this.#store) return { turnCount: 0, messageCount };
+    try {
+      const row = await this.#store.getSession(sessionId);
+      return { turnCount: row?.turnCount ?? 0, messageCount };
+    } catch {
+      return { turnCount: 0, messageCount };
+    }
+  }
+
+  #mcpConnectedFor(sessionId: string): string[] {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return [];
+    const out: string[] = [];
+    for (const cfg of session.mcpServers) {
+      if (this.#mcpPool.getClient(cfg)) out.push(cfg.name);
+    }
+    return out;
   }
 
   /**
@@ -983,4 +1125,32 @@ function extractAssistantText(msg: CoreMessage): string {
 function extractMessageId(msg: CoreMessage): string | undefined {
   const anyMsg = msg as unknown as { id?: unknown };
   return typeof anyMsg.id === 'string' ? anyMsg.id : undefined;
+}
+
+interface BuiltinTagShape {
+  command: string;
+  action?: { kind: string };
+}
+
+/**
+ * Build a synthetic user message tagged for a built-in invocation
+ * (M4 phase B). The `_builtin` field rides on the snapshot returned
+ * by `bodhi/getSession`; the client reads it to render the bubble
+ * muted with a "not sent to LLM" badge. The shape mirrors what
+ * `useAcp.sendMessage` constructs locally for a live invocation.
+ */
+function makeBuiltinUserMessage(text: string, tag: BuiltinTagShape): AgentMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }],
+    _builtin: tag,
+  } as unknown as AgentMessage;
+}
+
+function makeBuiltinAssistantMessage(text: string, tag: BuiltinTagShape): AgentMessage {
+  return {
+    role: 'assistant',
+    content: [{ type: 'text', text }],
+    _builtin: tag,
+  } as unknown as AgentMessage;
 }

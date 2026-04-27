@@ -106,7 +106,31 @@ Public surface:
   title: string | null` — return shape of `bodhi/getSession`.
   `messages` is typed as `unknown[]` on the wire because the
   canonical shape is `pi-agent-core`'s `AgentMessage[]`, which is
-  a moving internal type; the client casts on receipt.
+  a moving internal type; the client casts on receipt. M4 phase B
+  attaches a `_builtin` field (shape: `BodhiBuiltinTag`) on user
+  and assistant entries reconstructed from `'builtin'` session
+  store rows so the client can render them muted with a "not sent
+  to LLM" badge — see [`./commands.md`](./commands.md).
+- `BodhiBuiltinAction = { kind: string }` — open-ended client-side
+  action discriminator carried under `_meta.bodhi.builtin.action`
+  on `session/update` notifications. The only kind today is
+  `'copy'`; future kinds (`'share'`, `'export-html'`, …) plug in
+  on the client without a wire change. The action **payload** is
+  never carried on the wire — `/copy` builds the markdown from the
+  client's own `messages` state at dispatch time so persistence
+  and the wire stay minimal.
+- `BodhiBuiltinMeta = { command: string; action?: BodhiBuiltinAction }` —
+  the `_meta.bodhi.builtin` envelope carried on built-in
+  `agent_message_chunk` notifications. Same posture as
+  `_meta.bodhi.mcp` for MCP lifecycle: an extension sub-key under
+  `_meta.bodhi.*` rather than a new method or notification type.
+- `BodhiBuiltinTag = BodhiBuiltinMeta` — the client-side in-memory
+  marker (attached as `_builtin` on `AgentMessage` envelopes
+  returned from `bodhi/getSession` and on local user-message
+  envelopes tagged at send time in `useAcp`). Same shape as the
+  wire envelope; kept as a distinct alias so a future divergence
+  (e.g. an extra "rendered locally?" hint) doesn't churn the wire
+  contract.
 
 ### `acp/client.ts`
 
@@ -318,27 +342,40 @@ values for request/response.
   [`./startup-sequence.md § Phase 3`](./startup-sequence.md#phase-3--first-prompt).
   Summary:
   1. Session lookup (throws on miss).
-  2. Model resolution via `_meta.bodhi.modelId` against
+  2. **Built-in interception** (M4 phase B) — extract the raw
+     prompt text and run `#tryHandleBuiltin(params, rawText)`.
+     If the input matches a registered built-in (`/help`,
+     `/version`, `/session`, `/copy`), the handler runs, the
+     reply chunk is emitted directly via `#conn.sessionUpdate`
+     stamped with `_meta.bodhi.builtin = { command, action? }`,
+     a `'builtin'` `SessionEntry` is appended via
+     `store.recordBuiltin`, and the method returns
+     `{ stopReason: 'end_turn' }` — **without** model resolution
+     and **without** any inline LLM call. See
+     [`./commands.md`](./commands.md).
+  3. Model resolution via `_meta.bodhi.modelId` against
      `#models` (throws on miss).
-  3. Text extraction (concatenates every `type: 'text'` block in
-     `params.prompt`; throws if empty).
-  4. If `#activeInlineSessionId !== params.sessionId`, call
+  4. `#applySlashCommandExpansion()` — phase A vault commands
+     get their `/cmd args` body rewritten to the rendered
+     template. Text extraction concatenates every `type: 'text'`
+     block in `params.prompt`; throws if empty.
+  5. If `#activeInlineSessionId !== params.sessionId`, call
      `#rehydrateInlineFromStore(params.sessionId)` — otherwise a
      stale inline history (e.g. from a prior session whose
      `loadSession` wasn't re-issued after worker restart) would
      get spliced into the new turn's `finalMessages`.
-  5. `this.#inline.setModel(model)`.
-  6. Subscribes to `inline` events; routes `message_update`
+  6. `this.#inline.setModel(model)`.
+  7. Subscribes to `inline` events; routes `message_update`
      events through `#forwardEvent`.
-  7. `await this.#inline.prompt(text)`.
-  8. Returns `{stopReason: 'cancelled'}` if `#cancelled`;
+  8. `await this.#inline.prompt(text)`.
+  9. Returns `{stopReason: 'cancelled'}` if `#cancelled`;
      throws `inline.getErrorMessage()` if set; otherwise on
      clean `end_turn` calls `await #store.recordTurn(sessionId,
      text, inline.getMessages(), model.id)` (M1) and returns
      `{stopReason: 'end_turn'}`. `modelId` is persisted on the
      turn row so `session/load` can tell the UI which model was
      last in use for this session.
-  9. Unsubscribes in `finally`.
+  10. Unsubscribes in `finally`.
 
 - **`cancel(_params: CancelNotification): Promise<void>`.**
   `this.#cancelled = true; this.#inline.cancel()`. The abort
@@ -367,10 +404,13 @@ values for request/response.
   store).
   If `method === BODHI_GET_SESSION_METHOD`:
   ```
-  const row = await this.#store.getSession(req.sessionId);      // throws on unknown
-  const entries = await this.#store.readEntries(req.sessionId);
-  const messages = lastTurnFrom(entries)?.finalMessages ?? [];
-  return { sessionId: row.id, messages, lastModelId: row.lastModelId, title: row.title };
+  // Walk entries in seq order; interleave 'turn' deltas + 'builtin' pairs.
+  // Each 'turn'.finalMessages is a cumulative LLM-visible snapshot;
+  // append the slice past the previous snapshot's length.
+  // Each 'builtin' inserts a synthetic user + assistant pair tagged
+  // with `_builtin = { command, action? }` so the client can render
+  // both bubbles muted with a "not sent to LLM" badge.
+  return { sessionId: row.id, messages: <interleaved>, lastModelId, title, mcpToggles };
   ```
   Throws if the store is not configured or the session is
   unknown; those errors surface to the UI as a toast.
@@ -414,7 +454,18 @@ values for request/response.
   use this same helper so the "what we stored = what we
   emitted" invariant holds. `loadSession` deliberately bypasses
   `#emit` when replaying — replay must not re-persist existing
-  rows.
+  rows. Built-in slash commands (M4 phase B) **also** bypass
+  `#emit` because their reply is persisted as a `'builtin'`
+  entry; routing through `#emit` would double-persist the
+  chunk as a `'notification'` row.
+- **`#tryHandleBuiltin(params, rawText)` (M4 phase B).** Matches
+  `findBuiltin(rawText)`; on a hit, builds a `BuiltinHandlerCtx`
+  from adapter state, runs the handler, emits the reply via
+  `#conn.sessionUpdate(...)` with `_meta.bodhi.builtin`, persists
+  via `store.recordBuiltin(...)`, and returns
+  `{ stopReason: 'end_turn' }`. On miss, returns `null` so
+  `prompt()` falls through to the LLM path. See
+  [`./commands.md`](./commands.md) for the full surface.
 - **`#rehydrateInlineFromStore(sessionId)`.** Private helper
   shared by `prompt`'s mismatch guard. Reads the session's
   entries in `seq` order; picks the latest `turn`'s

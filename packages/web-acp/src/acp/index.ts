@@ -164,3 +164,36 @@ export interface BodhiSessionsDeleteRequest extends Record<string, unknown> {
 export interface BodhiSessionsDeleteResponse extends Record<string, unknown> {
   deleted: boolean;
 }
+
+/**
+ * Wire shape carried on `_meta.bodhi.builtin` for `session/update`
+ * notifications produced by an agent-handled slash command (M4 phase
+ * B). Rides on `agent_message_chunk` notifications the same way
+ * `_meta.bodhi.mcp` rides — the client's hook reads it before the
+ * normal chunk-accumulation path so built-in messages render distinctly
+ * and any `action` is dispatched (e.g. `/copy` → clipboard write).
+ *
+ * `action.kind` is open-ended for future built-ins (`'share'`,
+ * `'export-html'`, …); the actual payload is built on the client at
+ * dispatch time so persisted records stay minimal.
+ */
+export interface BodhiBuiltinAction {
+  kind: string;
+}
+
+export interface BodhiBuiltinMeta {
+  command: string;
+  action?: BodhiBuiltinAction;
+}
+
+/**
+ * Marker stamped onto the in-memory `AgentMessage` shape on the
+ * client side so `MessageBubble` can render built-in turns muted with
+ * a "not sent to LLM" badge. It survives `bodhi/getSession` replay
+ * because the worker writes both the user and assistant entries with
+ * this marker when reconstructing the snapshot.
+ */
+export interface BodhiBuiltinTag {
+  command: string;
+  action?: BodhiBuiltinAction;
+}

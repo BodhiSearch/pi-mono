@@ -44,15 +44,18 @@ Indexed on `updatedAt` for picker queries.
 
 ### Table `entries` (compound primary key `[sessionId+seq]`)
 
-| column      | type                                | notes                                              |
-| ----------- | ----------------------------------- | -------------------------------------------------- |
-| `sessionId` | `string` (part of pk)               | Foreign-key to `sessions.id`.                      |
-| `seq`       | `number` (part of pk)               | Monotonic per session; allocated inside the rw transaction as `entries.where('sessionId').equals(id).count()`. |
-| `at`        | `number`                            | ms since epoch.                                    |
-| `kind`      | `'notification' \| 'turn'`          | See below.                                         |
-| `payload`   | `SessionNotification \| TurnPayload`| Raw ACP notification for `notification`; synthetic summary for `turn`. |
+| column      | type                                                       | notes                                              |
+| ----------- | ---------------------------------------------------------- | -------------------------------------------------- |
+| `sessionId` | `string` (part of pk)                                      | Foreign-key to `sessions.id`.                      |
+| `seq`       | `number` (part of pk)                                      | Monotonic per session; allocated inside the rw transaction as `entries.where('sessionId').equals(id).count()`. |
+| `at`        | `number`                                                   | ms since epoch.                                    |
+| `kind`      | `'notification' \| 'turn' \| 'builtin'`                    | See below.                                         |
+| `payload`   | `SessionNotification \| TurnPayload \| BuiltinPayload`     | Raw ACP notification for `notification`; synthetic summary for `turn`; agent-handled built-in record for `builtin`. |
 
-Indexed on `sessionId` for range scans.
+Indexed on `sessionId` for range scans. The `payload` column is
+polymorphic by design — adding a new entry kind (M4 phase B added
+`'builtin'`) does **not** require a Dexie version bump because the
+on-disk shape only needs a new discriminator value.
 
 ### Table `features` (primary key `sessionId`) — M2
 
@@ -94,6 +97,25 @@ add per-row gating in the milestone that needs it.
   restored session use the persisted context.
   `modelId` is the hook that lets the UI re-select the model
   that was in use when the user last spoke with this session.
+- **`builtin`** (M4 phase B) — record of an agent-handled
+  built-in slash command (`/help`, `/version`, `/session`,
+  `/copy`):
+  ```ts
+  interface BuiltinPayload {
+    command: string;          // 'help' | 'version' | 'session' | 'copy'
+    userText: string;         // raw `/cmd args` text the user sent
+    replyText: string;        // agent-produced reply rendered to the user
+    action?: { kind: string };// e.g. { kind: 'copy' } for /copy
+  }
+  ```
+  Built-ins bypass the LLM entirely — they are matched in
+  `AcpAgentAdapter.prompt()` before model resolution and never
+  enter `inline.state.messages`. Persistence keeps `'builtin'`
+  rows separate from `'turn'` rows so `inline.restoreMessages()`
+  on `session/load` consumes only `'turn'` entries; the LLM stays
+  blind to built-in exchanges across reloads. See
+  [`./commands.md`](./commands.md) for the full surface (wire,
+  picker, render distinction, client-side action dispatch).
 
 ## Public interface (`SessionStore`)
 
@@ -110,6 +132,7 @@ export interface SessionStore {
     modelId: string,
     at?: number
   ): Promise<void>;
+  recordBuiltin(id: string, payload: BuiltinPayload, at?: number): Promise<void>;
   listSummaries(): Promise<SessionSummary[]>;
   readEntries(id: string): Promise<SessionEntry[]>;
   getSession(id: string): Promise<SessionRow | undefined>;
@@ -129,6 +152,12 @@ export interface SessionStore {
   explicit title, derives one via
   `deriveTitle(userText)`. Called once per `end_turn` in
   `AcpAgentAdapter.prompt`.
+- **`recordBuiltin`** (M4 phase B) — appends a `builtin` entry;
+  bumps `sessions.updatedAt`. Does **not** bump `turnCount` (a
+  built-in is not a model turn) and does **not** claim the
+  session title slot (the first real prompt still wins). Called
+  from `AcpAgentAdapter.#tryHandleBuiltin` after the agent emits
+  the built-in's reply chunk.
 - **`listSummaries`** — picker feed. Orders by `updatedAt DESC`.
   Drops `payload` (entries) — returns only the denormalised
   fields the picker needs.
@@ -176,13 +205,21 @@ Call sites (Phase B/C):
 
 - `extMethod('bodhi/listSessions')` → `store.listSummaries()`.
 - `extMethod('bodhi/getSession')` → `store.readEntries(sessionId)`,
-  returning the last turn's `finalMessages` + `lastModelId` + `title`
-  so the main thread can rehydrate the transcript and model selector
+  walks entries in `seq` order to build the rendered transcript:
+  each `'turn'` entry's `finalMessages` snapshot is diffed against
+  the previous turn to extract the new user + assistant pair; each
+  `'builtin'` entry inserts a synthetic user + assistant pair tagged
+  with a `_builtin` field carrying `{ command, action? }`. Returns
+  the interleaved list together with `lastModelId` + `title` so
+  the main thread can rehydrate the transcript and model selector
   in one call, without aggregating stream chunks.
 - `loadSession(sessionId)` → `store.readEntries(sessionId)` →
-  replay as `conn.sessionUpdate(...)`; then
-  `inline.restoreMessages(lastTurn.finalMessages)` and set
-  `#activeInlineSessionId = sessionId`.
+  replay each `'notification'` entry as `conn.sessionUpdate(...)`;
+  then `inline.restoreMessages(lastTurn.finalMessages)` and set
+  `#activeInlineSessionId = sessionId`. `'builtin'` entries are
+  silently skipped during this loop — built-in exchanges are
+  rebuilt from the `bodhi/getSession` snapshot on the client side
+  and never re-enter `inline.state.messages`.
 - `prompt` on a session whose state isn't loaded into the inline
   runtime (e.g. client raced before `session/load`) →
   `#rehydrateInlineFromStore(sessionId)` first. Prevents splicing
@@ -190,6 +227,11 @@ Call sites (Phase B/C):
 - `newSession` additionally calls `inline.clearMessages()` and sets
   `#activeInlineSessionId = sessionId`, so a "New chat" immediately
   after a previous session does not inherit the old messages.
+- `prompt` on a recognised built-in (M4 phase B) →
+  `#tryHandleBuiltin(...)` runs the handler, emits the reply chunk
+  with `_meta.bodhi.builtin`, and calls `store.recordBuiltin(...)`.
+  Returns `{ stopReason: 'end_turn' }` without any `inline.prompt`
+  invocation — the LLM never sees the exchange.
 
 ### `InlineAgent` (worker side)
 
@@ -235,7 +277,14 @@ wire. Full hook state shape in [`./hook.md`](./hook.md).
 5. **No `_meta` extensions for sessions.** All session-related
    data travels through first-class ACP methods or the
    `bodhi/listSessions` ext method. We don't piggy-back on
-   `_meta` for session identity or restore state.
+   `_meta` for session identity or restore state. (M4 phase B's
+   `_meta.bodhi.builtin` rides on `session/update` notifications
+   and is a render/dispatch hint, not a session-identity claim.)
+6. **LLM blindness for built-ins** (M4 phase B). `'builtin'`
+   entries never feed `inline.restoreMessages()` — only `'turn'`
+   entries do. A built-in exchange therefore cannot leak into
+   the LLM's view on any subsequent prompt, even after a
+   `session/load` round trip.
 
 ## Tests
 
@@ -250,6 +299,10 @@ wire. Full hook state shape in [`./hook.md`](./hook.md).
   - `deleteSession` atomically removes row + entries.
   - `setTitle` overrides derived title.
   - `deriveTitle` whitespace collapsing + 60-char truncation.
+  - `recordBuiltin` round-trip — payload integrity, `turnCount`
+    unchanged, `title` unclaimed, action descriptor preserved,
+    rejection on unknown sessions, interleaving with `recordTurn`
+    by `seq`.
 - **`packages/web-acp/e2e/sessions-persist.spec.ts`** (Phase B):
   DOM-witness that a prompt creates a session row surviving
   reload.

@@ -255,12 +255,14 @@ describe('AcpAgentAdapter slash commands', () => {
     );
   }
 
-  it('emits an empty available_commands_update on newSession when no mounts are present', async () => {
+  it('emits available_commands_update on newSession with built-ins only when no mounts are present', async () => {
     adapter = buildAdapter();
     await adapter.newSession({ cwd: '/', mcpServers: [] });
     const ac = updates.find(u => u.update.sessionUpdate === 'available_commands_update');
     expect(ac).toBeDefined();
-    expect(ac && (ac.update as { availableCommands: unknown }).availableCommands).toEqual([]);
+    const cmds = (ac!.update as { availableCommands: Array<{ name: string }> }).availableCommands;
+    // Built-ins (M4 phase B) are always advertised; no vault commands.
+    expect(cmds.map(c => c.name).sort()).toEqual(['copy', 'help', 'session', 'version']);
   });
 
   it('emits a populated available_commands_update on newSession when commands exist', async () => {
@@ -277,9 +279,13 @@ describe('AcpAgentAdapter slash commands', () => {
         availableCommands: Array<{ name: string; description: string; input?: { hint: string } }>;
       }
     ).availableCommands;
-    expect(cmds).toEqual([
+    // Built-ins prepended; vault commands appended.
+    const vault = cmds.filter(c => c.name.includes(':'));
+    expect(vault).toEqual([
       { name: 'wiki:greet', description: 'Greet someone', input: { hint: '<name>' } },
     ]);
+    const builtinNames = cmds.filter(c => !c.name.includes(':')).map(c => c.name);
+    expect(builtinNames.sort()).toEqual(['copy', 'help', 'session', 'version']);
   });
 
   it('re-emits available_commands_update on loadSession', async () => {
@@ -293,7 +299,8 @@ describe('AcpAgentAdapter slash commands', () => {
     expect(after.length).toBeGreaterThanOrEqual(1);
     const last = after[after.length - 1];
     const cmds = (last.update as { availableCommands: Array<{ name: string }> }).availableCommands;
-    expect(cmds.map(c => c.name)).toEqual(['wiki:hello']);
+    const vault = cmds.filter(c => c.name.includes(':'));
+    expect(vault.map(c => c.name)).toEqual(['wiki:hello']);
   });
 
   it('expands a slash command in the prompt before calling the inline agent', async () => {
@@ -405,5 +412,176 @@ describe('AcpAgentAdapter slash commands', () => {
       _meta: { bodhi: { modelId: 'test-model' } },
     });
     expect(inline.prompt).toHaveBeenCalledWith('/wiki:nope something');
+  });
+});
+
+describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
+  let db: SessionStoreDb;
+  let store: SessionStore;
+  let conn: AgentSideConnection;
+  let inline: InlineAgent;
+  let updates: SessionNotification[];
+  let adapter: AcpAgentAdapter;
+
+  beforeEach(async () => {
+    db = new SessionStoreDb(`web-acp-builtin-${crypto.randomUUID()}`);
+    store = createStoreFromDb(db);
+    updates = [];
+    conn = {
+      sessionUpdate: vi.fn(async (notif: SessionNotification) => {
+        updates.push(notif);
+      }),
+    } as unknown as AgentSideConnection;
+    inline = fakeInline();
+    inline.prompt = vi.fn(async () => undefined);
+    inline.getMessages = vi.fn(() => []);
+    inline.getErrorMessage = vi.fn(() => undefined);
+    inline.setModel = vi.fn();
+    inline.subscribe = vi.fn(() => () => undefined);
+    adapter = new AcpAgentAdapter(
+      conn,
+      inline,
+      fakeBodhi(),
+      store,
+      undefined,
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined
+    );
+  });
+
+  afterEach(async () => {
+    await db.delete();
+    db.close();
+  });
+
+  it('does not call inline.prompt when the user input is a built-in', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/help' }],
+    });
+    expect(inline.prompt).not.toHaveBeenCalled();
+  });
+
+  it('emits an agent_message_chunk with _meta.bodhi.builtin', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/help' }],
+    });
+    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
+    expect(chunk).toBeDefined();
+    const meta = chunk!._meta as { bodhi?: { builtin?: { command?: string } } } | null;
+    expect(meta?.bodhi?.builtin?.command).toBe('help');
+  });
+
+  it('persists a builtin entry distinct from turn entries', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/help' }],
+    });
+    const entries = await store.readEntries(sessionId);
+    const builtinEntries = entries.filter(e => e.kind === 'builtin');
+    expect(builtinEntries).toHaveLength(1);
+    const payload = builtinEntries[0].payload as {
+      command: string;
+      userText: string;
+      replyText: string;
+    };
+    expect(payload.command).toBe('help');
+    expect(payload.userText).toBe('/help');
+    expect(payload.replyText.length).toBeGreaterThan(0);
+  });
+
+  it('/copy emits a copy action when the LLM history has an assistant turn', async () => {
+    inline.getMessages = vi.fn(
+      () =>
+        [
+          { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+          { role: 'assistant', content: [{ type: 'text', text: 'hello back' }] },
+        ] as unknown as ReturnType<InlineAgent['getMessages']>
+    );
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/copy' }] });
+    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
+    const meta = chunk!._meta as { bodhi?: { builtin?: { action?: { kind?: string } } } } | null;
+    expect(meta?.bodhi?.builtin?.action?.kind).toBe('copy');
+  });
+
+  it('/copy emits no action when the conversation is empty', async () => {
+    inline.getMessages = vi.fn(() => []);
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/copy' }] });
+    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
+    const meta = chunk!._meta as { bodhi?: { builtin?: { action?: unknown } } } | null;
+    expect(meta?.bodhi?.builtin?.action).toBeUndefined();
+  });
+
+  it('a real prompt after a built-in does NOT see the built-in in inline history', async () => {
+    const bodhi = fakeBodhi();
+    bodhi.getAvailableModels = vi.fn(async () => [
+      { id: 'test-model', api: { format: 'openai' } } as unknown as Awaited<
+        ReturnType<BodhiProvider['getAvailableModels']>
+      >[number],
+    ]);
+    const realAdapter = new AcpAgentAdapter(
+      conn,
+      inline,
+      bodhi,
+      store,
+      undefined,
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined
+    );
+    await realAdapter.extMethod('bodhi/listModels', {});
+    const { sessionId } = await realAdapter.newSession({ cwd: '/', mcpServers: [] });
+    await realAdapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/help' }] });
+    expect(inline.prompt).not.toHaveBeenCalled();
+    await realAdapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: 'real follow-up' }],
+      _meta: { bodhi: { modelId: 'test-model' } },
+    });
+    expect(inline.prompt).toHaveBeenCalledTimes(1);
+    expect(inline.prompt).toHaveBeenCalledWith('real follow-up');
+  });
+
+  it('bodhi/getSession interleaves built-in entries with tagged user+assistant pairs', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/help' }] });
+    const raw = await adapter.extMethod(BODHI_GET_SESSION_METHOD, { sessionId });
+    const resp = raw as BodhiGetSessionResponse;
+    expect(resp.messages).toHaveLength(2);
+    const [u, a] = resp.messages as Array<{
+      role: string;
+      _builtin?: { command: string };
+      content: Array<{ text: string }>;
+    }>;
+    expect(u.role).toBe('user');
+    expect(u._builtin?.command).toBe('help');
+    expect(u.content[0].text).toBe('/help');
+    expect(a.role).toBe('assistant');
+    expect(a._builtin?.command).toBe('help');
+  });
+
+  it('built-ins do not block subsequent built-in invocations', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/help' }] });
+    await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/version' }] });
+    const entries = await store.readEntries(sessionId);
+    const builtinEntries = entries.filter(e => e.kind === 'builtin');
+    expect(builtinEntries.map(e => (e.payload as { command: string }).command)).toEqual([
+      'help',
+      'version',
+    ]);
   });
 });

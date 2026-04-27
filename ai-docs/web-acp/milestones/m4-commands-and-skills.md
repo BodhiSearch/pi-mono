@@ -1,29 +1,70 @@
 # M4 — Commands + Skills
 
+## Status (2026-04-27)
+
+- **M4 phase A — vault-sourced slash commands.** Shipped (commit
+  `7bc96d59`). `<mount>/.pi/commands/**/*.md` discovery + picker +
+  agent-side template expansion in `prompt()`.
+- **M4 phase B — agent-handled built-in slash commands.** Shipped.
+  Initial set: `/help`, `/version`, `/session`, `/copy`. Built-ins
+  intercept in `AcpAgentAdapter.prompt()` **before** model
+  resolution, emit a single `agent_message_chunk` stamped with
+  `_meta.bodhi.builtin = { command, action? }`, and persist as a
+  new `'builtin'` `SessionEntry` kind so the LLM never sees the
+  exchange even across reloads. `/copy` carries an open-ended
+  `action.kind` discriminator; the client derives the copy payload
+  from its own `messages` state (filter non-conversational, render
+  `**You:**`/`**Assistant:**` blocks) so wire and storage stay
+  minimal. Spec at
+  [`../specs/web-acp/commands.md`](../specs/web-acp/commands.md);
+  the new entry kind is documented in
+  [`../specs/web-acp/sessions.md`](../specs/web-acp/sessions.md).
+- **M4.2 — prompt templates** and **M4.3 — skills.** Not yet
+  started. Sections below describe the planned scope; numbering
+  remains as in the original preview.
+- **Out of scope for M4 phase B (carried forward to next slice).**
+  State-mutation built-ins (`/name`, `/model`, `/new`, `/resume`,
+  `/settings`, `/login`, `/logout`). `/compact` ships with M7;
+  `/fork` and `/tree` ship with M6. `/export`, `/import`,
+  `/share`, `/quit` are browser-incompatible and stay deferred.
+
+The "What this milestone delivers" section below is the original
+preview, kept intact except where phase B has resolved a forward
+reference.
+
 ## ACP compliance header
 
 **Posture.** Fully ACP-canonical. Slash commands ride ACP's stable
 `available_commands_update` + `session/prompt` surface
 (`agent-client-protocol/docs/protocol/slash-commands.mdx`); prompt
 templates and skills are agent-side affordances layered on top.
-No divergence, no new extension methods in the default path.
+No divergence, no new extension methods in the default path. Phase
+B's `_meta.bodhi.builtin` rides the standard `_meta` slot the same
+way `_meta.bodhi.mcp` does for MCP lifecycle — no new extension
+method, no parallel surface (principle § 6).
 
 ## What this milestone delivers
 
 Three related affordances that make the agent more useful without
 writing an extension:
 
-- **Slash commands (M4.1).** `/foo` in the chat input opens a picker
-  populated from `available_commands_update`. When the user selects
-  a command and sends, the agent receives the literal `/cmd args`
-  text in a regular `session/prompt`, expands its body
-  agent-side (front-matter stripped + bash-style argument
-  substitution), and the LLM sees the rendered template — never
-  the slash invocation. ACP's `AvailableCommand` schema has no
-  `type` field; M4.1 ships template expansion only and built-in
-  agent actions like `/compact` arrive in the milestone that needs
-  them (M7 for `/compact`) as agent-internal keyword detection,
-  not a new `AvailableCommand` shape.
+- **Slash commands (M4 phase A — vault, shipped + phase B —
+  built-ins, shipped).** `/foo` in the chat input opens a picker
+  populated from `available_commands_update`. **Phase A** (vault):
+  the agent receives the literal `/cmd args` text in a regular
+  `session/prompt`, expands its body agent-side (front-matter
+  stripped + bash-style argument substitution), and the LLM sees
+  the rendered template — never the slash invocation. **Phase B**
+  (agent-handled built-ins): the agent matches `/help`, `/version`,
+  `/session`, `/copy` *before* model resolution, runs a handler,
+  emits the reply via `_meta.bodhi.builtin` on
+  `agent_message_chunk`, persists a new `'builtin'`
+  `SessionEntry`, and never invokes the LLM. Built-in keyword
+  detection is the mechanism for future agent-internal commands
+  (e.g. `/compact` lands with M7 using the same hook). ACP's
+  `AvailableCommand` schema has no `type` field; both phases
+  share the same advertised list and the picker stays a black-box
+  consumer.
 - **Prompt templates (M4.2).** Reusable, parameterised prompt
   scaffolds addressable by name. Sourced from
   `<mount>/.pi/prompts/<name>.md` at session boot. Ride the same
@@ -50,21 +91,38 @@ commands / templates / skills enter in M5.
   `agent-client-protocol/docs/protocol/slash-commands.mdx`. The
   `AvailableCommand` schema has only `name`, `description`, an
   optional `input.hint`, and the standard `_meta` slot — no `type`
-  field, no structured arguments yet.
+  field, no structured arguments yet. Phase B prepends the four
+  built-ins to the same advertised list; the picker is a black-box
+  consumer of `AvailableCommand[]`.
 - **`session/prompt`** — the literal `/cmd args` text flows in as
   a regular `text` content block. No structured `slashCommand`
   field on the wire; the agent recognises the leading `/` and
-  expands the matching template before the LLM call.
+  either matches a built-in (phase B) or expands the matching
+  vault template (phase A) before the LLM call.
+- **`session/update` with `_meta.bodhi.builtin`** (M4 phase B,
+  shipped) — agent-handled built-ins emit their reply via a
+  standard `agent_message_chunk` carrying
+  `_meta.bodhi.builtin = { command, action? }`. Same envelope
+  posture as `_meta.bodhi.mcp` — riding ACP's standard `_meta`
+  slot, no new method or notification type. The optional
+  `action.kind` ('copy' today; open-ended) lets the client
+  dispatch a side effect; payloads are derived client-side at
+  dispatch time rather than carried on the wire.
+- **`bodhi/getSession`** — interleaves `'builtin'` entries with
+  `'turn'`-derived deltas, tagging both user and assistant
+  bubbles with `_builtin = { command, action? }` so reload
+  reproduces the muted rendering.
 - **`_bodhi/skills/activate`** — agent-side extension method
-  (client → agent) to activate a skill for the next turn.
-  Rationale: skills mutate the agent's system prompt for a turn,
-  which is an agent-side concern; the client needs a way to say
-  "use skill X now". Falls under principle 15 (extension-method
-  naming) and principle 6 (ACP extensibility before sub-protocols).
-- Prompt templates ride the same `available_commands_update` surface
-  as M4.1 commands. Expansion stays agent-side for parity (a single
-  expander module owns the substitution rules), so the wire shape
-  is identical.
+  (client → agent) to activate a skill for the next turn (M4.3
+  preview; not yet shipped). Rationale: skills mutate the agent's
+  system prompt for a turn, which is an agent-side concern; the
+  client needs a way to say "use skill X now". Falls under
+  principle 15 (extension-method naming) and principle 6 (ACP
+  extensibility before sub-protocols).
+- Prompt templates (M4.2, not yet shipped) will ride the same
+  `available_commands_update` surface as phase A commands.
+  Expansion stays agent-side for parity (a single expander module
+  owns the substitution rules), so the wire shape is identical.
 
 ## Sub-milestones
 
@@ -151,10 +209,14 @@ Deliverables:
 - Live vault watcher / re-emit on file change (re-enters M4.2 or
   later — for now refresh fires once per `session/new` /
   `session/load`).
-- Built-in agent actions (`/compact`, `/clear`) — they are
-  agent-internal keyword detection, not a different shape of
-  `AvailableCommand`. Land with the milestone that needs them
-  (M7 ships `/compact`).
+- Built-in agent actions beyond the M4 phase B initial set
+  (`/help`, `/version`, `/session`, `/copy` shipped). Phase B
+  established the keyword-detection mechanism and the
+  `_meta.bodhi.builtin` wire envelope; new built-ins plug into
+  the same registry. State-mutation built-ins (`/name`, `/model`,
+  `/new`, `/resume`, `/settings`, `/login`, `/logout`) are the
+  next slice; `/compact` lands with M7; `/fork` and `/tree` with
+  M6.
 - Extended Claude-Code front-matter (`allowed-tools`, `model`,
   `disable-model-invocation`, named `arguments`, `when_to_use`)
   → M5 extensions.

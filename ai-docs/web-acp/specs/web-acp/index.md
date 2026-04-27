@@ -3,13 +3,16 @@
 **Source of truth:** `packages/web-acp/src/`
 
 **Status:** living document — update as part of any plan that
-changes the source folder. Reflects the **M3 exit state** —
-multi-volume mount + `just-bash` `bash` tool (M2), the
-`_bodhi/features/*` toggle surface (M2), the `fs/*` IDE-
-integration seam (M2), and MCP-over-Streamable-HTTP with
-per-session toggles (M3) all shipped; see
-[`../../milestones/m2-tools.md`](../../milestones/m2-tools.md)
-and [`../../milestones/m3-mcp.md`](../../milestones/m3-mcp.md).
+changes the source folder. Reflects the **M4 phase B exit
+state** — multi-volume mount + `just-bash` `bash` tool (M2),
+the `_bodhi/features/*` toggle surface (M2), the `fs/*` IDE-
+integration seam (M2), MCP-over-Streamable-HTTP with per-session
+toggles (M3), vault-sourced slash commands (M4 phase A), and
+agent-handled built-in slash commands `/help` `/version`
+`/session` `/copy` (M4 phase B) all shipped; see
+[`../../milestones/m2-tools.md`](../../milestones/m2-tools.md),
+[`../../milestones/m3-mcp.md`](../../milestones/m3-mcp.md), and
+[`../../milestones/m4-commands-and-skills.md`](../../milestones/m4-commands-and-skills.md).
 
 ## Purpose
 
@@ -59,10 +62,11 @@ drill into the per-module specs:
 | [`tools.md`](./tools.md) | `src/agent/tools/` — the `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation (M2). |
 | [`features.md`](./features.md) | `src/features/`, `src/components/features/` — per-session feature-toggle store (Dexie v2 `features` table), `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). |
 | [`mcp.md`](./mcp.md) | `src/mcp/`, `src/agent/mcp/` — main-thread MCP catalog + `McpServerHttp` composition, worker-side `@modelcontextprotocol/sdk` client, refcounted connection pool, tool adapter, `_meta.bodhi.mcp` lifecycle events (M3). |
+| [`commands.md`](./commands.md) | `src/agent/commands/` — vault-sourced slash commands (M4 phase A) + agent-handled built-ins `/help` `/version` `/session` `/copy` (M4 phase B), the `_meta.bodhi.builtin` envelope, the `'builtin'` `SessionEntry` kind, and the client-side action dispatch (e.g. `/copy` → clipboard). |
 
 ## Overview
 
-### Scope in (M0 → M2, all shipped)
+### Scope in (M0 → M4 phase B, all shipped)
 
 1. Spawn exactly one agent Web Worker per tab.
 2. Establish a `MessageChannel`-backed ACP connection using
@@ -95,8 +99,14 @@ drill into the per-module specs:
   Anthropic `web_search` / computer-use, etc.) — carved out of
   M3.3; see
   [`../../milestones/deferred.md`](../../milestones/deferred.md).
-- Slash commands / prompt templates / skills (**M4**).
-- `/vault/.bodhi/extensions/` runtime (**M5**).
+- Prompt templates (M4.2) and skills (M4.3) — sub-milestones of
+  M4 not yet started; vault-sourced commands (M4 phase A) and
+  agent-handled built-ins (M4 phase B) **shipped**, see
+  [`./commands.md`](./commands.md).
+- State-mutation built-ins (`/name`, `/model`, `/new`,
+  `/resume`, `/settings`, `/login`, `/logout`) — next slice of
+  M4 phase B; not yet shipped.
+- `<mount>/.pi/extensions/` runtime (**M5**).
 - Session tree — `session/fork` (unstable, flag-gated) +
   `bodhi/listSessions` tree view (**M6**).
 - Context compaction (**M7**).

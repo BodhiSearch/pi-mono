@@ -184,6 +184,64 @@ describe('SessionStore', () => {
     const summary = (await store.listSummaries())[0];
     expect(summary.title).toBe('Custom Title');
   });
+
+  it('recordBuiltin writes a builtin entry without bumping turnCount or claiming the title', async () => {
+    await store.createSession('s1');
+    await store.recordBuiltin('s1', {
+      command: 'help',
+      userText: '/help',
+      replyText: 'Here are the commands…',
+    });
+    const entries = await store.readEntries('s1');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].kind).toBe('builtin');
+    const payload = entries[0].payload as {
+      command: string;
+      userText: string;
+      replyText: string;
+    };
+    expect(payload).toEqual({
+      command: 'help',
+      userText: '/help',
+      replyText: 'Here are the commands…',
+    });
+    const row = await store.getSession('s1');
+    expect(row?.turnCount).toBe(0);
+    expect(row?.title).toBeNull();
+  });
+
+  it('recordBuiltin preserves an action descriptor on the persisted payload', async () => {
+    await store.createSession('s1');
+    await store.recordBuiltin('s1', {
+      command: 'copy',
+      userText: '/copy',
+      replyText: 'Copied conversation to clipboard.',
+      action: { kind: 'copy' },
+    });
+    const entries = await store.readEntries('s1');
+    const payload = entries[0].payload as { action?: { kind: string } };
+    expect(payload.action).toEqual({ kind: 'copy' });
+  });
+
+  it('recordBuiltin rejects writes to an unknown session', async () => {
+    await expect(
+      store.recordBuiltin('missing', { command: 'help', userText: '/help', replyText: 'x' })
+    ).rejects.toThrow(/unknown session/i);
+  });
+
+  it('recordBuiltin and recordTurn interleave by seq', async () => {
+    await store.createSession('s1');
+    await store.recordTurn('s1', 'first', [assistantMessage('a1')], 'oai/x');
+    await store.recordBuiltin('s1', { command: 'help', userText: '/help', replyText: 'h' });
+    await store.recordTurn(
+      's1',
+      'second',
+      [assistantMessage('a1'), userMessage('second'), assistantMessage('a2')],
+      'oai/x'
+    );
+    const entries = await store.readEntries('s1');
+    expect(entries.map(e => e.kind)).toEqual(['turn', 'builtin', 'turn']);
+  });
 });
 
 describe('deriveTitle', () => {
