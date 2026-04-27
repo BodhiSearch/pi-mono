@@ -3,7 +3,12 @@ import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
-import type { Client, McpServerHttp, SessionNotification } from '@agentclientprotocol/sdk';
+import type {
+  AvailableCommand,
+  Client,
+  McpServerHttp,
+  SessionNotification,
+} from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
 import type { BodhiFeatureBag, BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
@@ -30,6 +35,7 @@ const EMPTY_MCP_TOGGLES: McpToggleSnapshot = Object.freeze({
   servers: Object.freeze({}) as Record<string, boolean>,
   tools: Object.freeze({}) as Record<string, Record<string, boolean>>,
 }) as McpToggleSnapshot;
+const EMPTY_AVAILABLE_COMMANDS: readonly AvailableCommand[] = Object.freeze([]);
 
 export interface ToolCallView {
   toolCallId: string;
@@ -273,6 +279,8 @@ export function useAcp() {
   const [toolCalls, setToolCalls] = useState<ToolCallView[]>([]);
   const [mcpStates, setMcpStates] = useState<Record<string, McpConnectionMeta>>(EMPTY_MCP_STATES);
   const [mcpToggles, setMcpToggles] = useState<McpToggleSnapshot>(EMPTY_MCP_TOGGLES);
+  const [availableCommands, setAvailableCommands] =
+    useState<readonly AvailableCommand[]>(EMPTY_AVAILABLE_COMMANDS);
   const toolCallsRef = useRef<Map<string, ToolCallView>>(new Map());
   const turnIndexRef = useRef(0);
   const mcpInstancesRef = useRef<McpInstanceView[]>(EMPTY_MCP_INSTANCES);
@@ -327,6 +335,15 @@ export function useAcp() {
       const mcpMeta = extractMcpMeta(notification._meta);
       if (mcpMeta) {
         setMcpStates(prev => ({ ...prev, [mcpMeta.server]: mcpMeta }));
+        return;
+      }
+      // `available_commands_update` is a per-session refresh that must
+      // hydrate the picker even when we're replaying — the latest
+      // refresh after the replay is the freshest list and overrides
+      // any stale persisted entry.
+      if (notification.update.sessionUpdate === 'available_commands_update') {
+        const list = notification.update.availableCommands ?? [];
+        setAvailableCommands(list.length > 0 ? list : EMPTY_AVAILABLE_COMMANDS);
         return;
       }
       if (isReplayingRef.current) return;
@@ -786,6 +803,7 @@ export function useAcp() {
     setFeatures({});
     setMcpStates(EMPTY_MCP_STATES);
     setMcpToggles(EMPTY_MCP_TOGGLES);
+    setAvailableCommands(EMPTY_AVAILABLE_COMMANDS);
     toolCallsRef.current.clear();
     turnIndexRef.current = 0;
     setToolCalls([]);
@@ -869,6 +887,7 @@ export function useAcp() {
     featureDefaults,
     setFeature,
     toolCalls: isAuthenticated ? toolCalls : EMPTY_TOOL_CALLS,
+    availableCommands: isAuthenticated ? availableCommands : EMPTY_AVAILABLE_COMMANDS,
     mcp: {
       instances: isAuthenticated ? mcpInstances.instances : EMPTY_MCP_INSTANCES,
       states: isAuthenticated ? mcpStates : EMPTY_MCP_STATES,

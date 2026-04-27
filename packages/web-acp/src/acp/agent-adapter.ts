@@ -3,6 +3,7 @@ import type {
   AgentSideConnection,
   AuthenticateRequest,
   AuthenticateResponse,
+  AvailableCommand,
   CancelNotification,
   InitializeRequest,
   InitializeResponse,
@@ -31,6 +32,13 @@ import type { TSchema } from '@sinclair/typebox';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { BodhiProvider } from '@/agent/bodhi-provider';
 import { apiFormatOfModel } from '@/agent/bodhi-provider';
+import {
+  createZenfsCommandsFs,
+  expandCommand,
+  loadCommandsFromVolumes,
+  type CommandDef,
+  type CommandsFs,
+} from '@/agent/commands';
 import type { InlineAgent } from '@/agent/inline-agent';
 import {
   createMcpAgentTool,
@@ -119,7 +127,9 @@ export class AcpAgentAdapter implements Agent {
   readonly #streamOverrides: StreamOverridesRef | undefined;
   readonly #mcpPool: McpConnectionPool;
   readonly #mcpSubscription: () => void;
+  readonly #commandsFs: CommandsFs;
   readonly #sessions = new Map<string, SessionState>();
+  #availableCommands: CommandDef[] = [];
   #models: Model<Api>[] = [];
   #cancelled = false;
   /**
@@ -148,7 +158,8 @@ export class AcpAgentAdapter implements Agent {
     features?: FeatureStore,
     streamOverrides?: StreamOverridesRef,
     mcpPool?: McpConnectionPool,
-    mcpToggles?: McpToggleStore
+    mcpToggles?: McpToggleStore,
+    commandsFs?: CommandsFs
   ) {
     this.#conn = conn;
     this.#inline = inline;
@@ -162,6 +173,7 @@ export class AcpAgentAdapter implements Agent {
     this.#mcpSubscription = this.#mcpPool.subscribe(event => {
       void this.#broadcastMcpPoolEvent(event);
     });
+    this.#commandsFs = commandsFs ?? createZenfsCommandsFs();
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
@@ -214,6 +226,7 @@ export class AcpAgentAdapter implements Agent {
     this.#inline.clearMessages();
     this.#activeInlineSessionId = sessionId;
     await this.#acquireMcpConnections(sessionId, mcpServers);
+    await this.#refreshAvailableCommands(sessionId);
     return { sessionId };
   }
 
@@ -273,6 +286,7 @@ export class AcpAgentAdapter implements Agent {
     }
     this.#activeInlineSessionId = params.sessionId;
     await this.#acquireMcpConnections(params.sessionId, mcpServers);
+    await this.#refreshAvailableCommands(params.sessionId);
     return {};
   }
 
@@ -287,6 +301,7 @@ export class AcpAgentAdapter implements Agent {
       throw new Error('No model selected: send session/prompt with _meta.bodhi.modelId');
     }
 
+    this.#applySlashCommandExpansion(params);
     const text = this.#extractPromptText(params);
     if (!text) {
       throw new Error('session/prompt payload must contain at least one text block');
@@ -752,6 +767,66 @@ export class AcpAgentAdapter implements Agent {
   }
 
   /**
+   * Refresh the cached vault command list and emit the matching
+   * `available_commands_update` notification for the given session.
+   * Called once at the end of `newSession` and `loadSession`. The
+   * cached `CommandDef[]` is shared across sessions because the vault
+   * is per-worker, but each notification carries its own `sessionId`
+   * so the persisted-replay path stays accurate.
+   */
+  async #refreshAvailableCommands(sessionId: string): Promise<void> {
+    const mounts = this.#registry?.list() ?? [];
+    let defs: CommandDef[] = [];
+    if (mounts.length > 0) {
+      try {
+        defs = await loadCommandsFromVolumes({
+          mounts,
+          fs: this.#commandsFs,
+        });
+      } catch (err) {
+        console.error('[acp-agent-adapter] command load failed:', err);
+        defs = [];
+      }
+    }
+    this.#availableCommands = defs;
+    const availableCommands = defs.map(toAvailableCommand);
+    await this.#emit({
+      sessionId,
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands,
+      },
+    });
+  }
+
+  /**
+   * Look at the last `text` content block in the prompt and, if it
+   * starts with `/`, run agent-side slash-command expansion. The
+   * literal `/cmd args` text is replaced with the expanded template
+   * so the LLM sees the rendered prompt — not the slash invocation.
+   *
+   * No expansion when the cache is empty or no command matches; the
+   * literal text passes through untouched and the LLM (or the user)
+   * gets to decide what `/cmd` means.
+   */
+  #applySlashCommandExpansion(params: PromptRequest): void {
+    if (this.#availableCommands.length === 0) return;
+    const blocks = params.prompt;
+    if (!Array.isArray(blocks)) return;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i];
+      if (block && block.type === 'text' && typeof block.text === 'string') {
+        if (!block.text.startsWith('/')) return;
+        const result = expandCommand(block.text, this.#availableCommands);
+        if (result.matched && typeof result.expanded === 'string') {
+          block.text = result.expanded;
+        }
+        return;
+      }
+    }
+  }
+
+  /**
    * Single exit point for every `session/update` notification. Emits
    * to the client AND persists the notification in the session store
    * so `session/load` can re-emit the exact same bytes later.
@@ -847,6 +922,17 @@ function toWireMcpToggles(snapshot: McpToggleSnapshot): BodhiMcpToggleSnapshot {
       Object.entries(snapshot.tools).map(([slug, toolMap]) => [slug, { ...toolMap }])
     ),
   };
+}
+
+function toAvailableCommand(def: CommandDef): AvailableCommand {
+  const out: AvailableCommand = {
+    name: def.name,
+    description: def.description,
+  };
+  if (def.argumentHint) {
+    out.input = { hint: def.argumentHint };
+  }
+  return out;
 }
 
 function toolTitle(toolName: string, args: unknown): string {

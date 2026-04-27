@@ -32,6 +32,7 @@ export default function ChatDemo() {
     setFeature,
     toolCalls,
     mcp,
+    availableCommands,
   } = useAcp();
 
   useEffect(() => {
@@ -93,6 +94,7 @@ export default function ChatDemo() {
           models={models}
           isLoadingModels={isLoadingModels}
           onRefreshModels={loadModels}
+          availableCommands={availableCommands}
         />
       </div>
     </div>

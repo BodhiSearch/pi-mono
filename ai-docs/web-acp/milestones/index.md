@@ -178,8 +178,15 @@ do. Previews are deliberately non-committal — they capture
 - **[m4-commands-and-skills.md](m4-commands-and-skills.md)** —
   load when picking up slash commands, prompt templates, and
   skills. Commands advertised via ACP `available_commands_update`;
-  expansion is client-side for plain commands and agent-side
-  for skill-activating commands.
+  expansion is **agent-side** in `prompt()` for both plain
+  commands and skill-activating commands. Sources live under
+  `<mount>/.pi/commands/`, `<mount>/.pi/prompts/`,
+  `<mount>/.pi/skills/<name>/SKILL.md` (pi convention; the
+  earlier preview's `.bodhi/...` text was a misnomer corrected
+  at M4.1 kickoff). `AvailableCommand` has no `type` field, so
+  the original `type: prompt | type: action` framing is gone —
+  built-in actions like `/compact` arrive in M7 as agent-internal
+  keyword detection.
 - **[m5-extensions.md](m5-extensions.md)** — load when
   extension runtime re-enters. Vault-sourced, fully-trusted.
   Start from ACP extensibility, not web-agent's Blob-URL loader.

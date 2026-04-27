@@ -1,8 +1,13 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentSideConnection } from '@agentclientprotocol/sdk';
+import type {
+  AgentSideConnection,
+  PromptRequest,
+  SessionNotification,
+} from '@agentclientprotocol/sdk';
 import { SessionStoreDb, createStoreFromDb, type SessionStore } from '@/agent/session-store';
 import { McpConnectionPool } from '@/agent/mcp';
+import type { CommandsFs, CommandsFsEntry } from '@/agent/commands';
 import { createMcpToggleStore } from '@/mcp/toggle-store';
 import { AcpAgentAdapter } from './agent-adapter';
 import type { BodhiProvider } from '@/agent/bodhi-provider';
@@ -157,5 +162,248 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
       servers: { everything: true },
       tools: { everything: { echo: false } },
     });
+  });
+});
+
+class FakeCommandsFs implements CommandsFs {
+  readonly files = new Map<string, string>();
+
+  add(path: string, content: string): void {
+    this.files.set(path, content);
+  }
+
+  async readdir(path: string): Promise<CommandsFsEntry[]> {
+    const prefix = path.endsWith('/') ? path : `${path}/`;
+    const direct = new Map<string, CommandsFsEntry>();
+    for (const f of this.files.keys()) {
+      if (!f.startsWith(prefix)) continue;
+      const tail = f.slice(prefix.length);
+      const slash = tail.indexOf('/');
+      if (slash === -1) {
+        direct.set(tail, { name: tail, isFile: true, isDirectory: false });
+      } else {
+        const dir = tail.slice(0, slash);
+        if (!direct.has(dir)) direct.set(dir, { name: dir, isFile: false, isDirectory: true });
+      }
+    }
+    return [...direct.values()];
+  }
+
+  async readFile(path: string): Promise<string> {
+    const f = this.files.get(path);
+    if (!f) throw new Error(`ENOENT: ${path}`);
+    return f;
+  }
+}
+
+interface MockRegistry {
+  list(): Array<{ mountName: string; description?: string }>;
+}
+
+function makeRegistry(mountNames: string[]): MockRegistry {
+  return {
+    list: () => mountNames.map(mountName => ({ mountName })),
+  };
+}
+
+describe('AcpAgentAdapter slash commands', () => {
+  let db: SessionStoreDb;
+  let store: SessionStore;
+  let conn: AgentSideConnection;
+  let inline: InlineAgent;
+  let commandsFs: FakeCommandsFs;
+  let adapter: AcpAgentAdapter;
+  let updates: SessionNotification[];
+
+  beforeEach(async () => {
+    db = new SessionStoreDb(`web-acp-cmds-${crypto.randomUUID()}`);
+    store = createStoreFromDb(db);
+    updates = [];
+    conn = {
+      sessionUpdate: vi.fn(async (notif: SessionNotification) => {
+        updates.push(notif);
+      }),
+    } as unknown as AgentSideConnection;
+    inline = fakeInline();
+    commandsFs = new FakeCommandsFs();
+  });
+
+  afterEach(async () => {
+    await db.delete();
+    db.close();
+  });
+
+  function buildAdapter(
+    opts: {
+      mounts?: string[];
+    } = {}
+  ): AcpAgentAdapter {
+    const registry = opts.mounts
+      ? (makeRegistry(opts.mounts) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4])
+      : undefined;
+    return new AcpAgentAdapter(
+      conn,
+      inline,
+      fakeBodhi(),
+      store,
+      registry,
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined,
+      commandsFs
+    );
+  }
+
+  it('emits an empty available_commands_update on newSession when no mounts are present', async () => {
+    adapter = buildAdapter();
+    await adapter.newSession({ cwd: '/', mcpServers: [] });
+    const ac = updates.find(u => u.update.sessionUpdate === 'available_commands_update');
+    expect(ac).toBeDefined();
+    expect(ac && (ac.update as { availableCommands: unknown }).availableCommands).toEqual([]);
+  });
+
+  it('emits a populated available_commands_update on newSession when commands exist', async () => {
+    commandsFs.add(
+      '/mnt/wiki/.pi/commands/greet.md',
+      ['---', 'description: Greet someone', 'argument-hint: <name>', '---', 'Hello $1!'].join('\n')
+    );
+    adapter = buildAdapter({ mounts: ['wiki'] });
+    await adapter.newSession({ cwd: '/', mcpServers: [] });
+    const ac = updates.find(u => u.update.sessionUpdate === 'available_commands_update');
+    expect(ac).toBeDefined();
+    const cmds = (
+      ac!.update as {
+        availableCommands: Array<{ name: string; description: string; input?: { hint: string } }>;
+      }
+    ).availableCommands;
+    expect(cmds).toEqual([
+      { name: 'wiki:greet', description: 'Greet someone', input: { hint: '<name>' } },
+    ]);
+  });
+
+  it('re-emits available_commands_update on loadSession', async () => {
+    commandsFs.add('/mnt/wiki/.pi/commands/hello.md', '---\ndescription: hi\n---\nHi!');
+    adapter = buildAdapter({ mounts: ['wiki'] });
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.loadSession({ sessionId, cwd: '/', mcpServers: [] });
+    const after = updates.filter(u => u.update.sessionUpdate === 'available_commands_update');
+    // Loadsession replays the persisted notification AND re-emits a fresh one.
+    expect(after.length).toBeGreaterThanOrEqual(1);
+    const last = after[after.length - 1];
+    const cmds = (last.update as { availableCommands: Array<{ name: string }> }).availableCommands;
+    expect(cmds.map(c => c.name)).toEqual(['wiki:hello']);
+  });
+
+  it('expands a slash command in the prompt before calling the inline agent', async () => {
+    commandsFs.add(
+      '/mnt/wiki/.pi/commands/greet.md',
+      '---\ndescription: greet\n---\nHello $1, welcome to $2.'
+    );
+    adapter = buildAdapter({ mounts: ['wiki'] });
+    inline.subscribe = vi.fn(() => () => undefined);
+    inline.prompt = vi.fn(async () => undefined);
+    inline.getMessages = vi.fn(() => []);
+    inline.getErrorMessage = vi.fn(() => undefined);
+    inline.setModel = vi.fn();
+    const bodhi = fakeBodhi();
+    bodhi.getAvailableModels = vi.fn(async () => [
+      { id: 'test-model', api: { format: 'openai' } } as unknown as Awaited<
+        ReturnType<BodhiProvider['getAvailableModels']>
+      >[number],
+    ]);
+    // Rebuild adapter with the populated bodhi provider.
+    adapter = new AcpAgentAdapter(
+      conn,
+      inline,
+      bodhi,
+      store,
+      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined,
+      commandsFs
+    );
+    await adapter.extMethod('bodhi/listModels', {});
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    const req: PromptRequest = {
+      sessionId,
+      prompt: [{ type: 'text', text: '/wiki:greet alice paris' }],
+      _meta: { bodhi: { modelId: 'test-model' } },
+    };
+    await adapter.prompt(req);
+    expect(inline.prompt).toHaveBeenCalledWith('Hello alice, welcome to paris.');
+  });
+
+  it('passes non-slash text through unchanged', async () => {
+    commandsFs.add('/mnt/wiki/.pi/commands/greet.md', '---\ndescription: g\n---\nGreet body');
+    const bodhi = fakeBodhi();
+    bodhi.getAvailableModels = vi.fn(async () => [
+      { id: 'test-model', api: { format: 'openai' } } as unknown as Awaited<
+        ReturnType<BodhiProvider['getAvailableModels']>
+      >[number],
+    ]);
+    adapter = new AcpAgentAdapter(
+      conn,
+      inline,
+      bodhi,
+      store,
+      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined,
+      commandsFs
+    );
+    inline.prompt = vi.fn(async () => undefined);
+    inline.getMessages = vi.fn(() => []);
+    inline.getErrorMessage = vi.fn(() => undefined);
+    inline.setModel = vi.fn();
+    inline.subscribe = vi.fn(() => () => undefined);
+    await adapter.extMethod('bodhi/listModels', {});
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: 'just a normal message' }],
+      _meta: { bodhi: { modelId: 'test-model' } },
+    });
+    expect(inline.prompt).toHaveBeenCalledWith('just a normal message');
+  });
+
+  it('passes unknown slash commands through unchanged', async () => {
+    commandsFs.add('/mnt/wiki/.pi/commands/known.md', '---\ndescription: k\n---\nknown body');
+    const bodhi = fakeBodhi();
+    bodhi.getAvailableModels = vi.fn(async () => [
+      { id: 'test-model', api: { format: 'openai' } } as unknown as Awaited<
+        ReturnType<BodhiProvider['getAvailableModels']>
+      >[number],
+    ]);
+    adapter = new AcpAgentAdapter(
+      conn,
+      inline,
+      bodhi,
+      store,
+      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined,
+      commandsFs
+    );
+    inline.prompt = vi.fn(async () => undefined);
+    inline.getMessages = vi.fn(() => []);
+    inline.getErrorMessage = vi.fn(() => undefined);
+    inline.setModel = vi.fn();
+    inline.subscribe = vi.fn(() => () => undefined);
+    await adapter.extMethod('bodhi/listModels', {});
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/wiki:nope something' }],
+      _meta: { bodhi: { modelId: 'test-model' } },
+    });
+    expect(inline.prompt).toHaveBeenCalledWith('/wiki:nope something');
   });
 });

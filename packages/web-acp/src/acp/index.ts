@@ -2,6 +2,9 @@ export { AgentSideConnection, ClientSideConnection, ndJsonStream } from '@agentc
 
 export type {
   Agent,
+  AvailableCommand,
+  AvailableCommandInput,
+  AvailableCommandsUpdate,
   Client,
   AuthenticateRequest,
   AuthenticateResponse,
@@ -16,6 +19,7 @@ export type {
   PromptResponse,
   SessionNotification,
   StopReason,
+  UnstructuredCommandInput,
 } from '@agentclientprotocol/sdk';
 
 export const BODHI_AUTH_METHOD_ID = 'bodhi-token';
