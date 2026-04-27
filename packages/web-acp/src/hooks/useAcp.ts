@@ -817,7 +817,6 @@ export function useAcp() {
         }
       }
 
-      turnIndexRef.current += 1;
       const localUserMsg = builtinTag
         ? withBuiltinTag(userMessage(prompt), builtinTag)
         : userMessage(prompt);
@@ -852,6 +851,7 @@ export function useAcp() {
         streamingMessageIdRef.current = undefined;
         setStreamingMessage(undefined);
         setIsStreaming(false);
+        turnIndexRef.current += 1;
       }
     },
     [selectedModel, ensureSession, refreshSessions]

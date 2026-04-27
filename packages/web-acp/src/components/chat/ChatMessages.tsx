@@ -103,15 +103,20 @@ export default function ChatMessages({
               {renderList.map((msg, index) => {
                 if (msg.role === 'toolResult') return null;
                 const turn = turnByIndex[index];
-                return <MessageBubble key={index} message={msg} turn={turn} />;
+                const turnTools = msg.role === 'user' ? toolCalls.filter(c => c.turn === turn) : [];
+                return (
+                  <div key={index}>
+                    <MessageBubble message={msg} turn={turn} />
+                    {turnTools.length > 0 && (
+                      <div data-testid={`tool-calls-turn-${turn}`} className="my-3 space-y-2">
+                        {turnTools.map(call => (
+                          <BashToolCall key={call.toolCallId} call={call} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
               })}
-              {toolCalls.length > 0 && (
-                <div data-testid="tool-calls-container" className="my-3 space-y-2">
-                  {toolCalls.map(call => (
-                    <BashToolCall key={call.toolCallId} call={call} />
-                  ))}
-                </div>
-              )}
               {showPending && (
                 <div data-testid="streaming-indicator" className="flex justify-start mb-4">
                   <div className="bg-gray-200 px-4 py-2 rounded-lg">

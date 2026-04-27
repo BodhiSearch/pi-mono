@@ -1,4 +1,4 @@
-import { useBodhi, LoginOptionsBuilder } from '@bodhiapp/bodhi-js-react';
+import { useBodhi, LoginOptionsBuilder, BodhiBadge } from '@bodhiapp/bodhi-js-react';
 import { Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import StatusIndicator from './StatusIndicator';
@@ -78,12 +78,10 @@ export default function Header() {
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
       <div className="flex items-center gap-2">
+        <BodhiBadge size="sm" variant="light" />
         <h1 className="text-lg font-semibold" data-testid="app-title">
-          Demo Chat
+          Hikma App
         </h1>
-        <span className="text-sm text-gray-500" data-testid="app-subtitle">
-          powered by Bodhi Browser Extension
-        </span>
       </div>
 
       <div className="flex items-center gap-3">
