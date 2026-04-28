@@ -1,6 +1,7 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import Dexie, { type Table } from 'dexie';
+import type { AnyBodhiBuiltinAction } from '@/acp';
 
 /**
  * Worker-owned persistence for ACP sessions.
@@ -55,7 +56,7 @@ export interface BuiltinPayload {
   command: string;
   userText: string;
   replyText: string;
-  action?: { kind: string };
+  action?: AnyBodhiBuiltinAction;
 }
 
 export interface SessionEntry {

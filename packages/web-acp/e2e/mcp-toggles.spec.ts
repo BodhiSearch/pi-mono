@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ChatPage } from './tests/pages/ChatPage';
 import { FULL_MODEL_ID, getTestState } from './tests/global-setup';
-import { installMcpEverythingUrl } from './helpers/install-mcp';
+import { installRequestedMcps } from './helpers/install-requested-mcps';
 
 test.describe('MCP per-session toggles', () => {
   test.setTimeout(120_000);
@@ -12,7 +12,7 @@ test.describe('MCP per-session toggles', () => {
     const { username, password, bodhiServerUrl, mcpEverythingSlug, mcpEverythingUrl } =
       getTestState();
 
-    await installMcpEverythingUrl(page, mcpEverythingUrl);
+    await installRequestedMcps(page, [mcpEverythingUrl]);
 
     const chat = new ChatPage(page);
     await page.goto('/');

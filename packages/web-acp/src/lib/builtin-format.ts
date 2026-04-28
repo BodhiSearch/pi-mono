@@ -1,5 +1,5 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { BodhiBuiltinTag } from '@/acp';
+import type { AnyBodhiBuiltinAction, BodhiBuiltinTag } from '@/acp';
 
 /**
  * Read the `_builtin` marker stamped onto a chat message by either:
@@ -33,12 +33,30 @@ export function extractBuiltinMeta(meta: unknown): BodhiBuiltinTag | undefined {
   const rec = builtin as Record<string, unknown>;
   if (typeof rec.command !== 'string') return undefined;
   const out: BodhiBuiltinTag = { command: rec.command };
-  const action = rec.action;
-  if (action && typeof action === 'object') {
-    const kind = (action as { kind?: unknown }).kind;
-    if (typeof kind === 'string') out.action = { kind };
-  }
+  const narrowed = narrowBuiltinAction(rec.action);
+  if (narrowed) out.action = narrowed;
   return out;
+}
+
+/**
+ * Validate a wire-shape `action` blob against the per-kind contract in
+ * `acp/index.ts`. Unknown kinds and malformed payloads return
+ * `undefined` so the dispatcher only ever sees fully-narrowed values.
+ */
+function narrowBuiltinAction(input: unknown): AnyBodhiBuiltinAction | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const rec = input as Record<string, unknown>;
+  const kind = rec.kind;
+  if (typeof kind !== 'string') return undefined;
+  if (kind === 'copy') return { kind: 'copy' };
+  if (kind === 'mcp-add' || kind === 'mcp-remove') {
+    const params = rec.params;
+    if (!params || typeof params !== 'object') return undefined;
+    const url = (params as { url?: unknown }).url;
+    if (typeof url !== 'string') return undefined;
+    return { kind, params: { url } };
+  }
+  return undefined;
 }
 
 function extractText(msg: AgentMessage): string {

@@ -26,8 +26,8 @@ happens next depends on the phase that owns the command.
   the `/cmd` text.
 - **Phase B — agent-handled built-ins (shipped, M4 phase B).**
   A static registry of commands the agent recognises before any
-  LLM resolution: `/help`, `/version`, `/session`, `/copy`. The
-  agent runs a handler, emits the reply directly via
+  LLM resolution: `/help`, `/version`, `/session`, `/copy`, `/mcp`.
+  The agent runs a handler, emits the reply directly via
   `agent_message_chunk`, and **never invokes the LLM**. Built-in
   exchanges are persisted to a separate `'builtin'` `SessionEntry`
   kind and excluded from LLM-visible history on every subsequent
@@ -69,13 +69,30 @@ way `_meta.bodhi.mcp` rides MCP lifecycle events. Type definitions
 in `packages/web-acp/src/acp/index.ts`:
 
 ```ts
-export interface BodhiBuiltinAction {
-  kind: string; // 'copy' today; open-ended for /share, /export-html, …
+// Generic descriptor — `params` field is conditional: present iff
+// `P` is non-void. `/copy` carries no params; `/mcp add` and
+// `/mcp remove` carry `{ url }`.
+export type BodhiBuiltinAction<K extends string = string, P = void> = [P] extends [void]
+  ? { kind: K }
+  : { kind: K; params: P };
+
+export interface BodhiMcpUrlParams {
+  url: string;
 }
 
+export type BodhiBuiltinCopyAction = BodhiBuiltinAction<'copy'>;
+export type BodhiBuiltinMcpAddAction = BodhiBuiltinAction<'mcp-add', BodhiMcpUrlParams>;
+export type BodhiBuiltinMcpRemoveAction = BodhiBuiltinAction<'mcp-remove', BodhiMcpUrlParams>;
+
+// Discriminated union — switch on `kind` to narrow.
+export type AnyBodhiBuiltinAction =
+  | BodhiBuiltinCopyAction
+  | BodhiBuiltinMcpAddAction
+  | BodhiBuiltinMcpRemoveAction;
+
 export interface BodhiBuiltinMeta {
-  command: string;            // 'help' | 'version' | 'session' | 'copy'
-  action?: BodhiBuiltinAction;
+  command: string;
+  action?: AnyBodhiBuiltinAction;
 }
 
 export interface BodhiBuiltinTag {
@@ -83,16 +100,24 @@ export interface BodhiBuiltinTag {
   // attached to the AgentMessage envelope (`_builtin` field) returned
   // by `bodhi/getSession` and tracked on the client for rendering.
   command: string;
-  action?: BodhiBuiltinAction;
+  action?: AnyBodhiBuiltinAction;
 }
 ```
 
-Action payloads are **never** carried on the wire. The
-`/copy` action is `{ kind: 'copy' }` only; the client builds the
-markdown payload from its own `messages` state at dispatch time.
-This keeps wire and persistence minimal and lets future kinds
-(`'share'`, `'export-html'`, `'feedback'`, …) plug in without a
-wire change.
+Action payloads are typed per-kind. `/copy` carries `{ kind: 'copy' }`
+and the client builds the markdown payload from its own `messages`
+state at dispatch time. `/mcp add` and `/mcp remove` carry
+`{ kind: 'mcp-add' | 'mcp-remove', params: { url } }` because the
+client needs the canonical URL to mutate the persisted IDB list
+before re-issuing `auth.login`. Future kinds with no params
+(`'share'`, `'feedback'`, …) plug in by adding a single-arg alias
+to the union; kinds with payload extend the union with a second
+generic parameter.
+
+`extractBuiltinMeta` in `lib/builtin-format.ts` validates the wire
+blob against the per-kind shape — unknown kinds and malformed
+payloads return `undefined` so the dispatcher only ever sees
+fully-narrowed values.
 
 ### No new `_bodhi/*` extension method
 
@@ -149,11 +174,12 @@ plus `finalMessages` from `inline.getMessages()`. Reload via
 
 | File | Role |
 | --- | --- |
-| `types.ts` | `BuiltinCommand`, `BuiltinHandlerCtx`, `BuiltinResult`, `BuiltinAction` |
+| `types.ts` | `BuiltinCommand`, `BuiltinHandlerCtx`, `BuiltinMcpInstance`, `BuiltinResult`, `BuiltinAction` (re-export of `AnyBodhiBuiltinAction`) |
 | `help.ts` | `/help` — markdown table over `ctx.advertisedCommands` (built-ins + vault, post-merge) |
 | `version.ts` | `/version` — `__WEB_ACP_VERSION__`, `__ACP_SDK_VERSION__`, current model id, server URL |
 | `session.ts` | `/session` — id, turn count, message count, connected MCP servers |
 | `copy.ts` | `/copy` — emits `action: { kind: 'copy' }` if any assistant text exists, else "Nothing to copy yet." |
+| `mcp.ts` | `/mcp` — list / add / remove MCP servers; subcommand dispatch is local to the handler |
 | `index.ts` | `BUILTIN_COMMANDS`, `findBuiltin`, `isBuiltinName`, `builtinAvailableCommands` |
 
 ### Handler context
@@ -165,6 +191,10 @@ interface BuiltinHandlerCtx {
   serverUrl: string | null;     // from BodhiProvider.getBaseUrl()
   sessionStats: { turnCount: number; messageCount: number };
   mcpServersConnected: string[];
+  /** Approved Bodhi instances pushed in via _meta.bodhi.mcpInstances. */
+  mcpInstances: BuiltinMcpInstance[];
+  /** Persisted requested-URL list pushed in via _meta.bodhi.requestedMcpUrls. */
+  requestedMcpUrls: string[];
   advertisedCommands: AvailableCommand[];
   inlineMessages: AgentMessage[];   // for /copy — built-ins are absent by construction
   buildVersion: string;             // Vite `define` constant
@@ -176,6 +206,86 @@ interface BuiltinHandlerCtx {
 anything to copy; the inline runtime never receives built-in
 exchanges so a previous `/help` cannot mask a "real" assistant
 turn.
+
+### `/mcp` — manage requested MCP servers
+
+`/mcp` lets the user mutate the list of MCP servers their Bodhi
+identity has access to, from inside the chat. Source of truth for
+the list is a main-thread IDB store at `web-acp:mcp-requested`
+(see [`./mcp.md` § Requested-MCPs IDB store](./mcp.md#requested-mcps-idb-store)).
+The list is pushed into the worker on every `session/new` and
+`session/load` via `_meta.bodhi.requestedMcpUrls` so the handler
+can list, validate, and dedupe without round-tripping to the
+main thread.
+
+**Subcommands** (parsed locally in `mcp.ts` — `findBuiltin` only
+matches the leading `/mcp`, the rest of the input is the
+handler's `args`):
+
+| Form | Behaviour |
+| --- | --- |
+| `/mcp` | List Connected (matched approved instances → original URL via slug heuristic; fall back to Bodhi proxy URL when unmatched) and Pending or denied (requested URLs with no matching instance). Empty state hints at `/mcp add <url>`. |
+| `/mcp add <url>` | Canonicalise + check IDB list. **Already present** → reply explains, no action. **New** → reply `Re-authenticating to add \`<url>\`. …`, action `{ kind: 'mcp-add', params: { url } }`. **Parse fail** → reply names the bad URL, no action. |
+| `/mcp remove <url>` | Canonicalise + check IDB list. **Missing** → reply explains, no action. **Present** → reply `Removing \`<url>\` and re-authenticating …`, action `{ kind: 'mcp-remove', params: { url } }`. **Parse fail** → reply names the bad URL, no action. |
+| any other subcommand | Usage hint, no action. |
+
+**Slug-derivation heuristic** (`mcp/url-canonical.ts`
+`deriveSlugFromUrl`): strip leading `mcp.` / `api.` / `www.`
+hostname labels, take the next label; fall back to the last
+meaningful path segment when the host is generic. Match against
+`instance.slug` and `instance.name` (case-insensitive) plus a
+substring fallback. Best-effort — unmatched approved instances
+still render with the Bodhi proxy URL, so a missed match degrades
+to "URL appears in Pending" rather than data loss.
+
+**Action dispatch** in `useAcp.ts`: switch on `action.kind`. For
+`mcp-add` / `mcp-remove`, delegate to `addRequestedMcp` /
+`removeRequestedMcp` (idempotent, canonicalised), then call
+`triggerLoginWithRequested(list)` which **must logout first**
+before calling `auth.login(builderFromList)`. Errors and
+idempotent no-ops surface via `toast`.
+
+**Logout-then-login surprise** (Principle § 16): the Bodhi SDK's
+`login()` short-circuits at the very top with
+`if (existingAuth.status === 'authenticated') return existingAuth;`
+(see `node_modules/@bodhiapp/bodhi-js/dist/bodhi-web.esm.js`).
+Calling `auth.login(opts)` directly from `/mcp add` while the
+user holds a valid token therefore no-ops silently — the
+transcript line prints, but no redirect happens.
+
+The fix: call `auth.logout()` first. Bodhi's `logout()` only
+revokes the **refresh token** at the auth server's `/revoke`
+endpoint and clears localStorage; it does **not** call the IDP's
+`end_session_endpoint`, so the Keycloak SSO cookie stays valid.
+The immediate `login(opts)` that follows then proceeds through
+the access-request creation + redirect path; Keycloak's authorize
+flow short-circuits silently against the live SSO session, so the
+user sees a Bodhi access-request approval screen with **no**
+username/password prompt and lands back in the chat with a fresh
+token whose scopes reflect the updated MCP list.
+
+**Calling `bodhiClient.requestAccess(body)` directly is not a
+viable alternative**: the redirect afterwards needs the
+SDK-internal `storageKeys.ACCESS_REQUEST_ID` localStorage key so
+`handleAccessRequestCallback` (called automatically by
+BodhiProvider on the post-redirect page load) can complete the
+OAuth PKCE. That key is `protected` on `DirectClientBase`; we
+don't have a public path to write it. Logout-then-login keeps
+the dance entirely inside the SDK's public surface.
+
+**The transcript line is durable.** The worker's `prompt()` path
+emits the `agent_message_chunk` and writes the `'builtin'`
+`SessionEntry` **before** returning (and therefore before the
+client's action dispatcher kicks the `auth.login` redirect).
+Reload after redirect rebuilds the transcript from Dexie; the
+`/mcp add` line is still there, the LLM still hasn't seen it.
+
+**Authenticated-only.** `/mcp` invocations require an active
+session, which itself requires authentication. A brand-new user
+with an empty IDB list logs in by clicking the standard Login
+button (which now reads from the same IDB list, defaulting to
+zero MCP scopes). After login, `/mcp add` becomes the path for
+expanding the scope set.
 
 ### Persistence — the `'builtin'` `SessionEntry` kind
 
@@ -190,7 +300,7 @@ interface BuiltinPayload {
   command: string;
   userText: string;
   replyText: string;
-  action?: { kind: string };
+  action?: AnyBodhiBuiltinAction;
 }
 ```
 
@@ -260,18 +370,29 @@ In the `session/update` handler in `useAcp.ts`:
 - During chunk accumulation the streaming message is tagged via
   `withBuiltinTag(...)`.
 - After `runtime.client.prompt(...)` resolves, if the streaming
-  message carries an `action`, the client dispatches it. Today
-  only `kind: 'copy'` is recognised:
+  message carries an `action`, the client dispatches it via the
+  in-hook `dispatchBuiltinAction` switch. Each `kind` narrows
+  to its per-kind shape:
 
   ```ts
-  const markdown = renderConversationMarkdown(messagesRef.current);
-  await navigator.clipboard.writeText(markdown);
-  toast.success('Copied conversation to clipboard');
+  switch (action.kind) {
+    case 'copy':
+      await dispatchCopyAction(messagesRef.current);
+      return;
+    case 'mcp-add': {
+      const { list, added, canonical } = await addRequestedMcp(action.params.url);
+      // …idempotency + parse-failure paths surface via toast…
+      await triggerLoginWithRequested(list); // builds LoginOptions, calls auth.login
+      return;
+    }
+    case 'mcp-remove': /* mirror */
+  }
   ```
 
-  Failure surfaces via `toast.error(...)` while the in-transcript
-  "Copied conversation to clipboard." line still renders (transcript
-  = optimistic agent record; toast = actual client outcome).
+  Failures and idempotent no-ops surface via `toast.error` /
+  `toast.info` while the in-transcript line still renders
+  (transcript = optimistic agent record; toast = actual client
+  outcome).
 
 ### Markdown rendering — `renderConversationMarkdown`
 
@@ -349,18 +470,32 @@ turns; reload preserves built-in bubbles still tagged.
 
 - `packages/web-acp/src/agent/commands/{loader,expander,front-matter,path,types}.ts`
   (phase A vault loader)
-- `packages/web-acp/src/agent/commands/builtins/{types,help,version,session,copy,index}.ts`
+- `packages/web-acp/src/agent/commands/builtins/{types,help,version,session,copy,mcp,index}.ts`
   (phase B registry)
 - `packages/web-acp/src/acp/agent-adapter.ts`
   (`#refreshAvailableCommands`, `prompt()` interception, `loadSession`,
-  `BODHI_GET_SESSION_METHOD` interleaving, `#tryHandleBuiltin`)
+  `BODHI_GET_SESSION_METHOD` interleaving, `#tryHandleBuiltin`,
+  `extractSessionMeta`)
 - `packages/web-acp/src/agent/session-store.ts`
   (`SessionEntryKind`, `BuiltinPayload`, `recordBuiltin`)
 - `packages/web-acp/src/acp/index.ts`
-  (`BodhiBuiltinAction`, `BodhiBuiltinMeta`, `BodhiBuiltinTag`)
+  (`BodhiBuiltinAction<K, P>`, `AnyBodhiBuiltinAction`,
+  `BodhiBuiltinMeta`, `BodhiBuiltinTag`, `BodhiSessionMeta`,
+  `BodhiMcpInstanceDescriptor`)
 - `packages/web-acp/src/hooks/useAcp.ts`
-  (send-time tagging, `_meta.bodhi.builtin` extraction, action
-  dispatch)
+  (send-time tagging, `_meta.bodhi.builtin` extraction,
+  `dispatchBuiltinAction` discriminated-union switch,
+  `composeSessionMeta`, `triggerLoginWithRequested`)
+- `packages/web-acp/src/mcp/requested-mcps-store.ts`
+  (`web-acp:mcp-requested` IDB key, `loadRequestedMcps`,
+  `addRequestedMcp`, `removeRequestedMcp`)
+- `packages/web-acp/src/mcp/url-canonical.ts`
+  (`canonicalizeMcpUrl`, `deriveSlugFromUrl`)
+- `packages/web-acp/src/agent/commands/builtins/mcp.ts`
+  (`/mcp` handler + subcommand dispatch + slug-match logic)
+- `packages/web-acp/src/components/Header.tsx`
+  (login click reads `loadRequestedMcps()` instead of
+  hardcoded URLs)
 - `packages/web-acp/src/lib/builtin-format.ts`
   (`extractBuiltinMeta`, `getBuiltinTag`, `withBuiltinTag`,
   `renderConversationMarkdown`)

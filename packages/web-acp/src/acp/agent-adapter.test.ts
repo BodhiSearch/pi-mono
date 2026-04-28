@@ -262,7 +262,7 @@ describe('AcpAgentAdapter slash commands', () => {
     expect(ac).toBeDefined();
     const cmds = (ac!.update as { availableCommands: Array<{ name: string }> }).availableCommands;
     // Built-ins (M4 phase B) are always advertised; no vault commands.
-    expect(cmds.map(c => c.name).sort()).toEqual(['copy', 'help', 'session', 'version']);
+    expect(cmds.map(c => c.name).sort()).toEqual(['copy', 'help', 'mcp', 'session', 'version']);
   });
 
   it('emits a populated available_commands_update on newSession when commands exist', async () => {
@@ -285,7 +285,7 @@ describe('AcpAgentAdapter slash commands', () => {
       { name: 'wiki:greet', description: 'Greet someone', input: { hint: '<name>' } },
     ]);
     const builtinNames = cmds.filter(c => !c.name.includes(':')).map(c => c.name);
-    expect(builtinNames.sort()).toEqual(['copy', 'help', 'session', 'version']);
+    expect(builtinNames.sort()).toEqual(['copy', 'help', 'mcp', 'session', 'version']);
   });
 
   it('re-emits available_commands_update on loadSession', async () => {
@@ -583,5 +583,80 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
       'help',
       'version',
     ]);
+  });
+
+  it('/mcp add emits an mcp-add action with the canonical URL params', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/mcp add HTTPS://Mcp.Example.COM/path' }],
+    });
+    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
+    const meta = chunk!._meta as {
+      bodhi?: {
+        builtin?: { command?: string; action?: { kind?: string; params?: { url?: string } } };
+      };
+    } | null;
+    expect(meta?.bodhi?.builtin?.command).toBe('mcp');
+    expect(meta?.bodhi?.builtin?.action?.kind).toBe('mcp-add');
+    expect(meta?.bodhi?.builtin?.action?.params?.url).toBe('https://mcp.example.com/path');
+  });
+
+  it('/mcp add of an already-requested URL emits no action and explains in transcript', async () => {
+    const url = 'https://mcp.deepwiki.com/mcp';
+    // Push the URL into the per-session requestedMcpUrls bundle via session/new _meta.
+    const { sessionId } = await adapter.newSession({
+      cwd: '/',
+      mcpServers: [],
+      _meta: { bodhi: { requestedMcpUrls: [url] } },
+    } as Parameters<typeof adapter.newSession>[0]);
+    updates.length = 0;
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: `/mcp add ${url}` }],
+    });
+    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
+    const meta = chunk!._meta as {
+      bodhi?: { builtin?: { command?: string; action?: unknown } };
+    } | null;
+    expect(meta?.bodhi?.builtin?.command).toBe('mcp');
+    expect(meta?.bodhi?.builtin?.action).toBeUndefined();
+    const text = (chunk!.update as { content?: { text?: string } }).content?.text ?? '';
+    expect(text).toMatch(/already in your requested list/i);
+  });
+
+  it('/mcp remove of a URL not in the list emits no action', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    updates.length = 0;
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/mcp remove https://other.example/mcp' }],
+    });
+    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
+    const meta = chunk!._meta as {
+      bodhi?: { builtin?: { command?: string; action?: unknown } };
+    } | null;
+    expect(meta?.bodhi?.builtin?.action).toBeUndefined();
+    const text = (chunk!.update as { content?: { text?: string } }).content?.text ?? '';
+    expect(text).toMatch(/not in your requested list/i);
+  });
+
+  it('persists action.params on /mcp add so reload reproduces the tag', async () => {
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/mcp add https://mcp.example/x' }],
+    });
+    const entries = await store.readEntries(sessionId);
+    const builtinEntries = entries.filter(e => e.kind === 'builtin');
+    expect(builtinEntries).toHaveLength(1);
+    const payload = builtinEntries[0].payload as {
+      command: string;
+      action?: { kind?: string; params?: { url?: string } };
+    };
+    expect(payload.command).toBe('mcp');
+    expect(payload.action?.kind).toBe('mcp-add');
+    expect(payload.action?.params?.url).toBe('https://mcp.example/x');
   });
 });

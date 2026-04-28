@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ChatPage } from './tests/pages/ChatPage';
 import { FULL_MODEL_ID, getTestState } from './tests/global-setup';
-import { installMcpEverythingUrl } from './helpers/install-mcp';
+import { installRequestedMcps } from './helpers/install-requested-mcps';
 
 test.describe('MCP tool roundtrip', () => {
   test.setTimeout(120_000);
@@ -18,7 +18,7 @@ test.describe('MCP tool roundtrip', () => {
     const token = `WEB_ACP_M3_ECHO_${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const expectedToolName = `${mcpEverythingSlug}__echo`;
 
-    await installMcpEverythingUrl(page, mcpEverythingUrl);
+    await installRequestedMcps(page, [mcpEverythingUrl]);
 
     const chat = new ChatPage(page);
     await page.goto('/');

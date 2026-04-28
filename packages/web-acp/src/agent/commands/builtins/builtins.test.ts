@@ -11,6 +11,8 @@ function ctx(overrides: Partial<BuiltinHandlerCtx> = {}): BuiltinHandlerCtx {
     serverUrl: null,
     sessionStats: { turnCount: 0, messageCount: 0 },
     mcpServersConnected: [],
+    mcpInstances: [],
+    requestedMcpUrls: [],
     advertisedCommands: [],
     inlineMessages: [],
     buildVersion: '0.0.0-test',
@@ -35,6 +37,9 @@ describe('findBuiltin', () => {
     ['/version', 'version', ''],
     ['/session', 'session', ''],
     ['/copy', 'copy', ''],
+    ['/mcp', 'mcp', ''],
+    ['/mcp add https://example.com/mcp', 'mcp', 'add https://example.com/mcp'],
+    ['/mcp remove https://example.com/mcp', 'mcp', 'remove https://example.com/mcp'],
   ])('matches %s → cmd=%s args=%s', (input, name, args) => {
     const match = findBuiltin(input);
     expect(match).not.toBeNull();
@@ -51,7 +56,7 @@ describe('findBuiltin', () => {
 });
 
 describe('isBuiltinName', () => {
-  it.each(['help', 'version', 'session', 'copy'])('recognises %s', name => {
+  it.each(['help', 'version', 'session', 'copy', 'mcp'])('recognises %s', name => {
     expect(isBuiltinName(name)).toBe(true);
   });
   it.each(['HELP', 'wiki:greet', 'random', ''])('rejects %s', name => {
@@ -62,7 +67,7 @@ describe('isBuiltinName', () => {
 describe('builtinAvailableCommands', () => {
   it('returns one AvailableCommand per registered built-in', () => {
     const list = builtinAvailableCommands();
-    expect(list.map(c => c.name).sort()).toEqual(['copy', 'help', 'session', 'version']);
+    expect(list.map(c => c.name).sort()).toEqual(['copy', 'help', 'mcp', 'session', 'version']);
     for (const c of list) {
       expect(typeof c.description).toBe('string');
       expect(c.description.length).toBeGreaterThan(0);
@@ -79,7 +84,7 @@ describe('/help handler', () => {
     const help = BUILTIN_COMMANDS.find(c => c.name === 'help')!;
     const result = await help.handler('', ctx({ advertisedCommands: advertised }));
     expect(result.action).toBeUndefined();
-    for (const name of ['help', 'version', 'session', 'copy', 'wiki:greet']) {
+    for (const name of ['help', 'version', 'session', 'copy', 'mcp', 'wiki:greet']) {
       expect(result.replyText).toContain(`/${name}`);
     }
     expect(result.replyText).toContain('Greet someone');
@@ -170,5 +175,113 @@ describe('/copy handler', () => {
     const copy = BUILTIN_COMMANDS.find(c => c.name === 'copy')!;
     const result = await copy.handler('', ctx({ inlineMessages: [userMsg('hi')] }));
     expect(result.action).toBeUndefined();
+  });
+});
+
+describe('/mcp handler', () => {
+  const mcp = () => BUILTIN_COMMANDS.find(c => c.name === 'mcp')!;
+
+  describe('list (no args)', () => {
+    it('renders the empty-state hint when no MCPs are connected or requested', async () => {
+      const result = await mcp().handler('', ctx());
+      expect(result.action).toBeUndefined();
+      expect(result.replyText).toMatch(/no MCP servers requested/i);
+      expect(result.replyText).toContain('/mcp add');
+    });
+
+    it('matches a Connected instance back to a requested URL via the slug heuristic', async () => {
+      const result = await mcp().handler(
+        '',
+        ctx({
+          mcpInstances: [{ slug: 'deepwiki', name: 'DeepWiki', path: '/bodhi/v1/apps/mcps/x/mcp' }],
+          requestedMcpUrls: ['https://mcp.deepwiki.com/mcp'],
+          serverUrl: 'https://bodhi.example',
+        })
+      );
+      expect(result.replyText).toContain('Connected (1)');
+      expect(result.replyText).toContain('https://mcp.deepwiki.com/mcp');
+      expect(result.replyText).not.toMatch(/pending or denied/i);
+    });
+
+    it('falls back to the Bodhi proxy URL when no requested URL maps to the instance', async () => {
+      const result = await mcp().handler(
+        '',
+        ctx({
+          mcpInstances: [{ slug: 'orphan', name: 'Orphan', path: '/bodhi/v1/apps/mcps/x/mcp' }],
+          requestedMcpUrls: [],
+          serverUrl: 'https://bodhi.example',
+        })
+      );
+      expect(result.replyText).toContain('https://bodhi.example/bodhi/v1/apps/mcps/x/mcp');
+    });
+
+    it('lists Pending entries for requested URLs that have no matching instance', async () => {
+      const result = await mcp().handler(
+        '',
+        ctx({
+          mcpInstances: [],
+          requestedMcpUrls: ['https://denied.example.com/mcp'],
+        })
+      );
+      expect(result.replyText).toContain('Pending or denied (1)');
+      expect(result.replyText).toContain('https://denied.example.com/mcp');
+    });
+  });
+
+  describe('add', () => {
+    it('emits an mcp-add action with the canonical URL on a fresh URL', async () => {
+      const result = await mcp().handler('add https://Mcp.Example.com/path', ctx());
+      expect(result.action).toEqual({
+        kind: 'mcp-add',
+        params: { url: 'https://mcp.example.com/path' },
+      });
+      expect(result.replyText).toContain('Re-authenticating');
+    });
+
+    it('rejects a malformed URL with no action', async () => {
+      const result = await mcp().handler('add not-a-url', ctx());
+      expect(result.action).toBeUndefined();
+      expect(result.replyText).toMatch(/not a valid URL/i);
+    });
+
+    it('reports idempotency without an action when the URL is already requested', async () => {
+      const url = 'https://mcp.deepwiki.com/mcp';
+      const result = await mcp().handler(`add ${url}`, ctx({ requestedMcpUrls: [url] }));
+      expect(result.action).toBeUndefined();
+      expect(result.replyText).toMatch(/already in your requested list/i);
+    });
+
+    it('shows usage when called with no URL', async () => {
+      const result = await mcp().handler('add', ctx());
+      expect(result.action).toBeUndefined();
+      expect(result.replyText).toMatch(/usage/i);
+    });
+  });
+
+  describe('remove', () => {
+    it('emits an mcp-remove action with the canonical URL when the URL is in the list', async () => {
+      const url = 'https://mcp.deepwiki.com/mcp';
+      const result = await mcp().handler(`remove ${url}`, ctx({ requestedMcpUrls: [url] }));
+      expect(result.action).toEqual({ kind: 'mcp-remove', params: { url } });
+      expect(result.replyText).toContain('Removing');
+    });
+
+    it('reports no-op without an action when the URL is missing', async () => {
+      const result = await mcp().handler('remove https://other.example/mcp', ctx());
+      expect(result.action).toBeUndefined();
+      expect(result.replyText).toMatch(/not in your requested list/i);
+    });
+
+    it('rejects a malformed URL with no action', async () => {
+      const result = await mcp().handler('remove not-a-url', ctx());
+      expect(result.action).toBeUndefined();
+      expect(result.replyText).toMatch(/not a valid URL/i);
+    });
+  });
+
+  it('rejects an unknown subcommand', async () => {
+    const result = await mcp().handler('toggle some-slug', ctx());
+    expect(result.action).toBeUndefined();
+    expect(result.replyText).toMatch(/unknown subcommand/i);
   });
 });

@@ -4,42 +4,7 @@ import { toast } from 'sonner';
 import StatusIndicator from './StatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-
-/**
- * Resolve the upstream MCP URL that the login flow requests access to
- * before approval. Production / dev builds read from
- * `VITE_MCP_EVERYTHING_URL`. E2E tests inject
- * `window.__mcpEverythingUrl` via Playwright's `addInitScript` so the
- * harness can point login at the everything-server fixture it spun up
- * in `global-setup.ts`. When nothing is configured we skip
- * `addMcpServer` entirely; the app still works against whatever MCP
- * instances already exist on the Bodhi server.
- */
-function resolveEverythingMcpUrl(): string | undefined {
-  if (typeof window !== 'undefined') {
-    const override = (window as unknown as { __mcpEverythingUrl?: unknown }).__mcpEverythingUrl;
-    if (typeof override === 'string' && override.length > 0) return override;
-  }
-  const fromEnv = import.meta.env.VITE_MCP_EVERYTHING_URL as string | undefined;
-  if (typeof fromEnv === 'string' && fromEnv.length > 0) return fromEnv;
-  return undefined;
-}
-
-/**
- * Public Exa DeepWiki MCP. Hardcoded because it's a stable public
- * endpoint with no per-environment variation; an env override is
- * still honoured so deployments can pin to a self-hosted mirror or
- * disable it entirely by setting an empty string.
- */
-const DEEPWIKI_MCP_URL_DEFAULT = 'https://mcp.deepwiki.com/mcp';
-
-function resolveDeepwikiMcpUrl(): string | undefined {
-  const fromEnv = import.meta.env.VITE_MCP_DEEPWIKI_URL as string | undefined;
-  if (typeof fromEnv === 'string') {
-    return fromEnv.length > 0 ? fromEnv : undefined;
-  }
-  return DEEPWIKI_MCP_URL_DEFAULT;
-}
+import { loadRequestedMcps } from '@/mcp/requested-mcps-store';
 
 export default function Header() {
   const {
@@ -56,15 +21,18 @@ export default function Header() {
     showSetup,
   } = useBodhi();
 
+  /**
+   * Build the login options from the persisted requested-MCPs IDB
+   * list. A brand-new user has an empty list → first login requests
+   * zero MCP scopes; further `addMcpServer` calls happen via the
+   * `/mcp add` built-in (M4 phase B), which mutates the IDB list and
+   * re-triggers `auth.login` with the updated set.
+   */
   const handleLogin = async () => {
     const builder = new LoginOptionsBuilder().setFlowType('redirect').setRole('scope_user_user');
-    const mcpUrl = resolveEverythingMcpUrl();
-    if (mcpUrl) {
-      builder.addMcpServer(mcpUrl);
-    }
-    const deepwikiUrl = resolveDeepwikiMcpUrl();
-    if (deepwikiUrl) {
-      builder.addMcpServer(deepwikiUrl);
+    const requestedUrls = await loadRequestedMcps();
+    for (const url of requestedUrls) {
+      builder.addMcpServer(url);
     }
     const loginOptions = builder.build();
     const authState = await login(loginOptions);

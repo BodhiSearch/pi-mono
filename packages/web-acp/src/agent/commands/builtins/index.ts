@@ -1,11 +1,18 @@
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
 import { copyCommand } from './copy';
 import { helpCommand } from './help';
+import { mcpCommand } from './mcp';
 import { sessionCommand } from './session';
 import type { BuiltinCommand } from './types';
 import { versionCommand } from './version';
 
-export type { BuiltinCommand, BuiltinHandlerCtx, BuiltinResult, BuiltinAction } from './types';
+export type {
+  BuiltinAction,
+  BuiltinCommand,
+  BuiltinHandlerCtx,
+  BuiltinMcpInstance,
+  BuiltinResult,
+} from './types';
 
 /**
  * Worker-side registry of agent-handled built-in slash commands.
@@ -18,6 +25,7 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
   versionCommand,
   sessionCommand,
   copyCommand,
+  mcpCommand,
 ];
 
 const BUILTIN_NAMES = new Set(BUILTIN_COMMANDS.map(c => c.name));

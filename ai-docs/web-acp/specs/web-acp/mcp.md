@@ -242,18 +242,78 @@ shape. Tests that don't care about MCP still call
 
 ## Login flow (`src/components/Header.tsx`)
 
-The login button still uses `LoginOptionsBuilder.addMcpServer(...)`
-but the URL is resolved dynamically:
+The login button reads from a persisted main-thread IDB list and
+issues one `LoginOptionsBuilder.addMcpServer(...)` call per entry:
 
-1. `window.__mcpEverythingUrl` — Playwright's `addInitScript`
-   writes this on the page before login, pointing at the
-   `everything-mcp-manager` fixture configured in the e2e
-   `global-setup`.
-2. `import.meta.env.VITE_MCP_EVERYTHING_URL` — dev-time override
-   documented in the repo's `.env.example`.
+```ts
+const requestedUrls = await loadRequestedMcps();
+const builder = new LoginOptionsBuilder().setFlowType('redirect').setRole('scope_user_user');
+for (const url of requestedUrls) builder.addMcpServer(url);
+await login(builder.build());
+```
 
-If neither is present, the login builder omits `addMcpServer(...)`
-entirely; the old hard-coded `https://mcp.exa.ai/mcp` URL is gone.
+The list is mutated by the `/mcp add` and `/mcp remove` built-ins
+(see [`./commands.md` § /mcp](./commands.md#mcp--manage-requested-mcp-servers))
+which write to IDB and re-issue `auth.login` with the updated set.
+A brand-new user has an empty list → first login requests zero
+MCP scopes; the user expands by typing `/mcp add <url>`.
+
+The previous `window.__mcpEverythingUrl` / `VITE_MCP_EVERYTHING_URL`
+seam is gone. E2E tests now seed the IDB list directly via
+`installRequestedMcps(page, [url, …])` (Playwright `addInitScript`
+on `window.__mcpRequestedSeed`); a DEV-only boot hook in `useAcp`
+writes the seed to IDB before any login click reads it.
+
+### Requested-MCPs IDB store
+
+Source of truth on the main thread:
+`packages/web-acp/src/mcp/requested-mcps-store.ts`. Single
+`idb-keyval` key, value is `string[]` of canonical URLs.
+
+| Concern | Detail |
+| --- | --- |
+| IDB key | `'web-acp:mcp-requested'` |
+| Value | `string[]` — canonicalised URLs, deduped, order preserved |
+| Mutators | `addRequestedMcp(url)` / `removeRequestedMcp(url)` — idempotent, return `{ list, added \| removed, canonical }` |
+| Failure mode | Read errors → empty list; write errors → swallowed with `console.warn` (mirrors `vault/fsa-handle-store.ts`) |
+
+**URL canonicalisation** (`mcp/url-canonical.ts` `canonicalizeMcpUrl`):
+trim, parse via `new URL()`, return `.toString()` — lowercases the
+host, drops default ports (`:443` for https, `:80` for http),
+preserves query + fragment. Returns `null` on parse failure.
+Applied at IDB-write time (so duplicates collapse) and at
+match-against-approved-list time (consistency invariant).
+
+**Slug-derivation heuristic** (`deriveSlugFromUrl`): hostname's
+first non-generic label (skip `mcp.` / `api.` / `www.`), fall back
+to the last meaningful path segment. Used by `/mcp` (list) to
+match approved instances back to original URLs. Best-effort —
+unmatched approved instances render with the Bodhi proxy URL.
+
+### `_meta.bodhi` session bundle on `session/new` + `session/load`
+
+Wire shape — `packages/web-acp/src/acp/index.ts`:
+
+```ts
+export interface BodhiSessionMeta {
+  requestedMcpUrls?: string[];             // canonicalised, from IDB
+  mcpInstances?: BodhiMcpInstanceDescriptor[]; // {slug, name, path}
+}
+```
+
+The main-thread `useAcp.ts` `composeSessionMeta` helper bundles
+the IDB list with the projected `mcpInstancesRef` and passes it on
+every `session/new` and `session/load` (including the
+token-rotation reissue and the per-session toggle reissue). The
+worker stashes both arrays per-session and reads them in
+`#tryHandleBuiltin` to populate `BuiltinHandlerCtx.requestedMcpUrls`
+and `BuiltinHandlerCtx.mcpInstances`. Returning `undefined` when
+both inputs are empty keeps the wire frame compact for vanilla
+sessions.
+
+`extractSessionMeta` in `agent-adapter.ts` defensively coerces
+each field so older clients (and test harnesses) that omit the
+meta keep working — the worker treats absent inputs as empty.
 
 ## Session-update `_meta` contract
 

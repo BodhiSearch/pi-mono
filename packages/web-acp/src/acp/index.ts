@@ -166,24 +166,44 @@ export interface BodhiSessionsDeleteResponse extends Record<string, unknown> {
 }
 
 /**
- * Wire shape carried on `_meta.bodhi.builtin` for `session/update`
- * notifications produced by an agent-handled slash command (M4 phase
- * B). Rides on `agent_message_chunk` notifications the same way
- * `_meta.bodhi.mcp` rides — the client's hook reads it before the
- * normal chunk-accumulation path so built-in messages render distinctly
- * and any `action` is dispatched (e.g. `/copy` → clipboard write).
+ * Generic descriptor for a client-side action a built-in delegates to,
+ * carried on `_meta.bodhi.builtin.action` of `session/update`
+ * notifications (M4 phase B). The conditional `params` field is
+ * present iff `P` is non-void — `/copy` carries no params, `/mcp add`
+ * carries `{ url }`, future kinds plug in by adding a new alias and
+ * extending {@link AnyBodhiBuiltinAction}.
  *
- * `action.kind` is open-ended for future built-ins (`'share'`,
- * `'export-html'`, …); the actual payload is built on the client at
- * dispatch time so persisted records stay minimal.
+ * Use the per-kind aliases (`BodhiBuiltinCopyAction`,
+ * `BodhiBuiltinMcpAddAction`, …) when constructing values so the
+ * compiler enforces the correct payload; use
+ * {@link AnyBodhiBuiltinAction} on dispatch sites that switch on
+ * `kind` for narrowing.
  */
-export interface BodhiBuiltinAction {
-  kind: string;
+export type BodhiBuiltinAction<K extends string = string, P = void> = [P] extends [void]
+  ? { kind: K }
+  : { kind: K; params: P };
+
+export interface BodhiMcpUrlParams {
+  url: string;
 }
+
+export type BodhiBuiltinCopyAction = BodhiBuiltinAction<'copy'>;
+export type BodhiBuiltinMcpAddAction = BodhiBuiltinAction<'mcp-add', BodhiMcpUrlParams>;
+export type BodhiBuiltinMcpRemoveAction = BodhiBuiltinAction<'mcp-remove', BodhiMcpUrlParams>;
+
+/**
+ * Discriminated union of every concrete built-in action kind. Switch
+ * on `action.kind` to narrow to the per-kind shape. New built-in
+ * actions land here as a new member.
+ */
+export type AnyBodhiBuiltinAction =
+  | BodhiBuiltinCopyAction
+  | BodhiBuiltinMcpAddAction
+  | BodhiBuiltinMcpRemoveAction;
 
 export interface BodhiBuiltinMeta {
   command: string;
-  action?: BodhiBuiltinAction;
+  action?: AnyBodhiBuiltinAction;
 }
 
 /**
@@ -195,5 +215,30 @@ export interface BodhiBuiltinMeta {
  */
 export interface BodhiBuiltinTag {
   command: string;
-  action?: BodhiBuiltinAction;
+  action?: AnyBodhiBuiltinAction;
+}
+
+/**
+ * Lightweight Bodhi MCP instance descriptor passed alongside
+ * `requestedMcpUrls` so worker-side `/mcp` can render Connected
+ * entries with the human-readable `name` (matching against
+ * `slug` alone misses Bodhi-side renames).
+ */
+export interface BodhiMcpInstanceDescriptor {
+  slug: string;
+  name: string;
+  /** Bodhi-internal proxy path, e.g. `/bodhi/v1/apps/mcps/{id}/mcp`. */
+  path: string;
+}
+
+/**
+ * Per-session bundle stamped onto `_meta.bodhi` of `session/new` and
+ * `session/load` requests. `requestedMcpUrls` is the user's main-thread
+ * IDB-persisted "MCP servers I want Bodhi to approve" list; the
+ * worker reads it for `/mcp` listing + `/mcp add` / `/mcp remove`
+ * idempotency feedback. Source of truth lives on the main thread.
+ */
+export interface BodhiSessionMeta {
+  requestedMcpUrls?: string[];
+  mcpInstances?: BodhiMcpInstanceDescriptor[];
 }

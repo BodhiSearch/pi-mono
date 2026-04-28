@@ -70,6 +70,7 @@ import {
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
+  type AnyBodhiBuiltinAction,
   type BodhiAuthenticateMeta,
   type BodhiFeaturesListResponse,
   type BodhiFeaturesSetRequest,
@@ -78,9 +79,11 @@ import {
   type BodhiGetSessionResponse,
   type BodhiListModelsResponse,
   type BodhiListSessionsResponse,
+  type BodhiMcpInstanceDescriptor,
   type BodhiMcpToggleSnapshot,
   type BodhiMcpTogglesSetRequest,
   type BodhiMcpTogglesSetResponse,
+  type BodhiSessionMeta,
   type BodhiSessionsDeleteRequest,
   type BodhiSessionsDeleteResponse,
   type BodhiVolumesListResponse,
@@ -90,6 +93,21 @@ interface SessionState {
   id: string;
   /** MCP server configs this session acquired on `session/new` or `session/load`. */
   mcpServers: McpServerHttp[];
+  /**
+   * URLs the user has asked Bodhi to approve. Read off `_meta.bodhi`
+   * on `session/new` / `session/load` so the `/mcp` built-in can
+   * render Pending entries + give correct idempotency feedback. Empty
+   * when the main thread didn't push any (e.g. fresh login with no
+   * IDB list yet).
+   */
+  requestedMcpUrls: string[];
+  /**
+   * Bodhi-side metadata for the approved instances pushed in alongside
+   * `requestedMcpUrls`. Carries `name` so the slug-derivation
+   * heuristic in `/mcp` can fall back to the human label when slug
+   * matching fails. Empty when the main thread didn't push any.
+   */
+  mcpInstances: BodhiMcpInstanceDescriptor[];
 }
 
 interface BodhiPromptMeta {
@@ -226,7 +244,13 @@ export class AcpAgentAdapter implements Agent {
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = `bodhi-${crypto.randomUUID()}`;
     const mcpServers = filterHttpServers(params.mcpServers ?? []);
-    this.#sessions.set(sessionId, { id: sessionId, mcpServers });
+    const sessionMeta = extractSessionMeta(params._meta);
+    this.#sessions.set(sessionId, {
+      id: sessionId,
+      mcpServers,
+      requestedMcpUrls: sessionMeta.requestedMcpUrls ?? [],
+      mcpInstances: sessionMeta.mcpInstances ?? [],
+    });
     if (this.#store) {
       await this.#store.createSession(sessionId);
     }
@@ -259,6 +283,7 @@ export class AcpAgentAdapter implements Agent {
       throw new Error(`session/load: unknown session '${params.sessionId}'`);
     }
     const mcpServers = filterHttpServers(params.mcpServers ?? []);
+    const sessionMeta = extractSessionMeta(params._meta);
     const existing = this.#sessions.get(params.sessionId);
     if (existing) {
       // Releasing via a full `releaseAll` would also drop servers the
@@ -269,7 +294,12 @@ export class AcpAgentAdapter implements Agent {
         existing.mcpServers.map(cfg => this.#mcpPool.release(params.sessionId, cfg))
       );
     }
-    this.#sessions.set(params.sessionId, { id: params.sessionId, mcpServers });
+    this.#sessions.set(params.sessionId, {
+      id: params.sessionId,
+      mcpServers,
+      requestedMcpUrls: sessionMeta.requestedMcpUrls ?? [],
+      mcpInstances: sessionMeta.mcpInstances ?? [],
+    });
 
     const entries = await this.#store.readEntries(params.sessionId);
     let lastTurnMessages: AgentMessage[] | undefined;
@@ -858,12 +888,15 @@ export class AcpAgentAdapter implements Agent {
     const match = findBuiltin(rawText);
     if (!match) return null;
     const sessionId = params.sessionId;
+    const session = this.#sessions.get(sessionId);
     const ctx: BuiltinHandlerCtx = {
       sessionId,
       modelId: this.#resolveBuiltinModelId(params),
       serverUrl: this.#bodhi.getBaseUrl?.() ?? null,
       sessionStats: await this.#sessionStatsFor(sessionId),
       mcpServersConnected: this.#mcpConnectedFor(sessionId),
+      mcpInstances: session?.mcpInstances ?? [],
+      requestedMcpUrls: session?.requestedMcpUrls ?? [],
       advertisedCommands: [
         ...builtinAvailableCommands(),
         ...this.#availableCommands.map(toAvailableCommand),
@@ -1022,6 +1055,38 @@ function bindAbortSignal<TParams extends TSchema, TDetails>(
 }
 
 /**
+ * Pull `requestedMcpUrls` + `mcpInstances` off a `_meta.bodhi`
+ * envelope, defensively coercing each field. Undefined / malformed
+ * inputs return empty arrays so the worker can keep running even when
+ * the main thread skipped the meta (e.g. older clients or test
+ * harnesses).
+ */
+function extractSessionMeta(meta: unknown): BodhiSessionMeta {
+  if (!meta || typeof meta !== 'object') return {};
+  const bodhi = (meta as { bodhi?: unknown }).bodhi;
+  if (!bodhi || typeof bodhi !== 'object') return {};
+  const rec = bodhi as Record<string, unknown>;
+  const out: BodhiSessionMeta = {};
+  const requested = rec.requestedMcpUrls;
+  if (Array.isArray(requested)) {
+    out.requestedMcpUrls = requested.filter((u): u is string => typeof u === 'string');
+  }
+  const instances = rec.mcpInstances;
+  if (Array.isArray(instances)) {
+    const filtered: BodhiMcpInstanceDescriptor[] = [];
+    for (const entry of instances) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.slug === 'string' && typeof e.name === 'string' && typeof e.path === 'string') {
+        filtered.push({ slug: e.slug, name: e.name, path: e.path });
+      }
+    }
+    out.mcpInstances = filtered;
+  }
+  return out;
+}
+
+/**
  * Retain only `type: 'http'` servers from the raw ACP `McpServer`
  * union. web-acp advertises `mcpCapabilities.http = true` only, but
  * clients can still send stdio/sse entries — we drop them
@@ -1129,7 +1194,7 @@ function extractMessageId(msg: CoreMessage): string | undefined {
 
 interface BuiltinTagShape {
   command: string;
-  action?: { kind: string };
+  action?: AnyBodhiBuiltinAction;
 }
 
 /**

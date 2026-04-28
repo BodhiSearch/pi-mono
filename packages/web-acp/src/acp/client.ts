@@ -27,6 +27,7 @@ import {
   type BodhiListSessionsResponse,
   type BodhiMcpTogglesSetResponse,
   type BodhiModelDescriptor,
+  type BodhiSessionMeta,
   type BodhiSessionsDeleteResponse,
   type BodhiSessionSummary,
   type BodhiVolumeDescriptor,
@@ -87,18 +88,27 @@ export class AcpClient {
     return payload.sessions ?? [];
   }
 
-  async newSession(mcpServers: McpServerHttp[] = []): Promise<NewSessionResponse> {
-    return this.#conn.newSession({ cwd: '/', mcpServers: toMcpServers(mcpServers) });
+  async newSession(
+    mcpServers: McpServerHttp[] = [],
+    sessionMeta?: BodhiSessionMeta
+  ): Promise<NewSessionResponse> {
+    return this.#conn.newSession({
+      cwd: '/',
+      mcpServers: toMcpServers(mcpServers),
+      ...(sessionMeta ? { _meta: { bodhi: sessionMeta } } : {}),
+    });
   }
 
   async loadSession(
     sessionId: string,
-    mcpServers: McpServerHttp[] = []
+    mcpServers: McpServerHttp[] = [],
+    sessionMeta?: BodhiSessionMeta
   ): Promise<LoadSessionResponse> {
     return this.#conn.loadSession({
       sessionId,
       cwd: '/',
       mcpServers: toMcpServers(mcpServers),
+      ...(sessionMeta ? { _meta: { bodhi: sessionMeta } } : {}),
     });
   }
 

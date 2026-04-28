@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ChatPage } from './tests/pages/ChatPage';
 import { getTestState } from './tests/global-setup';
-import { installMcpEverythingUrl } from './helpers/install-mcp';
+import { installRequestedMcps } from './helpers/install-requested-mcps';
 
 test.describe('MCP connect smoke', () => {
   test.setTimeout(90_000);
@@ -12,10 +12,10 @@ test.describe('MCP connect smoke', () => {
     const { username, password, bodhiServerUrl, mcpEverythingSlug, mcpEverythingUrl } =
       getTestState();
 
-    // Feed Header.tsx → resolveEverythingMcpUrl() through
-    // window.__mcpEverythingUrl so the login flow requests access to
-    // the same everything instance the global-setup seeded.
-    await installMcpEverythingUrl(page, mcpEverythingUrl);
+    // Seed the requested-MCPs IDB list so Header.tsx →
+    // loadRequestedMcps() picks the URL up before the user clicks
+    // Login. This mirrors what `/mcp add <url>` does at runtime.
+    await installRequestedMcps(page, [mcpEverythingUrl]);
 
     const chat = new ChatPage(page);
     await page.goto('/');

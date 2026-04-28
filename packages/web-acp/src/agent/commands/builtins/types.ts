@@ -1,19 +1,29 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
+import type { AnyBodhiBuiltinAction } from '@/acp';
 
 /**
- * Open-ended discriminator for client-side actions a built-in can
- * delegate to (e.g. `/copy` → clipboard write). The client builds the
- * actual payload from its own state at dispatch time, so the wire and
- * persisted record stay minimal: just a `kind` tag.
+ * Re-export of the wire-level action union (see `acp/index.ts`).
+ * Handlers return `BuiltinResult.action` of this shape; the worker
+ * stamps it onto `_meta.bodhi.builtin.action`; the client's
+ * dispatcher narrows by `kind`.
  *
- * Future kinds (`'share'`, `'export-html'`, `'feedback'`, …) slot in
- * by adding a string literal here without changing the envelope.
+ * New built-ins that need a client-side action either reuse a kind
+ * here or extend the union in `acp/index.ts`.
  */
-export type BuiltinActionKind = 'copy';
+export type BuiltinAction = AnyBodhiBuiltinAction;
 
-export interface BuiltinAction {
-  kind: BuiltinActionKind;
+/**
+ * Lightweight projection of a connected MCP server, fed to built-in
+ * handlers so `/session` and `/mcp` can render the live catalog
+ * without re-walking the worker's MCP pool.
+ */
+export interface BuiltinMcpInstance {
+  slug: string;
+  /** Human-readable name from `bodhiClient.mcps.list()`. */
+  name: string;
+  /** Bodhi-internal proxy path, e.g. `/bodhi/v1/apps/mcps/{id}/mcp`. */
+  path: string;
 }
 
 /**
@@ -27,6 +37,19 @@ export interface BuiltinHandlerCtx {
   serverUrl: string | null;
   sessionStats: { turnCount: number; messageCount: number };
   mcpServersConnected: string[];
+  /**
+   * Full descriptors of MCP instances currently registered with the
+   * session (i.e. approved by Bodhi). Used by `/mcp` to render
+   * Connected entries with the slug and Bodhi-proxy URL.
+   */
+  mcpInstances: BuiltinMcpInstance[];
+  /**
+   * URLs the user has asked Bodhi to grant access for, sourced from the
+   * main-thread IDB store and pushed in via `_meta.bodhi.requestedMcpUrls`
+   * on `session/new` / `session/load`. Canonical-form (single
+   * canonicalisation pass on the main thread before the wire).
+   */
+  requestedMcpUrls: string[];
   /** Built-ins + vault commands, the same list advertised to the client. */
   advertisedCommands: AvailableCommand[];
   /** LLM-visible message history. Built-ins are absent by construction. */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useBodhi } from '@bodhiapp/bodhi-js-react';
+import { LoginOptionsBuilder, useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
@@ -13,9 +13,12 @@ import type {
 import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
 import type {
+  AnyBodhiBuiltinAction,
   BodhiBuiltinTag,
   BodhiFeatureBag,
+  BodhiMcpInstanceDescriptor,
   BodhiModelDescriptor,
+  BodhiSessionMeta,
   BodhiSessionSummary,
 } from '@/acp/index';
 import { isBuiltinName } from '@/agent/commands/builtins';
@@ -26,6 +29,12 @@ import {
   withBuiltinTag,
 } from '@/lib/builtin-format';
 import { composeMcpServers, type McpToggleSnapshot } from '@/mcp/compose-mcp-servers';
+import {
+  addRequestedMcp,
+  loadRequestedMcps,
+  removeRequestedMcp,
+  saveRequestedMcps,
+} from '@/mcp/requested-mcps-store';
 import type { McpConnectionMeta, McpInstanceView } from '@/mcp/types';
 import { useMcpInstances } from '@/mcp/useMcpInstances';
 import { createMessagePortStream } from '@/transport/worker-stream';
@@ -231,23 +240,45 @@ function detectBuiltinTag(text: string): BodhiBuiltinTag | undefined {
   return { command: name };
 }
 
-async function dispatchBuiltinAction(kind: string, messages: AgentMessage[]): Promise<void> {
-  if (kind === 'copy') {
-    const markdown = renderConversationMarkdown(messages);
-    if (!markdown) {
-      toast.error('Nothing to copy yet');
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(markdown);
-      toast.success('Copied conversation to clipboard');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Clipboard write failed';
-      toast.error(`Copy failed: ${message}`);
-    }
+/**
+ * Build the per-session `BodhiSessionMeta` payload from the current
+ * IDB list and approved-instance catalog. Pure — kept at module
+ * scope so the React Compiler doesn't flag it as un-memoizable
+ * useCallback noise. Returns `undefined` when both inputs are empty
+ * so the wire frame stays compact for vanilla sessions.
+ */
+function composeSessionMeta(
+  requestedMcpUrls: string[],
+  instances: McpInstanceView[]
+): BodhiSessionMeta | undefined {
+  const mcpInstances: BodhiMcpInstanceDescriptor[] = instances.map(i => ({
+    slug: i.slug,
+    name: i.name,
+    path: i.path,
+  }));
+  if (requestedMcpUrls.length === 0 && mcpInstances.length === 0) return undefined;
+  return { requestedMcpUrls: [...requestedMcpUrls], mcpInstances };
+}
+
+/**
+ * Render a conversation transcript to clipboard markdown. Pulled out
+ * of the dispatcher so it stays a pure function — the dispatcher
+ * itself is built inside the hook so it can close over `auth.login`
+ * for the `/mcp add` / `/mcp remove` paths.
+ */
+async function dispatchCopyAction(messages: AgentMessage[]): Promise<void> {
+  const markdown = renderConversationMarkdown(messages);
+  if (!markdown) {
+    toast.error('Nothing to copy yet');
     return;
   }
-  toast.error(`Unknown built-in action: ${kind}`);
+  try {
+    await navigator.clipboard.writeText(markdown);
+    toast.success('Copied conversation to clipboard');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Clipboard write failed';
+    toast.error(`Copy failed: ${message}`);
+  }
 }
 
 function toolCallContentText(
@@ -307,7 +338,7 @@ function extractMcpMeta(meta: unknown): McpConnectionMeta | undefined {
 }
 
 export function useAcp() {
-  const { client: bodhiClient, auth, isAuthenticated, isReady } = useBodhi();
+  const { client: bodhiClient, auth, isAuthenticated, isReady, login, logout } = useBodhi();
   const mcpInstances = useMcpInstances();
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -334,6 +365,33 @@ export function useAcp() {
   useEffect(() => {
     mcpInstancesRef.current = mcpInstances.instances;
   }, [mcpInstances.instances]);
+
+  /**
+   * Mirror of the persisted `web-acp:mcp-requested` IDB list. Hydrated
+   * once on hook mount (DEV-seed boot path applied first when
+   * `window.__mcpRequestedSeed` is present), kept in sync by
+   * `applyRequestedMcpsUpdate` after `/mcp add` / `/mcp remove`. The
+   * ref is read by `composeSessionMeta` at every `session/new`
+   * / `session/load` so the worker always sees the freshest list.
+   */
+  const requestedMcpUrlsRef = useRef<string[]>([]);
+  const requestedMcpsHydratedRef = useRef(false);
+  useEffect(() => {
+    if (requestedMcpsHydratedRef.current) return;
+    requestedMcpsHydratedRef.current = true;
+    void (async () => {
+      // DEV-only test seed: write the injected list to IDB before any
+      // login click reads it. Production builds dead-code the branch.
+      if (import.meta.env.DEV && typeof window !== 'undefined') {
+        const seed = (window as unknown as { __mcpRequestedSeed?: unknown }).__mcpRequestedSeed;
+        if (Array.isArray(seed)) {
+          const cleaned = seed.filter((u): u is string => typeof u === 'string');
+          await saveRequestedMcps(cleaned);
+        }
+      }
+      requestedMcpUrlsRef.current = await loadRequestedMcps();
+    })();
+  }, []);
 
   const streamingRef = useRef<AgentMessage | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | undefined>(undefined);
@@ -514,7 +572,11 @@ export function useAcp() {
               serverUrl,
               mcpTogglesRef.current
             );
-            await runtime.client.loadSession(_session, servers);
+            const sessionMeta = composeSessionMeta(
+              requestedMcpUrlsRef.current,
+              mcpInstancesRef.current
+            );
+            await runtime.client.loadSession(_session, servers, sessionMeta);
           } catch (rotErr) {
             console.error('[useAcp] token-rotation session/load failed:', rotErr);
           }
@@ -649,6 +711,90 @@ export function useAcp() {
   );
 
   /**
+   * Re-issue Bodhi login with a fresh requested-MCPs list. The Bodhi
+   * SDK's `login()` short-circuits on an already-authenticated user
+   * (`if (existingAuth.status === 'authenticated') return existingAuth;`),
+   * so a vanilla `login(opts)` from inside `/mcp add` would no-op
+   * silently. We call `logout()` first to clear the local token —
+   * this does **not** sign the user out of the IDP (no
+   * `end_session_endpoint` call), so the immediate `login(opts)` that
+   * follows rides the live SSO session: Keycloak short-circuits the
+   * authorize flow without a password prompt, Bodhi serves the
+   * access-request approval screen for the new MCP scopes, the user
+   * approves, the page redirects back, and the SDK's
+   * `handleAccessRequestCallback` completes the OAuth PKCE.
+   *
+   * The `urls` argument is also written to `requestedMcpUrlsRef` so
+   * any code that runs between here and the redirect (toast handlers,
+   * etc.) sees the updated list.
+   */
+  const triggerLoginWithRequested = useCallback(
+    async (urls: string[]): Promise<void> => {
+      requestedMcpUrlsRef.current = urls;
+      const builder = new LoginOptionsBuilder().setFlowType('redirect').setRole('scope_user_user');
+      for (const url of urls) builder.addMcpServer(url);
+      try {
+        await logout();
+        const authState = await login(builder.build());
+        if (authState?.status === 'error' && authState.error) {
+          toast.error(authState.error.message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Login failed';
+        toast.error(message);
+      }
+    },
+    [login, logout]
+  );
+
+  /**
+   * Client-side dispatcher for the optional `action` attached to a
+   * built-in's reply. Switches on the discriminated union from
+   * `acp/index.ts` so the compiler enforces per-kind payload shapes.
+   *
+   * `mcp-add` / `mcp-remove`: delegate to the IDB store, then
+   * re-trigger `auth.login` with the updated list. The list-mutation
+   * helpers are idempotent — a duplicate add or a missing remove
+   * surface as a toast and skip the redirect.
+   */
+  const dispatchBuiltinAction = useCallback(
+    async (action: AnyBodhiBuiltinAction, messages: AgentMessage[]): Promise<void> => {
+      switch (action.kind) {
+        case 'copy':
+          await dispatchCopyAction(messages);
+          return;
+        case 'mcp-add': {
+          const { list, added, canonical } = await addRequestedMcp(action.params.url);
+          if (canonical === null) {
+            toast.error(`Invalid URL: ${action.params.url}`);
+            return;
+          }
+          if (!added) {
+            toast.info(`\`${canonical}\` is already requested.`);
+            return;
+          }
+          await triggerLoginWithRequested(list);
+          return;
+        }
+        case 'mcp-remove': {
+          const { list, removed, canonical } = await removeRequestedMcp(action.params.url);
+          if (canonical === null) {
+            toast.error(`Invalid URL: ${action.params.url}`);
+            return;
+          }
+          if (!removed) {
+            toast.info(`\`${canonical}\` was not in your requested list.`);
+            return;
+          }
+          await triggerLoginWithRequested(list);
+          return;
+        }
+      }
+    },
+    [triggerLoginWithRequested]
+  );
+
+  /**
    * Flip a per-session MCP toggle. `toolName` omitted toggles the
    * server; otherwise toggles the individual tool. The worker responds
    * with the full snapshot so we rehydrate local state in one shot.
@@ -670,7 +816,11 @@ export function useAcp() {
         setMcpToggles(nextToggles);
         if (!toolName) {
           const servers = composeCurrentMcpServers(nextToggles);
-          await runtime.client.loadSession(_session, servers);
+          const sessionMeta = composeSessionMeta(
+            requestedMcpUrlsRef.current,
+            mcpInstancesRef.current
+          );
+          await runtime.client.loadSession(_session, servers, sessionMeta);
         }
       } catch (err) {
         console.error('_bodhi/mcp/toggles/set failed:', err);
@@ -688,7 +838,8 @@ export function useAcp() {
       await runtime.initialize;
       // Fresh session: no stored toggles yet so everything defaults to on.
       const servers = composeCurrentMcpServers();
-      const response = await runtime.client.newSession(servers);
+      const sessionMeta = composeSessionMeta(requestedMcpUrlsRef.current, mcpInstancesRef.current);
+      const response = await runtime.client.newSession(servers, sessionMeta);
       _session = response.sessionId;
       return _session;
     })();
@@ -767,7 +918,11 @@ export function useAcp() {
         const snapshot = await runtime.client.getSession(sessionId);
         const toggles = snapshot.mcpToggles ?? { servers: {}, tools: {} };
         const servers = composeCurrentMcpServers(toggles);
-        await runtime.client.loadSession(sessionId, servers);
+        const sessionMeta = composeSessionMeta(
+          requestedMcpUrlsRef.current,
+          mcpInstancesRef.current
+        );
+        await runtime.client.loadSession(sessionId, servers, sessionMeta);
         _session = sessionId;
         setCurrentSessionId(sessionId);
         setMessages((snapshot.messages ?? []) as AgentMessage[]);
@@ -839,7 +994,7 @@ export function useAcp() {
           // /copy the LLM-only conversation.
           const replyTag = getBuiltinTag(finalMsg);
           if (replyTag?.action) {
-            void dispatchBuiltinAction(replyTag.action.kind, messagesRef.current);
+            void dispatchBuiltinAction(replyTag.action, messagesRef.current);
           }
         }
         void refreshSessions();
@@ -854,7 +1009,7 @@ export function useAcp() {
         turnIndexRef.current += 1;
       }
     },
-    [selectedModel, ensureSession, refreshSessions]
+    [selectedModel, ensureSession, refreshSessions, dispatchBuiltinAction]
   );
 
   const stop = useCallback(() => {

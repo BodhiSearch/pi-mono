@@ -50,7 +50,7 @@ gate file lands with the first real milestone if the rules diverge.
 | M2  | Multi-volume mount + just-bash shell tool (agent-owned FS)             | **shipped** | [m2-tools.md](m2-tools.md) |
 | M3  | MCP over HTTP (provider-native tools deferred)                         | **shipped** | [m3-mcp.md](m3-mcp.md) |
 | —   | Post-M3 follow-ups: DeepWiki MCP login + `_bodhi/sessions/delete`      | **shipped** | [m3.5-followups.md](m3.5-followups.md) |
-| M4  | Commands + skills: vault commands (phase A) + agent-handled built-ins `/help` `/version` `/session` `/copy` (phase B); templates (M4.2) + skills (M4.3) pending | **phase A + B shipped, M4.2/M4.3 pending** | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
+| M4  | Commands + skills: vault commands (phase A) + agent-handled built-ins `/help` `/version` `/session` `/copy` `/mcp` (phase B); templates (M4.2) + skills (M4.3) pending | **phase A + B shipped, M4.2/M4.3 pending** | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5  | Extensions: vault-sourced runtime re-entry                             | planned | [m5-extensions.md](m5-extensions.md) |
 | M6  | Session tree: `session/fork` (unstable, flag-gated) + `session/list`    | planned | [m6-session-tree.md](m6-session-tree.md) |
 | M7  | Compaction: auto + manual + summary persistence                        | planned | [m7-compaction.md](m7-compaction.md) |
@@ -66,7 +66,7 @@ gate file lands with the first real milestone if the rules diverge.
 | Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
 | MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; Streamable HTTP only; JWT in `McpServerHttp.headers` (M3 shipped) | compliant |
 | Provider-native tools | Reported as standard `tool_call` notifications                | **Deferred** — M3 ships MCP only; provider-native passthrough parked to a later milestone (see [deferred.md](deferred.md)) | **deferred (see deferred.md)** |
-| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands expand **agent-side** in `prompt()` (M4 phase A, shipped); built-in commands `/help` `/version` `/session` `/copy` intercepted before the LLM and replied via `_meta.bodhi.builtin` on `agent_message_chunk` (M4 phase B, shipped); both ride the same `available_commands_update` advertisement | compliant |
+| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands expand **agent-side** in `prompt()` (M4 phase A, shipped); built-in commands `/help` `/version` `/session` `/copy` `/mcp` intercepted before the LLM and replied via `_meta.bodhi.builtin` on `agent_message_chunk` (M4 phase B, shipped — `/mcp` rides the typed `BodhiBuiltinAction<K, P>` discriminated-union action shape); both ride the same `available_commands_update` advertisement | compliant |
 | Extension methods    | `_`-prefixed, namespaced                                      | `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15 | compliant |
 | Session fork         | `session/fork` (unstable schema)                              | Adopted behind a feature flag, pinned SDK version (M6)                 | unstable-with-flag |
 
