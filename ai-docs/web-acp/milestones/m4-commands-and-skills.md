@@ -1,13 +1,13 @@
 # M4 — Commands + Skills
 
-## Status (2026-04-27)
+## Status (2026-04-29)
 
 - **M4 phase A — vault-sourced slash commands.** Shipped (commit
   `7bc96d59`). `<mount>/.pi/commands/**/*.md` discovery + picker +
   agent-side template expansion in `prompt()`.
 - **M4 phase B — agent-handled built-in slash commands.** Shipped.
-  Initial set: `/help`, `/version`, `/session`, `/copy`. Built-ins
-  intercept in `AcpAgentAdapter.prompt()` **before** model
+  Initial set: `/help`, `/version`, `/session`, `/copy`, `/mcp`.
+  Built-ins intercept in `AcpAgentAdapter.prompt()` **before** model
   resolution, emit a single `agent_message_chunk` stamped with
   `_meta.bodhi.builtin = { command, action? }`, and persist as a
   new `'builtin'` `SessionEntry` kind so the LLM never sees the
@@ -19,9 +19,18 @@
   [`../specs/web-acp/commands.md`](../specs/web-acp/commands.md);
   the new entry kind is documented in
   [`../specs/web-acp/sessions.md`](../specs/web-acp/sessions.md).
-- **M4.2 — prompt templates** and **M4.3 — skills.** Not yet
-  started. Sections below describe the planned scope; numbering
-  remains as in the original preview.
+- **M4.2 — prompt templates (first slice).** Shipped.
+  `<mount>/.pi/prompts/**/*.md` discovery via the same
+  `loadFromVolumes` helper as commands; merged into
+  `available_commands_update` after vault commands; commands win
+  on canonical-name collisions with a `[prompts]` warning.
+  Expansion goes through the existing `expandCommand` (no new
+  expander). `AvailableCommand` carries no kind discriminator —
+  the picker stays a black-box consumer. The **parameter form**
+  for templates with named parameters (milestone preview) carries
+  forward as a follow-up slice (`M4.2-form`).
+- **M4.3 — skills.** Not yet started. Section below describes the
+  planned scope.
 - **Out of scope for M4 phase B (carried forward to next slice).**
   State-mutation built-ins (`/name`, `/model`, `/new`, `/resume`,
   `/settings`, `/login`, `/logout`). `/compact` ships with M7;

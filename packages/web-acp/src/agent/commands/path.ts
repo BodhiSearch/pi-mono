@@ -9,6 +9,7 @@
  */
 
 export const COMMANDS_DIR_RELPATH = '.pi/commands';
+export const PROMPTS_DIR_RELPATH = '.pi/prompts';
 
 const SEGMENT_PATTERN = /^[a-z][a-z0-9-]*$/;
 

@@ -413,6 +413,96 @@ describe('AcpAgentAdapter slash commands', () => {
     });
     expect(inline.prompt).toHaveBeenCalledWith('/wiki:nope something');
   });
+
+  it('advertises prompts from .pi/prompts/ alongside vault commands (M4.2)', async () => {
+    commandsFs.add('/mnt/wiki/.pi/commands/greet.md', '---\ndescription: greet\n---\nHello $1!');
+    commandsFs.add(
+      '/mnt/wiki/.pi/prompts/poem.md',
+      '---\ndescription: write a poem\nargument-hint: <topic>\n---\nA poem about $1.'
+    );
+    adapter = buildAdapter({ mounts: ['wiki'] });
+    await adapter.newSession({ cwd: '/', mcpServers: [] });
+    const ac = updates.find(u => u.update.sessionUpdate === 'available_commands_update');
+    expect(ac).toBeDefined();
+    const cmds = (
+      ac!.update as {
+        availableCommands: Array<{ name: string; description: string; input?: { hint: string } }>;
+      }
+    ).availableCommands;
+    const vault = cmds
+      .filter(c => c.name.includes(':'))
+      .map(c => c.name)
+      .sort();
+    expect(vault).toEqual(['wiki:greet', 'wiki:poem']);
+    const poem = cmds.find(c => c.name === 'wiki:poem');
+    expect(poem?.description).toBe('write a poem');
+    expect(poem?.input).toEqual({ hint: '<topic>' });
+  });
+
+  it('expands a prompt template through the same prompt() path as commands (M4.2)', async () => {
+    commandsFs.add(
+      '/mnt/wiki/.pi/prompts/poem.md',
+      '---\ndescription: poem\n---\nWrite a haiku about $1 and $2.'
+    );
+    const bodhi = fakeBodhi();
+    bodhi.getAvailableModels = vi.fn(async () => [
+      { id: 'test-model', api: { format: 'openai' } } as unknown as Awaited<
+        ReturnType<BodhiProvider['getAvailableModels']>
+      >[number],
+    ]);
+    adapter = new AcpAgentAdapter(
+      conn,
+      inline,
+      bodhi,
+      store,
+      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
+      undefined,
+      undefined,
+      new McpConnectionPool(),
+      undefined,
+      commandsFs
+    );
+    inline.subscribe = vi.fn(() => () => undefined);
+    inline.prompt = vi.fn(async () => undefined);
+    inline.getMessages = vi.fn(() => []);
+    inline.getErrorMessage = vi.fn(() => undefined);
+    inline.setModel = vi.fn();
+    await adapter.extMethod('bodhi/listModels', {});
+    const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
+    await adapter.prompt({
+      sessionId,
+      prompt: [{ type: 'text', text: '/wiki:poem cherry spring' }],
+      _meta: { bodhi: { modelId: 'test-model' } },
+    });
+    expect(inline.prompt).toHaveBeenCalledWith('Write a haiku about cherry and spring.');
+  });
+
+  it('drops a prompt with the same canonical name as an existing command (M4.2 conflict)', async () => {
+    commandsFs.add(
+      '/mnt/wiki/.pi/commands/dup.md',
+      '---\ndescription: cmd-version\n---\nCMD-WIN body'
+    );
+    commandsFs.add(
+      '/mnt/wiki/.pi/prompts/dup.md',
+      '---\ndescription: prompt-version\n---\nPROMPT-LOSE body'
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    adapter = buildAdapter({ mounts: ['wiki'] });
+    await adapter.newSession({ cwd: '/', mcpServers: [] });
+    const ac = updates.find(u => u.update.sessionUpdate === 'available_commands_update');
+    expect(ac).toBeDefined();
+    const cmds = (ac!.update as { availableCommands: Array<{ name: string; description: string }> })
+      .availableCommands;
+    const dup = cmds.filter(c => c.name === 'wiki:dup');
+    expect(dup).toHaveLength(1);
+    expect(dup[0].description).toBe('cmd-version');
+    const collisionWarn = warn.mock.calls.find(call => {
+      const msg = call[0];
+      return typeof msg === 'string' && msg.includes("[prompts] 'wiki:dup'");
+    });
+    expect(collisionWarn).toBeDefined();
+    warn.mockRestore();
+  });
 });
 
 describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {

@@ -1,21 +1,31 @@
 /**
- * Discover slash-command markdown files under each mounted volume.
+ * Discover vault-sourced markdown files under each mounted volume.
  *
- * Scans `<mount>/.pi/commands/**\/*.md`, parses YAML-ish front-matter,
- * and returns `CommandDef[]` ordered by mount-registry order then by
- * sorted relative path. Names are mount-prefixed canonical strings
- * (see `path.ts`); duplicates within or across mounts are first-wins
- * with a warning.
+ * Two callers wrap a single private `loadFromVolumes` helper:
+ * `loadCommandsFromVolumes` scans `<mount>/.pi/commands/**\/*.md`
+ * (M4 phase A), and `loadPromptsFromVolumes` scans
+ * `<mount>/.pi/prompts/**\/*.md` (M4.2). Both parse the same
+ * YAML-ish front-matter, both yield `CommandDef[]` (the wire shape
+ * is identical — `AvailableCommand` has no kind discriminator), and
+ * both apply first-wins de-duplication within a single load. Cross-
+ * source dedup happens in the caller (the agent merges command +
+ * prompt lists with commands winning).
  *
- * The loader takes a small `CommandsFs` interface rather than reaching
- * into ZenFS directly so unit tests can drive it with a synthetic
- * filesystem and the production wrapper (`createZenfsCommandsFs`) is
- * the single place that touches `@zenfs/core`.
+ * The loader takes a small `CommandsFs` interface rather than
+ * reaching into ZenFS directly so unit tests can drive it with a
+ * synthetic filesystem and the production wrapper
+ * (`createZenfsCommandsFs`) is the single place that touches
+ * `@zenfs/core`.
  */
 
 import { fs as zenfs } from '@zenfs/core';
 import { parseFrontMatter } from './front-matter';
-import { canonicalCommandName, COMMANDS_DIR_RELPATH, InvalidCommandPathError } from './path';
+import {
+  canonicalCommandName,
+  COMMANDS_DIR_RELPATH,
+  InvalidCommandPathError,
+  PROMPTS_DIR_RELPATH,
+} from './path';
 import type { CommandDef } from './types';
 
 export interface CommandsFsEntry {
@@ -40,10 +50,35 @@ export interface CommandsLoaderInput {
 const MAX_DESCRIPTION_FALLBACK = 120;
 
 export async function loadCommandsFromVolumes(input: CommandsLoaderInput): Promise<CommandDef[]> {
+  return loadFromVolumes({ ...input, dirRelpath: COMMANDS_DIR_RELPATH, kind: 'commands' });
+}
+
+/**
+ * M4.2 — discover prompt templates under `<mount>/.pi/prompts/**\/*.md`.
+ *
+ * Identical mechanics to `loadCommandsFromVolumes`: same canonical
+ * naming (`<mount>:<subdir>:<name>`), same front-matter
+ * (`description`, `argument-hint`), same `CommandDef` shape on the
+ * wire. The only differences are the source directory and the
+ * warning prefix, both threaded through the private
+ * `loadFromVolumes` helper.
+ */
+export async function loadPromptsFromVolumes(input: CommandsLoaderInput): Promise<CommandDef[]> {
+  return loadFromVolumes({ ...input, dirRelpath: PROMPTS_DIR_RELPATH, kind: 'prompts' });
+}
+
+interface LoadFromVolumesInput extends CommandsLoaderInput {
+  dirRelpath: string;
+  /** Tag used in warning prefixes — `[commands]` vs `[prompts]`. */
+  kind: 'commands' | 'prompts';
+}
+
+async function loadFromVolumes(input: LoadFromVolumesInput): Promise<CommandDef[]> {
   const warn = input.warn ?? defaultWarn;
   const seen = new Map<string, CommandDef>();
+  const tag = `[${input.kind}]`;
   for (const mount of input.mounts) {
-    const root = `/mnt/${mount.mountName}/${COMMANDS_DIR_RELPATH}`;
+    const root = `/mnt/${mount.mountName}/${input.dirRelpath}`;
     const files = await collectMarkdownFiles(input.fs, root, '');
     files.sort((a, b) => a.localeCompare(b));
     for (const rel of files) {
@@ -53,7 +88,7 @@ export async function loadCommandsFromVolumes(input: CommandsLoaderInput): Promi
       } catch (err) {
         if (err instanceof InvalidCommandPathError) {
           warn(
-            `[commands] skipping '/mnt/${mount.mountName}/${COMMANDS_DIR_RELPATH}/${rel}': ${err.message}`
+            `${tag} skipping '/mnt/${mount.mountName}/${input.dirRelpath}/${rel}': ${err.message}`
           );
           continue;
         }
@@ -62,7 +97,7 @@ export async function loadCommandsFromVolumes(input: CommandsLoaderInput): Promi
       if (seen.has(name)) {
         const existing = seen.get(name)!;
         warn(
-          `[commands] duplicate '${name}' from /mnt/${mount.mountName}/${COMMANDS_DIR_RELPATH}/${rel} ` +
+          `${tag} duplicate '${name}' from /mnt/${mount.mountName}/${input.dirRelpath}/${rel} ` +
             `ignored (first registered from /mnt/${existing.source.mountName}/${existing.source.relPath})`
         );
         continue;
@@ -72,14 +107,14 @@ export async function loadCommandsFromVolumes(input: CommandsLoaderInput): Promi
       try {
         raw = await input.fs.readFile(absolute);
       } catch (err) {
-        warn(`[commands] failed to read '${absolute}'`, err);
+        warn(`${tag} failed to read '${absolute}'`, err);
         continue;
       }
       let parsed: ReturnType<typeof parseFrontMatter>;
       try {
         parsed = parseFrontMatter(raw);
       } catch (err) {
-        warn(`[commands] front-matter rejected for '${absolute}'`, err);
+        warn(`${tag} front-matter rejected for '${absolute}'`, err);
         continue;
       }
       const body = parsed.body;
@@ -92,7 +127,7 @@ export async function loadCommandsFromVolumes(input: CommandsLoaderInput): Promi
         template: body,
         source: {
           mountName: mount.mountName,
-          relPath: `${COMMANDS_DIR_RELPATH}/${rel}`,
+          relPath: `${input.dirRelpath}/${rel}`,
         },
         ...(argumentHint ? { argumentHint } : {}),
       };

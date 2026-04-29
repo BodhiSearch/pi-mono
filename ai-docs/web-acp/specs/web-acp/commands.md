@@ -166,6 +166,53 @@ plus `finalMessages` from `inline.getMessages()`. Reload via
 `finalMessages`; the picker repopulates from the
 `available_commands_update` re-emit at the end of `loadSession`.
 
+### Prompt templates (M4.2)
+
+`<mount>/.pi/prompts/**/*.md` discovered alongside commands at the
+end of every `newSession` / `loadSession`. Mechanically identical
+to commands: same `CommandDef` shape, same canonical naming
+(`<mount>:<subdir>:<name>`), same supported front-matter
+(`description`, `argument-hint`), same expansion via
+`expandCommand` from `agent/commands/expander.ts`.
+
+The wire is also identical — `AvailableCommand` carries no kind
+discriminator, so the picker stays a black-box consumer of the
+merged list. A user-visible template behaves indistinguishably from
+a vault command.
+
+**Why a separate directory at all.** Templates capture *intent*
+authors want to reuse repeatedly ("write a haiku about $1");
+commands capture *agent affordances* ("review the API at $1").
+Keeping them in different directories preserves that authorial
+intent without leaking it into the wire — when M4.3 lands skills,
+the same vault-directory split extends naturally.
+
+**Conflict rule.** When the same canonical name resolves under both
+`.pi/commands/` and `.pi/prompts/` of the same mount,
+`#refreshAvailableCommands` keeps the **command** version and drops
+the prompt with a `[prompts]`-tagged `console.warn`. Rationale:
+commands existed first; the conflict is the user putting the same
+file in two places, and the command directory carries the more
+specific intent. The picker shows one entry; the LLM sees the
+command body when the user expands it.
+
+**Loader factoring.** Both directories are scanned by a single
+private `loadFromVolumes(input, dirRelpath, kind)` helper in
+`agent/commands/loader.ts`; `loadCommandsFromVolumes` and
+`loadPromptsFromVolumes` are thin wrappers that fix the directory
+relpath and the warning prefix. Cross-source dedup happens in the
+agent's `#refreshAvailableCommands`, not in the loader (the
+loader's `seen` Map only prevents intra-call duplicates).
+
+**Out of scope for M4.2 first slice.** Parameter forms (named
+parameters in front-matter triggering a quick form before
+expansion) — the milestone preview pre-authorises this as a
+follow-up slice. Bash slice operators (`${@:N:L}`) carried by the
+frozen web-agent template module — not in M4.1's expander, not
+added here. Live vault watcher / re-emit on file change — same
+posture as commands; refresh fires once per `newSession` /
+`loadSession`.
+
 ## Phase B — agent-handled built-ins
 
 ### Initial registry

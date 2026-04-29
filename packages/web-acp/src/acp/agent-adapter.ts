@@ -36,6 +36,7 @@ import {
   createZenfsCommandsFs,
   expandCommand,
   loadCommandsFromVolumes,
+  loadPromptsFromVolumes,
   type CommandDef,
   type CommandsFs,
 } from '@/agent/commands';
@@ -844,25 +845,57 @@ export class AcpAgentAdapter implements Agent {
    * M4 phase B: agent-handled built-ins (`/help`, `/version`, …) ride
    * the same wire — merged into the advertised list so the picker
    * stays a black-box consumer of `AvailableCommand[]`.
+   *
+   * M4.2: vault-sourced prompt templates from `<mount>/.pi/prompts/`
+   * register alongside commands. Both surface as `AvailableCommand`
+   * (no kind discriminator on the wire); commands win on canonical-
+   * name collisions and the prompt is dropped with a warning.
    */
   async #refreshAvailableCommands(sessionId: string): Promise<void> {
     const mounts = this.#registry?.list() ?? [];
-    let defs: CommandDef[] = [];
+    let cmdDefs: CommandDef[] = [];
+    let promptDefs: CommandDef[] = [];
     if (mounts.length > 0) {
       try {
-        defs = await loadCommandsFromVolumes({
+        cmdDefs = await loadCommandsFromVolumes({
           mounts,
           fs: this.#commandsFs,
         });
       } catch (err) {
         console.error('[acp-agent-adapter] command load failed:', err);
-        defs = [];
+        cmdDefs = [];
+      }
+      try {
+        promptDefs = await loadPromptsFromVolumes({
+          mounts,
+          fs: this.#commandsFs,
+        });
+      } catch (err) {
+        console.error('[acp-agent-adapter] prompt load failed:', err);
+        promptDefs = [];
       }
     }
-    this.#availableCommands = defs;
+    const merged: CommandDef[] = [...cmdDefs];
+    const seenNames = new Set(cmdDefs.map(d => d.name));
+    for (const def of promptDefs) {
+      if (seenNames.has(def.name)) {
+        const existing = cmdDefs.find(d => d.name === def.name);
+        const existingPath = existing
+          ? `/mnt/${existing.source.mountName}/${existing.source.relPath}`
+          : '(unknown command)';
+        console.warn(
+          `[prompts] '${def.name}' from /mnt/${def.source.mountName}/${def.source.relPath} ` +
+            `ignored (command with the same name already registered from ${existingPath})`
+        );
+        continue;
+      }
+      merged.push(def);
+      seenNames.add(def.name);
+    }
+    this.#availableCommands = merged;
     const availableCommands: AvailableCommand[] = [
       ...builtinAvailableCommands(),
-      ...defs.map(toAvailableCommand),
+      ...merged.map(toAvailableCommand),
     ];
     await this.#emit({
       sessionId,
