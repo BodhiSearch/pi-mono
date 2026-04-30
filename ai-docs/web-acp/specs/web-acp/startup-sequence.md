@@ -16,6 +16,25 @@ per-module specs describe their slice; only this file reads across
 the seams. Read it **before** any plan that touches boot, auth,
 the model catalog, or the first prompt.
 
+## Note on host-side terminology (post-engine-split)
+
+References below to "`useAcp` does X" mean **the facade or its
+underlying slice hook**, not literally a single React hook. After
+the host-side wire/engine split (pre-M5), the implementation is
+spread across `acp/runtime.ts` (singleton + module-scope state),
+`acp/streaming-reducer.ts` (pure prompt-turn reducer),
+`acp/{builtin-dispatch,message-shape,session-meta,permissions}.ts`
+(pure helpers), and the per-concern hooks
+`useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}`.
+`useAcp.ts` itself is a ~180 LoC facade. See
+[`./hook.md`](./hook.md) for the full file map and which slice
+owns each piece of state. Module-scope `let`s like `_runtime`,
+`_session`, `_authPromise` referenced below now live in
+`acp/runtime.ts` and are read/written via accessor functions
+(`getSession()` / `setSession()`, …); the streaming refs
+(`streamingRef`, `streamingMessageIdRef`, `isReplayingRef`)
+referenced in Phase 4 are now reducer state.
+
 ## Actors
 
 | Actor | Thread | Owns |
@@ -23,7 +42,10 @@ the model catalog, or the first prompt.
 | `App` / `AppContent` (`src/App.tsx`) | main | mounts `BodhiProvider`; auto-opens the Bodhi setup modal. |
 | `@bodhiapp/bodhi-js-react` (`useBodhi`) | main | OAuth 2.1 flow, token storage, `auth.accessToken`, `clientState`. |
 | `ChatDemo` (`src/components/chat/ChatDemo.tsx`) | main | calls `useAcp()`. |
-| `useAcp` (`src/hooks/useAcp.ts`) | main | singleton worker + `AcpClient`; translates Bodhi auth into ACP calls. |
+| `useAcp` (`src/hooks/useAcp.ts`) | main | thin facade composing the slice hooks; surfaces chat state to `ChatDemo`. |
+| `useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}` (`src/hooks/`) | main | per-concern slice hooks — see [`./hook.md`](./hook.md). |
+| `acp/runtime.ts` | main | `AcpRuntime` singleton + module-scope session/auth state (host wire/engine split). |
+| `acp/streaming-reducer.ts` | main | pure typed reducer that consumes `session/update` notifications and the prompt-turn lifecycle. |
 | `AcpClient` (`src/acp/client.ts`) | main | typed facade over `ClientSideConnection`. |
 | `ClientSideConnection` (`@agentclientprotocol/sdk`) | main | JSON-RPC framing, method correlation. |
 | `MessageChannel` (`port1`, `port2`) | shared | transport primitive. |

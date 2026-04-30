@@ -95,6 +95,20 @@ advertising `fs/*` as a future IDE-integration seam.
   [`../web-acp-vs-coding-agent/engine-split.md`](../web-acp-vs-coding-agent/engine-split.md)
   and
   [`../web-acp-vs-standard-acp/engine-split.md`](../web-acp-vs-standard-acp/engine-split.md).
+- **Pre-M5 host-side wire/engine split.** The asymmetric host
+  half of the same refactor: `hooks/useAcp.ts` shrank from
+  1,133 → ~180 LoC by extracting non-React ACP plumbing
+  (runtime singleton, streaming reducer, builtin-dispatch,
+  permissions stub, message-shape helpers, session-meta) under
+  `src/acp/` and per-concern hooks (`useAcpRuntime`,
+  `useAcpAuth`, `useAcpModels`, `useAcpFeatures`, `useAcpMcp`,
+  `useAcpSession`, `useAcpStreaming`) under `src/hooks/`. The
+  pure `streamingReducer` replaces the imperative refs +
+  effects pattern that consumed `session/update` notifications.
+  Wire surface byte-identical; `useAcp()` return shape
+  unchanged so `ChatDemo.tsx` (the single value-consumer)
+  needs no update. Plan at
+  [`../../plans/kick-off-prompt-squishy-journal.md`](../../plans/kick-off-prompt-squishy-journal.md).
 - The phased M0 rework dropped the `/vault` mount + second
   test-double transport out of M0; vault re-enters as M2.1,
   now as **Linux-style multi-volume mounts at `/mnt/<name>`**

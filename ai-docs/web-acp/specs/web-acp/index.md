@@ -57,7 +57,7 @@ drill into the per-module specs:
 | [`agent.md`](./agent.md) | `src/agent/` — `agent-worker.ts` (Worker entry), `InlineAgent` (`pi-agent-core` wrapper), `BodhiProvider` (`LlmProvider` implementation), `createStreamFn` (pi-ai bridge). |
 | [`sessions.md`](./sessions.md) | `src/agent/session-store.ts` — Dexie-backed worker-owned session persistence (schema, CRUD, invariants, replay contract with `session/load`). |
 | [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
-| [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` — the React hook that drives the main-thread side of the ACP connection, owns the singleton worker, and surfaces chat state to `ChatDemo`. |
+| [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` (thin facade) + the per-concern slice hooks under `src/hooks/useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}.ts` + the host-side ACP plumbing under `src/acp/{runtime,streaming-reducer,builtin-dispatch,message-shape,session-meta,permissions}.ts`. The wire/engine split that mirrors the agent-side `acp/engine/` cut. |
 | [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/`, `src/acp/fs-handlers.ts` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, the worker-side `VolumeRegistry`, and the main-thread `fs/*` IDE-integration seam (M2). |
 | [`tools.md`](./tools.md) | `src/agent/tools/` — the `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation (M2). |
 | [`features.md`](./features.md) | `src/features/`, `src/components/features/` — per-session feature-toggle store (Dexie v2 `features` table), `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). |
@@ -123,10 +123,15 @@ drill into the per-module specs:
   modal when the client isn't connected. The Bodhi access token
   reaches the worker only after this component mounts and the SDK
   reports `auth.accessToken`.
-- **`useAcp` (`src/hooks/useAcp.ts`):** main-thread singleton that
-  spawns the worker, wires the ACP connection, translates Bodhi
-  auth state into `authenticate` + `listModels` calls, and
-  surfaces chat state to `ChatDemo`. Detail in [`hook.md`](./hook.md).
+- **`useAcp` (`src/hooks/useAcp.ts`):** thin facade that composes
+  seven slice hooks (`useAcp{Runtime,Auth,Models,Features,Mcp,
+  Session,Streaming}`) and the host-side ACP plumbing under
+  `src/acp/{runtime,streaming-reducer,builtin-dispatch,…}`.
+  Spawns the worker, wires the ACP connection, translates Bodhi
+  auth state into `authenticate` + `listModels` calls, drives the
+  prompt-turn loop through a typed `streamingReducer`, and
+  surfaces chat state to `ChatDemo`. Detail in
+  [`hook.md`](./hook.md).
 - **`agent-worker.ts` (`src/agent/agent-worker.ts`):** Web Worker
   entry. Receives the `init` message with the `MessagePort`,
   wraps it as byte-streams, hands them to
@@ -152,6 +157,13 @@ packages/web-acp/src/
 │   ├── methods.ts         # `_bodhi/*` extension method name barrel (M2)
 │   ├── client.ts          # AcpClient (main-thread wrapper over ClientSideConnection)
 │   ├── fs-handlers.ts     # main-thread `fs/readTextFile` / `fs/writeTextFile` handlers (M2.3)
+│   ├── runtime.ts         # AcpRuntime singleton + module-scope session/auth state (host wire/engine split)
+│   ├── streaming-reducer.ts # Pure reducer for session/update + turn lifecycle (host)
+│   ├── streaming-reducer.test.ts # Reducer unit tests
+│   ├── builtin-dispatch.ts # Pure dispatchBuiltinAction (copy / mcp-add / mcp-remove)
+│   ├── permissions.ts     # session/request_permission stub (deferred)
+│   ├── message-shape.ts   # Pure helpers: empty/get/withAssistantText, userMessage, …
+│   ├── session-meta.ts    # authKeyOf, toBodhiModelInfo, composeSessionMeta
 │   ├── agent-adapter.ts   # AcpAgentAdapter (wire shim, ~245 LoC after engine split)
 │   ├── wire-utils.ts      # pure ACP wire helpers (extractSessionMeta, filterHttpServers, ...)
 │   └── engine/            # engine layer (services / runtime / driver / dispatch)
@@ -201,7 +213,14 @@ packages/web-acp/src/
 │   ├── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream
 │   └── volume-control.ts  # main-thread client for the volume-control channel (M2)
 ├── hooks/
-│   ├── useAcp.ts          # React hook; owns the singleton worker + ACP client
+│   ├── useAcp.ts          # Thin facade composing the slice hooks; owns isAuthenticated gating
+│   ├── useAcpRuntime.ts   # ensureRuntime + useVolumes wrapper
+│   ├── useAcpAuth.ts      # Bodhi auth observation, model load, token-rotation session/load rebuild
+│   ├── useAcpModels.ts    # selectedModel, ensureDefaultModel, applyLastModel, loadModels
+│   ├── useAcpFeatures.ts  # _bodhi/features/* slice
+│   ├── useAcpMcp.ts       # mcpToggles, composeCurrentMcpServers, dispatchAction, setMcpToggle
+│   ├── useAcpSession.ts   # ensureSession, loadSession, clearMessages, deleteSession + lifecycle effects
+│   ├── useAcpStreaming.ts # session/update listener + sendMessage/stop/clearError driving the reducer
 │   └── useVolumes.ts      # React hook; manages multi-volume state (M2)
 ├── components/            # shadcn/ui + ChatDemo + volumes/VolumesPanel (M2)
 ├── lib/                   # bodhi-models, agent-model, utils
@@ -254,10 +273,10 @@ update in the spec file that covers them.
 
 ## Global guarantees & invariants
 
-1. **One worker per tab.** `useAcp` holds the worker, client, and
-   `initialize` promise at module scope; StrictMode's double-mount
-   and React fast-refresh both re-enter the effect but never spawn
-   a second worker. Detail in [`hook.md`](./hook.md).
+1. **One worker per tab.** `src/acp/runtime.ts` holds the worker,
+   client, and `initialize` promise at module scope; StrictMode's
+   double-mount and React fast-refresh both re-enter the effect
+   but never spawn a second worker. Detail in [`hook.md`](./hook.md).
 2. **One-shot `init`.** The worker accepts exactly one
    `{type: 'init', agentPort}` message; subsequent inits are
    logged and ignored. Detail in [`agent.md`](./agent.md).
