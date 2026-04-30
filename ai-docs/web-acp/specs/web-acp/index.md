@@ -53,7 +53,7 @@ drill into the per-module specs:
 | File | Scope |
 | --- | --- |
 | [`startup-sequence.md`](./startup-sequence.md) | End-to-end wiring: page load → worker spawn → ACP handshake → Bodhi authenticate → `bodhi/listModels` → session/prompt turn. The authoritative reference for "what happens when". |
-| [`acp.md`](./acp.md) | `src/acp/` — `AcpClient`, `AcpAgentAdapter`, the `bodhi-token` auth method, the `bodhi/listModels` extension method, ACP ↔ `pi-agent-core` streaming translation. |
+| [`acp.md`](./acp.md) | `src/acp/` — the **wire shim** (`AcpAgentAdapter`), the **engine layer** (`acp/engine/services.ts`, `session-runtime.ts`, `prompt-driver.ts`, `builtin-dispatch.ts`, `ext-methods/*.ts`), `AcpClient`, the `bodhi-token` auth method, ACP ↔ `pi-agent-core` streaming translation. |
 | [`agent.md`](./agent.md) | `src/agent/` — `agent-worker.ts` (Worker entry), `InlineAgent` (`pi-agent-core` wrapper), `BodhiProvider` (`LlmProvider` implementation), `createStreamFn` (pi-ai bridge). |
 | [`sessions.md`](./sessions.md) | `src/agent/session-store.ts` — Dexie-backed worker-owned session persistence (schema, CRUD, invariants, replay contract with `session/load`). |
 | [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
@@ -152,7 +152,24 @@ packages/web-acp/src/
 │   ├── methods.ts         # `_bodhi/*` extension method name barrel (M2)
 │   ├── client.ts          # AcpClient (main-thread wrapper over ClientSideConnection)
 │   ├── fs-handlers.ts     # main-thread `fs/readTextFile` / `fs/writeTextFile` handlers (M2.3)
-│   └── agent-adapter.ts   # AcpAgentAdapter (agent-side: Agent implementation)
+│   ├── agent-adapter.ts   # AcpAgentAdapter (wire shim, ~245 LoC after engine split)
+│   ├── wire-utils.ts      # pure ACP wire helpers (extractSessionMeta, filterHttpServers, ...)
+│   └── engine/            # engine layer (services / runtime / driver / dispatch)
+│       ├── types.ts          # SessionState + ExtMethodHost interfaces
+│       ├── services.ts       # AcpAdapterServices + assembleServices() factory
+│       ├── session-runtime.ts # AcpSessionRuntime (lifecycle owner, MCP, commands)
+│       ├── prompt-driver.ts  # PromptTurnDriver (one prompt turn end-to-end)
+│       ├── builtin-dispatch.ts # tryHandleBuiltin (/help, /version, /copy, /session, /mcp)
+│       └── ext-methods/      # per-handler files for `_bodhi/*` ext methods
+│           ├── index.ts          # dispatchExtMethod() registry
+│           ├── list-models.ts    # bodhi/listModels
+│           ├── list-sessions.ts  # bodhi/listSessions
+│           ├── volumes-list.ts   # _bodhi/volumes/list
+│           ├── features-list.ts  # _bodhi/features/list
+│           ├── features-set.ts   # _bodhi/features/set
+│           ├── get-session.ts    # bodhi/getSession (transcript rebuild)
+│           ├── mcp-toggles-set.ts # _bodhi/mcp/toggles/set
+│           └── sessions-delete.ts # _bodhi/sessions/delete
 ├── agent/
 │   ├── agent-worker.ts    # Web Worker entry; wires AcpAgentAdapter
 │   ├── inline-agent.ts    # pi-agent-core wrapper
@@ -213,7 +230,14 @@ boundary at extraction time (M7) are:
   `LoadSessionResponse`). This is the contract every ACP client
   of the worker consumes.
 - `src/acp/client.ts` — `AcpClient`.
-- `src/acp/agent-adapter.ts` — `AcpAgentAdapter`.
+- `src/acp/agent-adapter.ts` — `AcpAgentAdapter` (wire shim).
+- `src/acp/engine/services.ts` — `AcpAdapterServices`,
+  `assembleServices()`, `StreamOverridesRef`. The deps bag the
+  adapter consumes; the worker's only assembly point.
+- `src/acp/engine/session-runtime.ts` — `AcpSessionRuntime`
+  (lifecycle owner; the M5/M6/M7 surface grows here).
+- `src/acp/engine/prompt-driver.ts` — `PromptTurnDriver` (the
+  single-turn engine).
 - `src/agent/inline-agent.ts` — `InlineAgent`, `createInlineAgent`.
 - `src/agent/session-store.ts` — `SessionStore`, `createSessionStore`
   (M1, worker-only). Spec in [`./sessions.md`](./sessions.md).

@@ -4,6 +4,16 @@
 
 **Parent:** [`./index.md`](./index.md)
 
+> **Note (post engine-split refactor).** `agent-worker.ts` is now
+> ~30 LoC: it constructs the provider via a local
+> `defaultProviderFactory()` and assembles services via
+> `assembleServices(...)` from `acp/engine/services.ts` before
+> handing the bag to `new AcpAgentAdapter(conn, services)`. Most
+> of what used to live in the adapter (per-session state, MCP
+> lifecycle, prompt-turn loop, ext-method dispatch) now lives
+> under `acp/engine/`. See [`./acp.md`](./acp.md) § "Engine
+> layer" for the mapping.
+
 ## Functional scope
 
 The `src/agent/` subtree is the **worker-side runtime**. Seven
@@ -85,7 +95,7 @@ properties:
      raw `postMessage` listener that handles runtime
      `volumes/mount` / `volumes/unmount` requests in parallel
      with the ACP wire.
-  8. `new AgentSideConnection(conn => new AcpAgentAdapter(conn,
+  8. `new AgentSideConnection(conn => new AcpAgentAdapter(conn, services), stream)` — `services` is built by `assembleServices(...)` from `acp/engine/services.ts` (~30 LoC of bootstrap; the previous `new AcpAgentAdapter(conn,
      inline, provider, store, registry), stream)`. The factory
      is invoked synchronously by the SDK; the returned adapter
      is the `Agent` dispatch target for inbound requests and

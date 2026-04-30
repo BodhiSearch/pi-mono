@@ -1,9 +1,25 @@
 # sessions
 
 **Source of truth:** `packages/web-acp/src/agent/session-store.ts`
-(+ wiring in `src/acp/agent-adapter.ts` and `src/agent/agent-worker.ts`).
+(+ wiring in `src/acp/agent-adapter.ts`,
+`src/acp/engine/session-runtime.ts`,
+`src/acp/engine/prompt-driver.ts`,
+`src/acp/engine/builtin-dispatch.ts`,
+`src/acp/engine/ext-methods/*.ts`, and
+`src/agent/agent-worker.ts`).
 
 **Parent:** [`./index.md`](./index.md)
+
+> **Note (post engine-split refactor).** Where this file
+> references `AcpAgentAdapter.<member>` (e.g. `#emit`,
+> `#sessions`, `#activeInlineSessionId`,
+> `#tryHandleBuiltin`, `#refreshAvailableCommands`,
+> `#rehydrateInlineFromStore`), those names now live on
+> `AcpSessionRuntime` (`acp/engine/session-runtime.ts`),
+> `PromptTurnDriver` (`acp/engine/prompt-driver.ts`), or
+> `engine/builtin-dispatch.ts` and `engine/ext-methods/get-session.ts`.
+> The adapter delegates; the wire surface is unchanged.
+> Mapping: see [`./acp.md`](./acp.md) § "Engine layer".
 
 ## Functional scope
 

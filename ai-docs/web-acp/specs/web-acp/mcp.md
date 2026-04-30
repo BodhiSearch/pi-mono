@@ -3,11 +3,25 @@
 **Source of truth:**
 `packages/web-acp/src/mcp/`,
 `packages/web-acp/src/agent/mcp/`,
-`packages/web-acp/src/acp/agent-adapter.ts` (wiring),
-`packages/web-acp/src/acp/client.ts` (wiring),
+`packages/web-acp/src/acp/engine/session-runtime.ts` (worker-side
+MCP lifecycle: pool subscription, acquire / release,
+broadcast, tool listing),
+`packages/web-acp/src/acp/engine/ext-methods/mcp-toggles-set.ts`
+(`_bodhi/mcp/toggles/set` handler),
+`packages/web-acp/src/acp/agent-adapter.ts` (wire shim — MCP server
+list extraction in `newSession` / `loadSession`),
+`packages/web-acp/src/acp/client.ts` (main-thread wiring),
 `packages/web-acp/src/hooks/useAcp.ts` (composition).
 
 **Parent:** [`./index.md`](./index.md)
+
+> **Note (post engine-split refactor).** Where this file
+> references `AcpAgentAdapter.#acquireMcpConnections`,
+> `#mcpToolsForSession`, `#broadcastMcpPoolEvent`,
+> `#mcpPool`, or `#mcpSubscription`, those live on
+> `AcpSessionRuntime` (`acp/engine/session-runtime.ts`) after the
+> refactor. Wire shape is unchanged. Mapping: see
+> [`./acp.md`](./acp.md) § "Engine layer".
 
 ## Purpose
 

@@ -6,12 +6,13 @@ import type {
   SessionNotification,
 } from '@agentclientprotocol/sdk';
 import { SessionStoreDb, createStoreFromDb, type SessionStore } from '@/agent/session-store';
-import { McpConnectionPool } from '@/agent/mcp';
 import type { CommandsFs, CommandsFsEntry } from '@/agent/commands';
 import { createMcpToggleStore } from '@/mcp/toggle-store';
 import { AcpAgentAdapter } from './agent-adapter';
+import { assembleServices } from './engine/services';
 import type { BodhiProvider } from '@/agent/bodhi-provider';
 import type { InlineAgent } from '@/agent/inline-agent';
+import type { VolumeRegistry } from '@/agent/volume-mount';
 import {
   BODHI_GET_SESSION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
@@ -58,14 +59,12 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
     const toggles = createMcpToggleStore(db);
     adapter = new AcpAgentAdapter(
       fakeConn(),
-      fakeInline(),
-      fakeBodhi(),
-      store,
-      undefined,
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      toggles
+      assembleServices({
+        inline: fakeInline(),
+        bodhi: fakeBodhi(),
+        store,
+        mcpToggles: toggles,
+      })
     );
     await store.createSession('s1');
   });
@@ -239,19 +238,17 @@ describe('AcpAgentAdapter slash commands', () => {
     } = {}
   ): AcpAgentAdapter {
     const registry = opts.mounts
-      ? (makeRegistry(opts.mounts) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4])
+      ? (makeRegistry(opts.mounts) as unknown as VolumeRegistry)
       : undefined;
     return new AcpAgentAdapter(
       conn,
-      inline,
-      fakeBodhi(),
-      store,
-      registry,
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined,
-      commandsFs
+      assembleServices({
+        inline,
+        bodhi: fakeBodhi(),
+        store,
+        registry,
+        commandsFs,
+      })
     );
   }
 
@@ -323,15 +320,13 @@ describe('AcpAgentAdapter slash commands', () => {
     // Rebuild adapter with the populated bodhi provider.
     adapter = new AcpAgentAdapter(
       conn,
-      inline,
-      bodhi,
-      store,
-      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined,
-      commandsFs
+      assembleServices({
+        inline,
+        bodhi,
+        store,
+        registry: makeRegistry(['wiki']) as unknown as VolumeRegistry,
+        commandsFs,
+      })
     );
     await adapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
@@ -354,15 +349,13 @@ describe('AcpAgentAdapter slash commands', () => {
     ]);
     adapter = new AcpAgentAdapter(
       conn,
-      inline,
-      bodhi,
-      store,
-      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined,
-      commandsFs
+      assembleServices({
+        inline,
+        bodhi,
+        store,
+        registry: makeRegistry(['wiki']) as unknown as VolumeRegistry,
+        commandsFs,
+      })
     );
     inline.prompt = vi.fn(async () => undefined);
     inline.getMessages = vi.fn(() => []);
@@ -389,15 +382,13 @@ describe('AcpAgentAdapter slash commands', () => {
     ]);
     adapter = new AcpAgentAdapter(
       conn,
-      inline,
-      bodhi,
-      store,
-      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined,
-      commandsFs
+      assembleServices({
+        inline,
+        bodhi,
+        store,
+        registry: makeRegistry(['wiki']) as unknown as VolumeRegistry,
+        commandsFs,
+      })
     );
     inline.prompt = vi.fn(async () => undefined);
     inline.getMessages = vi.fn(() => []);
@@ -452,15 +443,13 @@ describe('AcpAgentAdapter slash commands', () => {
     ]);
     adapter = new AcpAgentAdapter(
       conn,
-      inline,
-      bodhi,
-      store,
-      makeRegistry(['wiki']) as unknown as ConstructorParameters<typeof AcpAgentAdapter>[4],
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined,
-      commandsFs
+      assembleServices({
+        inline,
+        bodhi,
+        store,
+        registry: makeRegistry(['wiki']) as unknown as VolumeRegistry,
+        commandsFs,
+      })
     );
     inline.subscribe = vi.fn(() => () => undefined);
     inline.prompt = vi.fn(async () => undefined);
@@ -530,14 +519,11 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
     inline.subscribe = vi.fn(() => () => undefined);
     adapter = new AcpAgentAdapter(
       conn,
-      inline,
-      fakeBodhi(),
-      store,
-      undefined,
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined
+      assembleServices({
+        inline,
+        bodhi: fakeBodhi(),
+        store,
+      })
     );
   });
 
@@ -623,14 +609,11 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
     ]);
     const realAdapter = new AcpAgentAdapter(
       conn,
-      inline,
-      bodhi,
-      store,
-      undefined,
-      undefined,
-      undefined,
-      new McpConnectionPool(),
-      undefined
+      assembleServices({
+        inline,
+        bodhi,
+        store,
+      })
     );
     await realAdapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await realAdapter.newSession({ cwd: '/', mcpServers: [] });

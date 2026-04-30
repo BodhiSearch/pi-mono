@@ -1,12 +1,27 @@
 # commands
 
 **Source of truth:** `packages/web-acp/src/agent/commands/`
-(+ wiring in `src/acp/agent-adapter.ts`,
+(+ wiring in `src/acp/engine/session-runtime.ts`
+(`refreshAvailableCommands`),
+`src/acp/engine/prompt-driver.ts`
+(`#applySlashCommandExpansion`),
+`src/acp/engine/builtin-dispatch.ts` (built-in interception),
+`src/acp/engine/ext-methods/get-session.ts` (transcript replay
+with built-in pairs),
 `src/components/chat/CommandPicker.tsx`,
 `src/components/chat/MessageBubble.tsx`,
 `src/hooks/useAcp.ts`, and `src/lib/builtin-format.ts`).
 
 **Parent:** [`./index.md`](./index.md)
+
+> **Note (post engine-split refactor).** Where this file
+> references `AcpAgentAdapter.#refreshAvailableCommands` /
+> `#applySlashCommandExpansion` / `#tryHandleBuiltin` /
+> `extMethod(BODHI_GET_SESSION_METHOD, …)`, those have moved to
+> the engine layer (`session-runtime.ts`, `prompt-driver.ts`,
+> `builtin-dispatch.ts`, `ext-methods/get-session.ts`). Wire
+> behavior is byte-identical. Mapping: see [`./acp.md`](./acp.md)
+> § "Engine layer".
 
 ## Functional scope
 

@@ -81,6 +81,20 @@ advertising `fs/*` as a future IDE-integration seam.
 
 **Scope adjustments vs. original plan.**
 
+- **Pre-M5 engine-split refactor.** Between M4 phase B exit and
+  M5 entry the agent-side runtime was restructured along
+  coding-agent's wire/engine seam. `acp/agent-adapter.ts` shrank
+  from 1,254 → ~245 LoC by lifting per-session state into
+  `acp/engine/session-runtime.ts`, the prompt-turn loop into
+  `acp/engine/prompt-driver.ts`, the eight `_bodhi/*` extension
+  methods into per-file handlers under `acp/engine/ext-methods/`,
+  and the built-in slash-command dispatch into
+  `acp/engine/builtin-dispatch.ts`. Wire surface unchanged. M5
+  extensions, M6 fork, and M7 compaction now plug into the new
+  structure rather than churning a god-object. Detail in
+  [`../web-acp-vs-coding-agent/engine-split.md`](../web-acp-vs-coding-agent/engine-split.md)
+  and
+  [`../web-acp-vs-standard-acp/engine-split.md`](../web-acp-vs-standard-acp/engine-split.md).
 - The phased M0 rework dropped the `/vault` mount + second
   test-double transport out of M0; vault re-enters as M2.1,
   now as **Linux-style multi-volume mounts at `/mnt/<name>`**

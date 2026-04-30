@@ -31,7 +31,12 @@ the model catalog, or the first prompt.
 | `ndJsonStream` (`@agentclientprotocol/sdk`) | either | newline-delimited JSON framing over byte streams. |
 | `agent-worker.ts` (`src/agent/agent-worker.ts`) | worker | receives `init`, wires the ACP handler. |
 | `AgentSideConnection` (`@agentclientprotocol/sdk`) | worker | dispatches incoming requests to the `Agent` implementation. |
-| `AcpAgentAdapter` (`src/acp/agent-adapter.ts`) | worker | `Agent` implementation — routes to `InlineAgent` + `BodhiProvider`. |
+| `AcpAgentAdapter` (`src/acp/agent-adapter.ts`) | worker | `Agent` implementation — wire shim that delegates into the engine layer. |
+| `assembleServices` (`src/acp/engine/services.ts`) | worker | factory that builds the `AcpAdapterServices` deps bag the adapter consumes. |
+| `AcpSessionRuntime` (`src/acp/engine/session-runtime.ts`) | worker | per-session lifecycle owner (session map, MCP pool, vault commands, model cache). |
+| `PromptTurnDriver` (`src/acp/engine/prompt-driver.ts`) | worker | runs one `session/prompt` turn end-to-end. |
+| `dispatchExtMethod` (`src/acp/engine/ext-methods/index.ts`) | worker | `_bodhi/*` extension method registry. |
+| `tryHandleBuiltin` (`src/acp/engine/builtin-dispatch.ts`) | worker | recognises and handles built-in slash commands. |
 | `InlineAgent` (`src/agent/inline-agent.ts`) | worker | wraps `pi-agent-core`'s `Agent`; drives a single turn. |
 | `BodhiProvider` (`src/agent/bodhi-provider.ts`) | worker | holds the token; fetches the Bodhi catalog. |
 | `createStreamFn` (`src/agent/stream-fn.ts`) | worker | bridges `pi-agent-core` → `pi-ai`'s `streamSimple`. |
@@ -122,7 +127,12 @@ Concurrently, on the worker side:
 5. **Singletons.** `new BodhiProvider()`,
    `createInlineAgent(createStreamFn(provider))`.
 6. **Agent connection.** `new AgentSideConnection(conn => new
-   AcpAgentAdapter(conn, inline, provider, registry), stream)`.
+   AcpAgentAdapter(conn, services), stream)` — `services` is built
+   by `assembleServices({ inline, bodhi: provider, store, registry,
+   features, mcpToggles, streamOverrides })` from
+   `src/acp/engine/services.ts`. The adapter constructs an
+   `AcpSessionRuntime` and a `PromptTurnDriver` from the bag in
+   its constructor.
    The SDK invokes the factory with the connection it will use
    for outgoing notifications; the factory constructs the adapter
    (now registry-aware) and returns it as the `Agent`

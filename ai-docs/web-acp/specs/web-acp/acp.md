@@ -8,19 +8,32 @@
 
 The `src/acp/` subtree holds the ACP wire surface and the
 Bodhi-specific extensions layered on top of the
-`@agentclientprotocol/sdk@0.17.0` primitives. Three files:
+`@agentclientprotocol/sdk@0.17.0` primitives. After the engine-split
+refactor the layout is:
 
 - **`index.ts`** — SDK re-exports + the Bodhi-specific constants
   (`BODHI_AUTH_METHOD_ID`, `BODHI_LIST_MODELS_METHOD`,
-  `BODHI_LIST_SESSIONS_METHOD`, `BODHI_GET_SESSION_METHOD`) +
-  the `_meta` shapes that travel alongside ACP's standard
-  payloads.
+  `BODHI_LIST_SESSIONS_METHOD`, `BODHI_GET_SESSION_METHOD`,
+  `BODHI_VOLUMES_LIST_METHOD`, `BODHI_FEATURES_*`,
+  `BODHI_MCP_TOGGLES_SET_METHOD`, `BODHI_SESSIONS_DELETE_METHOD`) +
+  the `_meta` shapes that travel alongside ACP's standard payloads.
 - **`client.ts`** — `AcpClient`, a thin wrapper over
-  `ClientSideConnection` that `useAcp` consumes on the main
-  thread.
+  `ClientSideConnection` that `useAcp` consumes on the main thread.
 - **`agent-adapter.ts`** — `AcpAgentAdapter`, the
   `Agent`-interface implementation that runs inside the Web
-  Worker.
+  Worker. **Wire shim only** (~245 LoC); every method body
+  delegates into the engine layer.
+- **`wire-utils.ts`** — pure functions that translate between ACP
+  wire shapes and internal types: `extractSessionMeta`,
+  `filterHttpServers`, `toWireMcpToggles`, `toAvailableCommand`,
+  `toolTitle`, `toToolCallContent`, `extractAssistantText`,
+  `extractMessageId`, `makeBuiltinUserMessage`,
+  `makeBuiltinAssistantMessage`. No class state, no I/O.
+- **`engine/`** — the engine layer (services / runtime / driver /
+  dispatch). See "Engine layer" subsection below.
+- **`fs-handlers.ts`** — main-thread `fs/readTextFile` /
+  `fs/writeTextFile` handlers used by the IDE-integration seam (M2).
+  Not part of the engine layer; covered in [`./vault.md`](./vault.md).
 
 Scope invariants:
 
@@ -233,43 +246,24 @@ for it.
 
 ### `acp/agent-adapter.ts`
 
-`AcpAgentAdapter` implements `Agent` from the SDK. Inputs come
-from the SDK's dispatcher on the worker side; outputs leave as
-`this.#conn.sessionUpdate(...)` for notifications or as return
-values for request/response.
+`AcpAgentAdapter` implements `Agent` from the SDK. After the
+engine-split refactor it is a **thin wire shim** (~245 LoC) that
+delegates every method into the engine layer. Mirrors
+coding-agent's `modes/rpc/rpc-mode.ts` posture: dispatch only, no
+business logic.
 
-#### State
+#### State (post-refactor)
 
-- `readonly #conn: AgentSideConnection` — supplied by the SDK
-  factory; used to send notifications and (future) client-side
-  requests.
-- `readonly #inline: InlineAgent` — the single-agent runtime. M0
-  used one `InlineAgent` for all sessions. M1 keeps the single
-  `InlineAgent` but now reseeds its message history via
-  `InlineAgent.restoreMessages` on `session/load`.
-- `readonly #bodhi: BodhiProvider` — the token + catalog holder.
-- `readonly #store: SessionStore | undefined` — M1 persistence
-  layer (optional so unit tests can run memory-only). Full
-  schema + contract in [`./sessions.md`](./sessions.md).
-- `readonly #sessions = new Map<string, SessionState>()` — pure
-  in-memory existence tracking. The authoritative session list
-  lives in `#store` (IndexedDB); `#sessions` exists so the
-  adapter can reject `prompt`/`cancel` on an id it hasn't
-  acknowledged this tab.
-- `#models: Model<Api>[] = []` — catalog cache populated by
-  `extMethod('bodhi/listModels')` and consumed by `prompt` to
-  resolve `_meta.bodhi.modelId`.
-- `#cancelled = false` — per-turn flag set by `cancel`, read by
-  `prompt`.
-- `#activeInlineSessionId: string | null = null` — identity of the
-  session whose history is currently seeded into the
-  `InlineAgent`. Updated on `newSession` (clearMessages + set),
-  `loadSession` (restoreMessages + set), and
-  `#rehydrateInlineFromStore` (same flow, called from `prompt`
-  when it detects a mismatch). Prevents `recordTurn` from
-  persisting another session's messages into the current turn's
-  `finalMessages` — the root cause of the "transcripts cross
-  over after `+ New chat`" bug fixed in Phase C.
+- `readonly #services: AcpAdapterServices` — the deps bag
+  (`acp/engine/services.ts`).
+- `readonly #runtime: AcpSessionRuntime` — lifecycle owner; holds
+  per-session state (`acp/engine/session-runtime.ts`).
+- `readonly #driver: PromptTurnDriver` — the turn engine
+  (`acp/engine/prompt-driver.ts`).
+
+The adapter holds **no** per-session state of its own. All session
+maps, MCP subscriptions, model caches, and per-turn flags live in
+the engine layer.
 
 #### Methods
 
@@ -338,153 +332,184 @@ values for request/response.
      first-class field for "last model" yet.
 
 - **`prompt(params: PromptRequest): Promise<PromptResponse>`.**
-  Detailed flow in
-  [`./startup-sequence.md § Phase 3`](./startup-sequence.md#phase-3--first-prompt).
-  Summary:
-  1. Session lookup (throws on miss).
-  2. **Built-in interception** (M4 phase B) — extract the raw
-     prompt text and run `#tryHandleBuiltin(params, rawText)`.
-     If the input matches a registered built-in (`/help`,
-     `/version`, `/session`, `/copy`), the handler runs, the
-     reply chunk is emitted directly via `#conn.sessionUpdate`
-     stamped with `_meta.bodhi.builtin = { command, action? }`,
-     a `'builtin'` `SessionEntry` is appended via
-     `store.recordBuiltin`, and the method returns
-     `{ stopReason: 'end_turn' }` — **without** model resolution
-     and **without** any inline LLM call. See
-     [`./commands.md`](./commands.md).
-  3. Model resolution via `_meta.bodhi.modelId` against
-     `#models` (throws on miss).
-  4. `#applySlashCommandExpansion()` — phase A vault commands
-     get their `/cmd args` body rewritten to the rendered
-     template. Text extraction concatenates every `type: 'text'`
-     block in `params.prompt`; throws if empty.
-  5. If `#activeInlineSessionId !== params.sessionId`, call
-     `#rehydrateInlineFromStore(params.sessionId)` — otherwise a
-     stale inline history (e.g. from a prior session whose
-     `loadSession` wasn't re-issued after worker restart) would
-     get spliced into the new turn's `finalMessages`.
-  6. `this.#inline.setModel(model)`.
-  7. Subscribes to `inline` events; routes `message_update`
-     events through `#forwardEvent`.
-  8. `await this.#inline.prompt(text)`.
-  9. Returns `{stopReason: 'cancelled'}` if `#cancelled`;
-     throws `inline.getErrorMessage()` if set; otherwise on
-     clean `end_turn` calls `await #store.recordTurn(sessionId,
-     text, inline.getMessages(), model.id)` (M1) and returns
-     `{stopReason: 'end_turn'}`. `modelId` is persisted on the
-     turn row so `session/load` can tell the UI which model was
-     last in use for this session.
-  10. Unsubscribes in `finally`.
+  One line: `return this.#driver.run(params)`. The full flow
+  (built-in interception → model resolve → slash expansion →
+  rehydrate guard → tool assembly → stream → record turn) lives
+  in `acp/engine/prompt-driver.ts`. See "Engine layer" below.
 
-- **`cancel(_params: CancelNotification): Promise<void>`.**
-  `this.#cancelled = true; this.#inline.cancel()`. The abort
-  flow is synchronous; `inline.cancel()` maps to
-  `agent.abort()` in `pi-agent-core` which aborts the
-  in-flight fetch.
+- **`cancel(_params: CancelNotification): Promise<void>`.** One
+  line: `this.#driver.abort()`. Sets the cancel flag, aborts
+  the per-turn signal, and tells the inline runtime to stop
+  streaming.
 
-- **`extMethod(method, _params)`.**
-  If `method === BODHI_LIST_MODELS_METHOD`:
-  ```
-  this.#models = await this.#bodhi.getAvailableModels();
-  return {
-    models: this.#models.map(m => ({
-      id: m.id,
-      apiFormat: apiFormatOfModel(m)
-    }))
-  };
-  ```
-  If `method === BODHI_LIST_SESSIONS_METHOD`:
-  ```
-  const summaries = this.#store ? await this.#store.listSummaries() : [];
-  return { sessions: summaries };
-  ```
-  An empty array is returned when the store is not configured
-  (e.g. in unit tests that instantiate the adapter without a
-  store).
-  If `method === BODHI_GET_SESSION_METHOD`:
-  ```
-  // Walk entries in seq order; interleave 'turn' deltas + 'builtin' pairs.
-  // Each 'turn'.finalMessages is a cumulative LLM-visible snapshot;
-  // append the slice past the previous snapshot's length.
-  // Each 'builtin' inserts a synthetic user + assistant pair tagged
-  // with `_builtin = { command, action? }` so the client can render
-  // both bubbles muted with a "not sent to LLM" badge.
-  return { sessionId: row.id, messages: <interleaved>, lastModelId, title, mcpToggles };
-  ```
-  Throws if the store is not configured or the session is
-  unknown; those errors surface to the UI as a toast.
-  Otherwise throws `"Unknown extension method: <name>"`
-  so the SDK serialises a JSON-RPC error back. Full catalog
-  flattening lives in [`./agent.md`](./agent.md);
-  `apiFormatOfModel` is the inverse of `apiFormatToPiApi` used
-  during flattening.
+- **`extMethod(method, params)`.** One line:
+  `return dispatchExtMethod(method, params, this.#extMethodHost())`.
+  The dispatcher looks up the registered handler in
+  `acp/engine/ext-methods/index.ts` and calls it with a narrow
+  facade (`ExtMethodHost`) that the adapter assembles from
+  services + runtime accessors. See "Engine layer" below.
 
-#### Private helpers
+- **`dispose(): Promise<void>`.** Delegates to
+  `runtime.dispose()`, which unsubscribes the MCP pool listener
+  and releases every connection.
 
-- **`#resolveModel(params)`.** Reads `params._meta.bodhi.modelId`;
-  returns the matching entry in `#models` or `undefined`. Kept
-  private because `_meta` is not a stable API surface — when the
-  main thread stops routing modelId through `_meta` (likely at
-  M1 when session metadata can carry it), this helper changes.
-- **`#extractPromptText(params)`.** Concatenates every `text`
-  block; ignores other block types (images, embedded context).
-  In line with the M0 `promptCapabilities` (all false).
-- **`#forwardEvent(sessionId, event, cursor)`.** Translates
-  `pi-agent-core` `AgentEvent`s into ACP notifications. Calls
-  `#emit(notification)` rather than `#conn.sessionUpdate`
-  directly so persistence is on the same path.
-  1. Early-returns for non-`message_update` events.
-  2. Early-returns if the message role isn't `'assistant'`.
-  3. Recomputes the message id (`extractMessageId`) and resets
-     `cursor.emittedLength = 0` on a new id.
-  4. Computes `delta = text.slice(cursor.emittedLength)`;
-     early-returns if empty (idempotent updates of the same
-     prefix).
-  5. Updates `cursor.emittedLength = text.length`.
-  6. Calls `await this.#emit({sessionId, update: {...agent_message_chunk}})`.
-- **`#emit(notification)`.** Single exit point for every
-  `session/update` notification in M1+. Emits to the client via
-  `#conn.sessionUpdate(notification)` **and** persists via
-  `#store.recordNotification(sessionId, notification)` on the
-  same path. Persistence failures are logged but never thrown —
-  the wire emission already happened and breaking the in-flight
-  turn over a store write would be worse than a missed row.
-  Future emitters (tool-call notifications at M2, plan at M3)
-  use this same helper so the "what we stored = what we
-  emitted" invariant holds. `loadSession` deliberately bypasses
-  `#emit` when replaying — replay must not re-persist existing
-  rows. Built-in slash commands (M4 phase B) **also** bypass
-  `#emit` because their reply is persisted as a `'builtin'`
-  entry; routing through `#emit` would double-persist the
-  chunk as a `'notification'` row.
-- **`#tryHandleBuiltin(params, rawText)` (M4 phase B).** Matches
-  `findBuiltin(rawText)`; on a hit, builds a `BuiltinHandlerCtx`
-  from adapter state, runs the handler, emits the reply via
-  `#conn.sessionUpdate(...)` with `_meta.bodhi.builtin`, persists
-  via `store.recordBuiltin(...)`, and returns
-  `{ stopReason: 'end_turn' }`. On miss, returns `null` so
-  `prompt()` falls through to the LLM path. See
-  [`./commands.md`](./commands.md) for the full surface.
-- **`#rehydrateInlineFromStore(sessionId)`.** Private helper
-  shared by `prompt`'s mismatch guard. Reads the session's
-  entries in `seq` order; picks the latest `turn`'s
-  `finalMessages` (if any) and calls
-  `inline.restoreMessages`; otherwise `inline.clearMessages`.
-  Always sets `#activeInlineSessionId = sessionId`. Returns
-  `void`. When no store is configured it short-circuits to
-  `clearMessages` — unit tests don't need the store to exist to
-  call `prompt`.
+#### `#extMethodHost()`
+
+Builds the narrow facade `dispatchExtMethod` consumes. Bridges
+`services` and `runtime` accessors so the per-handler files
+under `acp/engine/ext-methods/` stay independent of the adapter
+class. Defined in `acp/engine/types.ts` as `ExtMethodHost`.
+
+### Engine layer (`acp/engine/`)
+
+#### `engine/services.ts` (~75 LoC)
+
+`AcpAdapterServices` — infrastructure bag the adapter consumes.
+Required: `inline`, `bodhi`, `mcpPool`, `commandsFs`. Optional:
+`store`, `registry`, `features`, `mcpToggles`, `streamOverrides`.
+
+`assembleServices(opts)` — the factory. Defaults `mcpPool` to a
+fresh `McpConnectionPool` and `commandsFs` to the ZenFS
+implementation. Called once in `agent-worker.ts`.
+
+#### `engine/session-runtime.ts` (~410 LoC)
+
+`AcpSessionRuntime` — lifecycle orchestrator. Mirrors
+coding-agent's `agent-session-runtime.ts`. Owns:
+
+- `#sessions: Map<string, SessionState>` — per-session in-memory
+  state.
+- `#availableCommands: CommandDef[]` — vault command cache.
+- `#models: Model<Api>[]` — LLM catalog cache.
+- `#activeInlineSessionId: string | null` — which session's
+  history is loaded into the inline runtime.
+- `#mcpSubscription: () => void` — pool-event subscription handle.
+
+Public surface (consumed by adapter, driver, ext-method
+handlers, and builtin-dispatch):
+
+- Session map: `getSession(id)`, `setSession(id, state)`,
+  `deleteSessionEntry(id)`, `sessions` (read-only Map view).
+- Inline attach: `getActiveInlineSessionId()`,
+  `setActiveInlineSessionId(id)`.
+- Caches: `getModels()`, `setModels(m)`, `getAvailableCommands()`.
+- Stores (with safe-default fallbacks): `readFeatures(sessionId)`,
+  `readMcpToggles(sessionId)`.
+- MCP: `acquireMcpConnections(sessionId, servers)`,
+  `releaseMcpConnections(sessionId, servers)`,
+  `mcpToolsForSession(session, toggles)`,
+  `broadcastMcpPoolEvent(event)`.
+- Inline: `rehydrateInlineFromStore(sessionId)`.
+- Commands: `refreshAvailableCommands(sessionId)`.
+- Builtin context: `sessionStatsFor(sessionId)`,
+  `mcpConnectedFor(sessionId)`.
+- Wire helpers: `emit(notification)` — persisted; the single
+  exit point for `session/update` events that should survive
+  reload. `sendRawNotification(notification)` — direct conn
+  passthrough for replay + builtin replies (which persist via
+  `recordBuiltin` instead).
+- Teardown: `dispose()`.
+
+#### `engine/prompt-driver.ts` (~370 LoC)
+
+`PromptTurnDriver` — runs one `session/prompt` turn end-to-end.
+Mirrors coding-agent's `agent-session.ts` turn loop, scaled down.
+Owns per-turn state (`#turnAbort`, `#cancelled`); these reset on
+each `run()`.
+
+`run(params)` flow:
+
+1. Session lookup (throws on miss).
+2. Built-in interception via `tryHandleBuiltin(...)` — see
+   `engine/builtin-dispatch.ts`. Returns early on match without
+   touching the inline runtime.
+3. Model resolution from `_meta.bodhi.modelId` against the
+   runtime's catalog cache.
+4. Slash-command expansion (vault commands).
+5. Rehydrate inline runtime if the cached active session ≠ the
+   prompt's session.
+6. Read features + MCP toggles, list volumes, build tool list
+   (bash + MCP) wrapped with the per-turn abort signal.
+7. Compose system prompt; install model + tools on the inline
+   runtime.
+8. Push per-turn stream overrides (DEV-only `forceToolCall`).
+9. Subscribe → `inline.prompt(text)` → forward stream events as
+   `agent_message_chunk` / `tool_call` / `tool_call_update`.
+10. `recordTurn` on success.
+
+`abort()` — sets `#cancelled`, aborts the per-turn signal, calls
+`inline.cancel()`. The driver's only public API beyond `run()`.
+
+The `bindAbortSignal()` helper (chains the per-turn abort with
+the LLM-stream abort signal pi-agent-core passes into `execute`)
+lives at module scope in this file as a non-exported helper.
+
+#### `engine/builtin-dispatch.ts` (~115 LoC)
+
+`tryHandleBuiltin(args)` — free function lifted out of the
+driver. Recognises a registered built-in, runs the handler,
+emits the reply via the **raw connection** (NOT
+`runtime.emit`) stamped with `_meta.bodhi.builtin = { command,
+action? }`, and persists a `'builtin'` `SessionEntry`.
+
+The raw-connection emission is deliberate: built-in chunks must
+not be persisted as `'notification'` rows because the
+`'builtin'` entry plus the `bodhi/getSession` interleaving on
+reload is the single source of truth for replay (see
+[`./commands.md`](./commands.md) and
+[`./sessions.md`](./sessions.md)).
+
+The actual command implementations stay in
+`agent/commands/builtins/` — that boundary doesn't move.
+
+#### `engine/ext-methods/`
+
+Per-file handlers for `_bodhi/*` extension methods, registered
+in `engine/ext-methods/index.ts` via a `Record<method, handler>`.
+Each handler is a free function `(params, host: ExtMethodHost) =>
+Promise<Record<string, unknown>>`:
+
+- `list-models.ts` — `bodhi/listModels` (refreshes model catalog
+  cache, returns `{id, apiFormat}` descriptors).
+- `list-sessions.ts` — `bodhi/listSessions` (returns store
+  summaries, empty array when no store).
+- `volumes-list.ts` — `_bodhi/volumes/list` (volume registry
+  introspection).
+- `features-list.ts` — `_bodhi/features/list` (per-session
+  feature snapshot + defaults).
+- `features-set.ts` — `_bodhi/features/set` (validates key,
+  enforces DEV-only `forceToolCall` gate, persists override).
+- `get-session.ts` — `bodhi/getSession` (transcript rebuild from
+  store entries, interleaves `'turn'` deltas + `'builtin'` pairs;
+  the heaviest handler at ~70 LoC, kept cohesive — it's one
+  algorithm).
+- `mcp-toggles-set.ts` — `_bodhi/mcp/toggles/set` (per-session
+  per-server / per-tool toggle override).
+- `sessions-delete.ts` — `_bodhi/sessions/delete` (idempotent
+  removal: in-memory state first, then store).
+
+Adding a new `_bodhi/*` method is "create a file + register it"
+— no edits to a switch statement. M5 extensions / M6 fork / M7
+compaction land cleanly in this directory.
 
 #### Module-private functions
 
+Pure functions in `acp/wire-utils.ts`:
+
 - `extractAssistantText(msg)` — handles both `string` and
-  `ContentBlock[]`-shaped `content` fields on a
-  `pi-agent-core` `AgentMessage`. Joins every `type: 'text'`
-  block.
-- `extractMessageId(msg)` — reads `msg.id` if it's a string;
-  otherwise `undefined`. `pi-agent-core`'s message shape is
-  evolving, so we defend against the field being missing.
+  `ContentBlock[]`-shaped `content` fields.
+- `extractMessageId(msg)` — reads `msg.id` if string.
+- `extractSessionMeta(meta)` — defensively coerces
+  `_meta.bodhi.{requestedMcpUrls, mcpInstances}`.
+- `filterHttpServers(servers)` — drops non-http MCP entries.
+- `toWireMcpToggles(snapshot)` — internal → wire shape.
+- `toAvailableCommand(def)` — `CommandDef` → `AvailableCommand`.
+- `toolTitle(name, args)` — bash title formatting for UI.
+- `toToolCallContent(content)` — pi-agent-core content blocks
+  → ACP `ToolCallUpdate.content` shape.
+- `makeBuiltinUserMessage(text, tag)` /
+  `makeBuiltinAssistantMessage(text, tag)` — synthetic builtin
+  message factories used by `bodhi/getSession`.
 
 ## Tests
 

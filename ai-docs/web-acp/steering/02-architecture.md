@@ -18,7 +18,14 @@
 │  constraint:   framing code has zero MessagePort/Worker refs     │
 ├──────────────────────────────────────────────────────────────────┤
 │  ACP agent runtime (Web Worker)                                  │
-│  ├─ Session loop — prompt → tool_call loop → turn_end            │
+│  ├─ Wire shim — AcpAgentAdapter (Agent interface; delegate-only) │
+│  │   ↓                                                            │
+│  ├─ Engine layer (acp/engine/)                                   │
+│  │   • services.ts — AcpAdapterServices deps bag                 │
+│  │   • session-runtime.ts — lifecycle, MCP pool, vault commands  │
+│  │   • prompt-driver.ts — single prompt-turn loop                │
+│  │   • builtin-dispatch.ts — /help, /version, /copy, /session    │
+│  │   • ext-methods/*.ts — _bodhi/* extension handlers (8 files)  │
 │  ├─ Tool execution — built-in bash tool over just-bash +         │
 │  │   agent-side MCP client + provider-native tool observation    │
 │  ├─ Volume mounts — ZenFS WebAccess over transferred FSA         │
@@ -34,6 +41,14 @@
 Arrows flow downward between layers. Upward flow is exclusively via
 ACP notifications (`session/update`, permission requests, tool-call
 announcements).
+
+The wire shim / engine split mirrors coding-agent's
+`modes/rpc/rpc-mode.ts` → `core/agent-session.ts` posture. See
+[`../web-acp-vs-coding-agent/engine-split.md`](../web-acp-vs-coding-agent/engine-split.md)
+for the full mapping and where web-acp deliberately diverges, and
+[`../web-acp-vs-standard-acp/engine-split.md`](../web-acp-vs-standard-acp/engine-split.md)
+for the reasoning that the engine layer is invisible to ACP-compliant
+clients (same wire surface before and after the split).
 
 ## Why ACP (and not a bespoke RPC)
 
