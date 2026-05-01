@@ -44,16 +44,18 @@ test.describe('sessions', () => {
 
     await test.step('switch to session A — model snaps to OpenAI, transcript shows tuesday', async () => {
       await sessions.click(sessionA);
-      await messages.bubble(0, 'assistant').waitFor();
       await expect(chat.modelSelector).toContainText(FULL_MODEL_ID);
-      expect((await messages.assistantText(0)).toLowerCase()).toContain('tuesday');
+      await expect(messages.bubble(0, 'assistant')).toContainText('tuesday', {
+        ignoreCase: true,
+      });
     });
 
     await test.step('switch to session B — model snaps to Anthropic, transcript shows thursday', async () => {
       await sessions.click(sessionB);
-      await messages.bubble(0, 'assistant').waitFor();
       await expect(chat.modelSelector).toContainText(SECOND_FULL_MODEL_ID);
-      expect((await messages.assistantText(0)).toLowerCase()).toContain('thursday');
+      await expect(messages.bubble(0, 'assistant')).toContainText('thursday', {
+        ignoreCase: true,
+      });
     });
 
     await test.step('reload — both sessions persist with stable titles + transcript', async () => {
@@ -66,16 +68,18 @@ test.describe('sessions', () => {
       await sessions.row(sessionA).waitFor();
       await sessions.row(sessionB).waitFor();
       await sessions.click(sessionB);
-      await messages.bubble(0, 'assistant').waitFor();
       await expect(chat.modelSelector).toContainText(SECOND_FULL_MODEL_ID);
-      expect((await messages.assistantText(0)).toLowerCase()).toContain('thursday');
+      await expect(messages.bubble(0, 'assistant')).toContainText('thursday', {
+        ignoreCase: true,
+      });
       expect(await sessions.getTitle(sessionA)).toBe(titleA);
     });
 
     await test.step('follow-up turn on resumed session B works', async () => {
       await chat.send('reply with the single word friday');
-      await chat.waitForAssistantTurn(1);
-      expect((await messages.assistantText(1)).toLowerCase()).toContain('friday');
+      await expect(messages.bubble(1, 'assistant')).toContainText('friday', {
+        ignoreCase: true,
+      });
     });
 
     await test.step('delete inactive session A — A vanishes, B remains active', async () => {
@@ -104,8 +108,9 @@ test.describe('sessions', () => {
 
     await test.step('the freshly-auto-created session is usable', async () => {
       await chat.send('reply with the single word charlie');
-      await chat.waitForAssistantTurn(0);
-      expect((await messages.assistantText(0)).toLowerCase()).toContain('charlie');
+      await expect(messages.bubble(0, 'assistant')).toContainText('charlie', {
+        ignoreCase: true,
+      });
     });
   });
 });

@@ -89,10 +89,9 @@ test.describe('tools and volumes', () => {
       await expect(chat.input).toHaveValue('/wiki:greet ');
       await chat.fillRaw('/wiki:greet alice');
       await chat.sendButton.click();
-      await chat.waitForAssistantTurn(0);
-      const reply = await messages.assistantText(0);
-      expect.soft(reply).toContain('BODHI-SLASH-OK');
-      expect.soft(reply).toContain('alice');
+      const reply = messages.bubble(0, 'assistant');
+      await expect.soft(reply).toContainText('BODHI-SLASH-OK');
+      await expect.soft(reply).toContainText('alice');
     });
 
     await test.step('vault prompt template — /wiki:poem expands and drives the LLM', async () => {
@@ -105,10 +104,9 @@ test.describe('tools and volumes', () => {
       await expect(chat.input).toHaveValue('/wiki:poem ');
       await chat.fillRaw('/wiki:poem cherry');
       await chat.sendButton.click();
-      await chat.waitForAssistantTurn(0);
-      const reply = await messages.assistantText(0);
-      expect.soft(reply).toContain('BODHI-PROMPT-OK');
-      expect.soft(reply).toContain('cherry');
+      const reply = messages.bubble(0, 'assistant');
+      await expect.soft(reply).toContainText('BODHI-PROMPT-OK');
+      await expect.soft(reply).toContainText('cherry');
     });
 
     await test.step('collision — /wiki:dup expands to the command body, not the prompt body', async () => {
@@ -120,10 +118,9 @@ test.describe('tools and volumes', () => {
       await picker.select('wiki:dup');
       await expect(chat.input).toHaveValue('/wiki:dup ');
       await chat.sendButton.click();
-      await chat.waitForAssistantTurn(0);
-      const reply = await messages.assistantText(0);
-      expect.soft(reply).toContain('BODHI-CMD-WIN');
-      expect.soft(reply).not.toContain('BODHI-PROMPT-LOSE');
+      const reply = messages.bubble(0, 'assistant');
+      await expect.soft(reply).toContainText('BODHI-CMD-WIN');
+      await expect.soft(reply).not.toContainText('BODHI-PROMPT-LOSE');
     });
 
     await test.step('bashEnabled OFF — no tool-call rendered for the next turn', async () => {
@@ -145,9 +142,7 @@ test.describe('tools and volumes', () => {
       );
       await messages.toolCalls().first().waitFor({ timeout: 60_000 });
       await messages.waitForToolCallCompleted();
-      await chat.waitForAssistantTurn(0);
-      const reply = await messages.assistantText(0);
-      expect(reply).toContain('BODHI-M2-SMOKE');
+      await expect(messages.bubble(0, 'assistant')).toContainText('BODHI-M2-SMOKE');
     });
 
     await test.step('bash error — missing file surfaces non-zero exit code', async () => {
@@ -162,9 +157,9 @@ test.describe('tools and volumes', () => {
       await messages.waitForToolCallCompleted();
       const exit = await messages.toolCallExitCode();
       expect.soft(exit).toMatch(/exit:\s*[1-9]/);
-      await chat.waitForAssistantTurn(0);
-      const reply = await messages.assistantText(0);
-      expect.soft(reply.toLowerCase()).toMatch(/missing|not found|no such/);
+      await expect
+        .soft(messages.bubble(0, 'assistant'))
+        .toContainText(/missing|not found|no such/i);
     });
   });
 });

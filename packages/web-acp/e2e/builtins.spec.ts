@@ -84,10 +84,9 @@ test.describe('built-ins', () => {
 
     await test.step('a real prompt produces a non-built-in assistant turn', async () => {
       await chat.send('Reply with exactly the following text and nothing else: BODHI-COPY-OK');
-      await chat.waitForAssistantTurn(5);
+      const reply = messages.bubble(5, 'assistant');
+      await expect(reply).toContainText('BODHI-COPY-OK');
       await messages.expectNotBuiltin(5, 'assistant');
-      const text = await messages.assistantText(5);
-      expect(text).toContain('BODHI-COPY-OK');
     });
 
     await test.step('/copy writes the LLM-only conversation as markdown to the clipboard', async () => {

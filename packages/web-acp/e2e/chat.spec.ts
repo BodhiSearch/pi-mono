@@ -18,18 +18,18 @@ test.describe('chat', () => {
 
     await test.step('simple round-trip — what day comes after monday', async () => {
       await chat.send('what day comes after monday? answer in one word');
-      await chat.waitForAssistantTurn(0);
-      const reply = (await messages.assistantText(0)).toLowerCase();
-      expect(reply).toContain('tuesday');
+      await expect(messages.bubble(0, 'assistant')).toContainText('tuesday', {
+        ignoreCase: true,
+      });
     });
 
     await test.step('swap to the Anthropic model in a fresh chat', async () => {
       await chat.newChat();
       await chat.selectModel(SECOND_FULL_MODEL_ID);
       await chat.send('what day comes after wednesday? answer in one word');
-      await chat.waitForAssistantTurn(0);
-      const reply = (await messages.assistantText(0)).toLowerCase();
-      expect(reply).toContain('thursday');
+      await expect(messages.bubble(0, 'assistant')).toContainText('thursday', {
+        ignoreCase: true,
+      });
     });
 
     await test.step('stop streaming — long prompt, click btn-stop, chat goes idle, user bubble preserved', async () => {
@@ -61,9 +61,9 @@ test.describe('chat', () => {
       await chat.refreshModels();
       await chat.selectModel(FULL_MODEL_ID);
       await chat.send('reply with the single word ready');
-      await chat.waitForAssistantTurn(0);
-      const reply = (await messages.assistantText(0)).toLowerCase();
-      expect(reply).toContain('ready');
+      await expect(messages.bubble(0, 'assistant')).toContainText('ready', {
+        ignoreCase: true,
+      });
     });
   });
 });

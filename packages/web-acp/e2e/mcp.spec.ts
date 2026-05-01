@@ -71,9 +71,7 @@ test.describe('mcp', () => {
         `Call the ${toolName} tool with {"message":"${token}"} and then reply with exactly the echoed text.`
       );
       await messages.waitForToolCallByName(toolName, 'completed');
-      await chat.waitForAssistantTurn(0);
-      const reply = await messages.assistantText(0);
-      expect(reply).toContain(token);
+      await expect(messages.bubble(0, 'assistant')).toContainText(token);
     });
 
     await test.step('/mcp now lists the connected server', async () => {

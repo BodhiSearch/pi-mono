@@ -169,10 +169,6 @@ export class ChatPage {
     await this.page.locator(this.selectors.chatProcessing).waitFor({ state: 'hidden' });
   }
 
-  async getAssistantText(turn: number): Promise<string> {
-    return (await this.page.locator(this.selectors.message(turn, 'assistant')).textContent()) ?? '';
-  }
-
   async waitForSessionCount(expected: number, opts: { timeout?: number } = {}): Promise<void> {
     const timeout = opts.timeout ?? 10000;
     await this.page

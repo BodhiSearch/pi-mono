@@ -11,10 +11,6 @@ export class MessagesView {
     );
   }
 
-  async assistantText(turn: number): Promise<string> {
-    return (await this.bubble(turn, 'assistant').textContent()) ?? '';
-  }
-
   async expectBuiltin(turn: number, role: Role): Promise<void> {
     await expect(this.bubble(turn, role)).toHaveAttribute('data-test-state', 'builtin');
   }

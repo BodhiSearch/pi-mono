@@ -50,9 +50,22 @@ npm test                    # vitest across workspaces --if-present
 npm run dev                 # vite dev server
 npm run build               # tsc -b && vite build
 npm test                    # vitest (unit)
-npm run test:e2e            # Playwright — real LLM via .env.test (wired at M0)
+npm run test:e2e            # Playwright — real LLM via .env.test, self-contained
 npm run check               # lint + typecheck
 ```
+
+`npm run test:e2e` is **self-contained** — it does not require any external
+service to be running. The Playwright `globalSetup` in
+`packages/web-acp/e2e/tests/global-setup.ts` boots a fresh BodhiApp server,
+seeds Keycloak realms/users, and registers any MCP servers the suite needs.
+The Playwright `webServer` block boots Vite at `localhost:5173` for the run.
+Credentials (LLM API keys, Bodhi admin) live in `packages/web-acp/e2e/.env.test`.
+
+**Mandatory:** After **any** code change under `packages/web-acp/` or
+`packages/web-acp-agent/`, run `npm run test:e2e` from `packages/web-acp/`
+before committing. Unit tests (`npm test`) and `npm run check` are necessary
+but not sufficient — the agent + transport + IndexedDB + LLM round-trip is
+only exercised end-to-end. Treat any new e2e regression as a blocker.
 
 `packages/web-agent/` (frozen — reference only, do not extend):
 
