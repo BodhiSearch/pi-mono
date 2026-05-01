@@ -1,117 +1,133 @@
-import { expect, test } from '@playwright/test';
-import { ChatPage } from './tests/pages/ChatPage';
-import { FULL_MODEL_ID, getTestState } from './tests/global-setup';
+import { test, expect } from './tests/fixtures';
+import { appReady, appReloadReady } from './tests/flows';
+import { FULL_MODEL_ID } from './tests/global-setup';
 
-test.describe('built-in slash commands', () => {
-  test.setTimeout(120_000);
-
-  test('built-ins render muted with a badge, /copy writes markdown, /copy without an LLM turn warns, and reload preserves the bubbles', async ({
+test.describe('built-ins', () => {
+  test('picker advertisement, /copy no-op + success, /help, /version, /session, /mcp list, reload tagging', async ({
     page,
     context,
+    setup,
+    status,
+    auth,
+    chat,
+    messages,
+    sessions,
+    picker,
   }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    const { username, password, bodhiServerUrl } = getTestState();
 
-    const chat = new ChatPage(page);
-    await page.goto('/');
-    await chat.waitServerReady(bodhiServerUrl);
-    await chat.login({ username, password });
-    await chat.loadModels();
-    await chat.selectModel(FULL_MODEL_ID);
-
-    await test.step('typing `/` shows the built-ins in the picker alongside vault commands', async () => {
-      const input = page.locator('[data-testid="chat-input"]');
-      await input.fill('/');
-      await page
-        .locator('[data-testid="command-picker"][data-test-state="open"]')
-        .waitFor({ timeout: 10_000 });
-      await expect(page.locator('[data-testid="command-picker-item-help"]')).toBeVisible();
-      await expect(page.locator('[data-testid="command-picker-item-version"]')).toBeVisible();
-      await expect(page.locator('[data-testid="command-picker-item-session"]')).toBeVisible();
-      await expect(page.locator('[data-testid="command-picker-item-copy"]')).toBeVisible();
-      await input.fill('');
+    await test.step('setup — boot, authenticate, pick OpenAI model', async () => {
+      await appReady({ page, setup, status, auth, chat }, { selectModel: FULL_MODEL_ID });
     });
 
-    await test.step('/copy before any assistant turn surfaces "nothing to copy" both in transcript and toast', async () => {
+    await test.step('typing `/` advertises every built-in in the picker', async () => {
+      await chat.fillRaw('/');
+      await picker.expectOpen();
+      await expect.soft(picker.item('help')).toBeVisible();
+      await expect.soft(picker.item('version')).toBeVisible();
+      await expect.soft(picker.item('session')).toBeVisible();
+      await expect.soft(picker.item('copy')).toBeVisible();
+      await expect.soft(picker.item('mcp')).toBeVisible();
+      await chat.fillRaw('');
+    });
+
+    await test.step('/copy with no LLM turn — built-in reply + warning toast', async () => {
       await chat.send('/copy');
-      // Built-in reply lands as the assistant bubble of turn 0.
-      const reply = page.locator(
-        '[data-testid="chat-message-turn-0"][data-messagetype="assistant"]'
-      );
+      const reply = messages.bubble(0, 'assistant');
       await reply.waitFor();
-      await expect(reply).toHaveAttribute('data-test-state', 'builtin');
+      await messages.expectBuiltin(0, 'assistant');
       await expect(reply).toContainText(/nothing to copy/i);
-      // Toast surfaces the no-op warning to the user.
-      await expect(page.locator('text=Nothing to copy yet').first()).toBeVisible({
-        timeout: 5_000,
-      });
+      await expect(page.locator('text=Nothing to copy yet').first()).toBeVisible();
     });
 
-    await test.step('/help renders muted with the "not sent to LLM" badge', async () => {
+    await test.step('/help renders muted with the "not sent to LLM" badge and lists every built-in', async () => {
       await chat.send('/help');
-      const userBubble = page
-        .locator('[data-testid="chat-message-turn-1"][data-messagetype="user"]')
-        .first();
-      await userBubble.waitFor();
-      await expect(userBubble).toHaveAttribute('data-test-state', 'builtin');
-      const replyBubble = page
-        .locator('[data-testid="chat-message-turn-1"][data-messagetype="assistant"]')
-        .first();
-      await replyBubble.waitFor();
-      await expect(replyBubble).toHaveAttribute('data-test-state', 'builtin');
-      await expect(replyBubble).toContainText('/help');
-      await expect(replyBubble).toContainText('/copy');
-      await expect(replyBubble.locator('[data-testid="builtin-badge"]')).toContainText(
-        /not sent to LLM/i
-      );
+      await messages.bubble(1, 'user').waitFor();
+      await messages.expectBuiltin(1, 'user');
+      const reply = messages.bubble(1, 'assistant');
+      await reply.waitFor();
+      await messages.expectBuiltin(1, 'assistant');
+      await messages.expectBuiltinBadge(1);
+      await expect.soft(reply).toContainText('/help');
+      await expect.soft(reply).toContainText('/version');
+      await expect.soft(reply).toContainText('/session');
+      await expect.soft(reply).toContainText('/copy');
+      await expect.soft(reply).toContainText('/mcp');
     });
 
-    let realReplyText = '';
+    await test.step('/version reply contains the web-acp build identifier', async () => {
+      await chat.send('/version');
+      const reply = messages.bubble(2, 'assistant');
+      await reply.waitFor();
+      await messages.expectBuiltin(2, 'assistant');
+      await expect(reply).toContainText(/web-acp:/);
+    });
+
+    await test.step('/session reply describes the active session', async () => {
+      await chat.send('/session');
+      const reply = messages.bubble(3, 'assistant');
+      await reply.waitFor();
+      await messages.expectBuiltin(3, 'assistant');
+      await expect.soft(reply).toContainText(/Session/i);
+      await expect.soft(reply).toContainText('Turns');
+      await expect.soft(reply).toContainText(FULL_MODEL_ID);
+      await expect.soft(reply).toContainText(/MCP servers/i);
+    });
+
+    await test.step('/mcp (empty list) — built-in reply names the empty state', async () => {
+      await chat.send('/mcp');
+      const reply = messages.bubble(4, 'assistant');
+      await reply.waitFor();
+      await messages.expectBuiltin(4, 'assistant');
+      await expect(reply).toContainText(/No MCP servers requested yet/i);
+    });
+
     await test.step('a real prompt produces a non-built-in assistant turn', async () => {
       await chat.send('Reply with exactly the following text and nothing else: BODHI-COPY-OK');
-      await chat.waitForAssistantTurn(2);
-      const last = page.locator(
-        '[data-testid="chat-message-turn-2"][data-messagetype="assistant"]'
-      );
-      await expect(last).not.toHaveAttribute('data-test-state', 'builtin');
-      realReplyText = (await last.textContent()) ?? '';
-      expect(realReplyText).toContain('BODHI-COPY-OK');
+      await chat.waitForAssistantTurn(5);
+      await messages.expectNotBuiltin(5, 'assistant');
+      const text = await messages.assistantText(5);
+      expect(text).toContain('BODHI-COPY-OK');
     });
 
-    await test.step('/copy writes the conversation markdown to the clipboard and toasts success', async () => {
+    await test.step('/copy writes the LLM-only conversation as markdown to the clipboard', async () => {
       await chat.send('/copy');
-      const reply = page
-        .locator('[data-testid="chat-message-turn-3"][data-messagetype="assistant"]')
-        .first();
+      const reply = messages.bubble(6, 'assistant');
       await reply.waitFor();
-      await expect(reply).toHaveAttribute('data-test-state', 'builtin');
+      await messages.expectBuiltin(6, 'assistant');
       await expect(reply).toContainText(/copied/i);
-      await expect(page.locator('text=Copied conversation to clipboard').first()).toBeVisible({
-        timeout: 5_000,
-      });
-      const clipboard = await page.evaluate(() => navigator.clipboard.readText());
-      // Built-ins (/help, /copy) must NOT appear in the copied markdown —
-      // only the real user/assistant exchange.
-      expect(clipboard).toContain('BODHI-COPY-OK');
-      expect(clipboard).toContain('**Assistant:**');
-      expect(clipboard).toContain('**You:**');
-      expect(clipboard).not.toContain('/help');
-      expect(clipboard).not.toContain('/copy');
+      await expect(page.locator('text=Copied conversation to clipboard').first()).toBeVisible();
+      const clipboard = await messages.readClipboard();
+      expect.soft(clipboard).toContain('BODHI-COPY-OK');
+      expect.soft(clipboard).toContain('**Assistant:**');
+      expect.soft(clipboard).toContain('**You:**');
+      expect.soft(clipboard).not.toContain('/help');
+      expect.soft(clipboard).not.toContain('/copy');
+      expect.soft(clipboard).not.toContain('/version');
     });
 
-    await test.step('reloading the page restores both built-in bubbles still tagged', async () => {
+    let persistedSessionId = '';
+
+    await test.step('capture the persisted session id before reload', async () => {
+      const ids = await sessions.listIds();
+      // Only one persisted session exists in this test; the auto-empty
+      // (if any) sits alongside but our session is the one with turns.
+      persistedSessionId = ids[0] ?? '';
+      expect(persistedSessionId).toBeTruthy();
+    });
+
+    await test.step('reload — built-in bubbles still tagged after rehydration', async () => {
       await page.reload();
-      await chat.waitServerReady(bodhiServerUrl);
-      await page.locator('[data-testid="section-auth"][data-test-state="authenticated"]').waitFor();
-      await chat.waitForSessionCount(1);
-      const [sessionId] = await chat.listSessionIds();
-      await chat.clickSession(sessionId);
-      // The /help reply is the second built-in pair (turn 1 in our flow).
-      const reply = page
-        .locator('[data-testid="chat-message-turn-1"][data-messagetype="assistant"]')
-        .first();
-      await reply.waitFor({ timeout: 10_000 });
-      await expect(reply).toHaveAttribute('data-test-state', 'builtin');
+      await appReloadReady({ page, setup, status });
+      // Wait for the persisted session row to materialise, then click
+      // it before the auto-create useEffect (currentSessionId == null
+      // on mount) can race in the background.
+      await sessions.row(persistedSessionId).waitFor();
+      await sessions.click(persistedSessionId);
+      // /help was turn 1 in this session; the bubble should still be muted.
+      const reply = messages.bubble(1, 'assistant');
+      await reply.waitFor();
+      await messages.expectBuiltin(1, 'assistant');
       await expect(reply).toContainText('/help');
     });
   });

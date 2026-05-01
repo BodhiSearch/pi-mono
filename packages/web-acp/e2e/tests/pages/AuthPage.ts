@@ -25,40 +25,32 @@ export class AuthPage {
   /**
    * Cold login — first authentication of this browser context. Walks the
    * full path: BodhiApp `/ui/login` → Keycloak password screen → access
-   * request review → app. Use {@link reloginAfterLogout} when the test
-   * already authenticated once and just logged out (Keycloak SSO cookie
-   * is still alive and skips the password screen).
+   * request review → app.
    */
   async login(credentials: Credentials, opts: LoginOptions = {}): Promise<void> {
     await this.loginButton.click();
     await this.completeKeycloakSignIn(credentials);
-    await this.walkAccessRequestIfPresent(opts);
+    await this.approveAccessRequest(opts);
     await this.expectReturnedToApp();
   }
 
   /**
    * Post-logout re-login. The OAuth logout clears BodhiApp's session but
-   * leaves the Keycloak SSO cookie intact, so clicking Login bounces
-   * straight to the access-request review (or back to the app if the
-   * approval is already cached for this scope set) without ever showing
-   * the Keycloak password form.
+   * the access-request review screen is always shown on every login cycle.
    */
   async reloginAfterLogout(opts: LoginOptions = {}): Promise<void> {
     await this.loginButton.click();
-    await this.walkAccessRequestIfPresent(opts);
+    await this.approveAccessRequest(opts);
     await this.expectReturnedToApp();
   }
 
   /**
    * Mid-session re-auth path used by `/mcp add` / `/mcp remove`. The
-   * chat command mutates the requested-MCPs IDB list and re-runs
-   * `auth.login` via the injected trigger. Keycloak SSO skips the
-   * password screen; the access-request review may or may not appear
-   * depending on whether the new scope set differs from what Bodhi has
-   * already approved for this user.
+   * chat command triggers an automatic re-auth flow that lands on the
+   * access-request review page.
    */
   async reauthForMcpChange(acceptMcps: string[] = []): Promise<void> {
-    await this.walkAccessRequestIfPresent({ acceptMcps });
+    await this.approveAccessRequest({ acceptMcps });
     await this.expectReturnedToApp();
   }
 
@@ -77,16 +69,8 @@ export class AuthPage {
     await this.page.click('#kc-login');
   }
 
-  private async walkAccessRequestIfPresent(opts: LoginOptions): Promise<void> {
-    await Promise.race([
-      this.page.waitForURL(/\/access-requests\/review/),
-      this.page.waitForURL(/localhost:5173/),
-    ]);
-    if (!/\/access-requests\/review/.test(this.page.url())) return;
-    await this.approveAccessRequest(opts);
-  }
-
   private async approveAccessRequest({ acceptMcps = [] }: LoginOptions): Promise<void> {
+    await this.page.waitForURL(/\/access-requests\/review/);
     await this.approveButton.waitFor();
     const accept = new Set(acceptMcps);
     const toggleIds: string[] = await this.page

@@ -11,7 +11,7 @@ import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { getErrorMessage } from '@/lib/utils';
 import { getServerUrlOrThrow } from '@/lib/agent-model';
 import { composeMcpServers, type McpToggleSnapshot } from '@/mcp/compose-mcp-servers';
-import { loadRequestedMcps, saveRequestedMcps } from '@/mcp/requested-mcps-store';
+import { loadRequestedMcps } from '@/mcp/requested-mcps-store';
 import type { McpInstanceView } from '@/mcp/types';
 
 const EMPTY_MCP_TOGGLES: McpToggleSnapshot = Object.freeze({
@@ -70,11 +70,10 @@ export function useAcpMcp(deps: UseAcpMcpDeps): UseAcpMcpResult {
 
   /**
    * Mirror of the persisted `web-acp:mcp-requested` IDB list. Hydrated
-   * once on hook mount (DEV-seed boot path applied first when
-   * `window.__mcpRequestedSeed` is present), kept in sync by
-   * `applyRequestedMcpsUpdate` after `/mcp add` / `/mcp remove`. The
-   * ref is read by `composeSessionMeta` at every `session/new` /
-   * `session/load` so the worker always sees the freshest list.
+   * once on hook mount, kept in sync by `applyRequestedMcpsUpdate`
+   * after `/mcp add` / `/mcp remove`. The ref is read by
+   * `composeSessionMeta` at every `session/new` / `session/load` so
+   * the worker always sees the freshest list.
    */
   const requestedMcpUrlsRef = useRef<string[]>([]);
   const requestedMcpsHydratedRef = useRef(false);
@@ -82,15 +81,6 @@ export function useAcpMcp(deps: UseAcpMcpDeps): UseAcpMcpResult {
     if (requestedMcpsHydratedRef.current) return;
     requestedMcpsHydratedRef.current = true;
     void (async () => {
-      // DEV-only test seed: write the injected list to IDB before any
-      // login click reads it. Production builds dead-code the branch.
-      if (import.meta.env.DEV && typeof window !== 'undefined') {
-        const seed = (window as unknown as { __mcpRequestedSeed?: unknown }).__mcpRequestedSeed;
-        if (Array.isArray(seed)) {
-          const cleaned = seed.filter((u): u is string => typeof u === 'string');
-          await saveRequestedMcps(cleaned);
-        }
-      }
       requestedMcpUrlsRef.current = await loadRequestedMcps();
     })();
   }, []);

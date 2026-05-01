@@ -28,7 +28,7 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   reporter: 'html',
   globalSetup: './e2e/tests/global-setup.ts',
-  timeout: 30_000,
+  timeout: 120_000,
   expect: { timeout: 30_000 },
   use: {
     baseURL,

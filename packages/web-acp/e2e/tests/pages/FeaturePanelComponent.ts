@@ -29,11 +29,13 @@ export class FeaturePanelComponent {
     await this.expectState(key, desired);
   }
 
-  /** DEV-only — the row is hidden in production builds, so guard with isVisible(). */
-  async setForceToolCallOnIfAvailable(): Promise<void> {
-    const toggle = this.toggle('forceToolCall');
-    if (await toggle.isVisible().catch(() => false)) {
-      await this.setState('forceToolCall', 'on');
-    }
+  /**
+   * DEV-only deterministic test toggle: forces `tool_choice: 'required'` on
+   * the next pi-ai call so a benign prompt deterministically triggers a tool
+   * call. Tests always run against `npm run dev`, so the row is always
+   * present.
+   */
+  async setForceToolCallOn(): Promise<void> {
+    await this.setState('forceToolCall', 'on');
   }
 }

@@ -1,7 +1,20 @@
-import { Page, expect } from '@playwright/test';
+import { Page, expect, type Locator } from '@playwright/test';
 
 export class ChatPage {
-  constructor(private page: Page) {}
+  /** Pre-built locators used by the new thematic specs. */
+  readonly input: Locator;
+  readonly sendButton: Locator;
+  readonly modelSelector: Locator;
+  private readonly stopButton: Locator;
+  private readonly chatArea: Locator;
+
+  constructor(private page: Page) {
+    this.input = page.locator('[data-testid="chat-input"]');
+    this.sendButton = page.locator('[data-testid="send-button"]');
+    this.modelSelector = page.locator('[data-testid="model-selector"]');
+    this.stopButton = page.locator('[data-testid="btn-stop"]');
+    this.chatArea = page.locator('[data-testid="chat-area"]');
+  }
 
   selectors = {
     appTitle: '[data-testid="app-title"]',
@@ -220,5 +233,35 @@ export class ChatPage {
 
   async waitForSessionAbsent(sessionId: string): Promise<void> {
     await this.page.locator(this.selectors.sessionRow(sessionId)).waitFor({ state: 'detached' });
+  }
+
+  // ── New thematic-spec helpers ──────────────────────────────────────────────
+
+  async fillRaw(text: string): Promise<void> {
+    await this.input.fill(text);
+  }
+
+  async waitForStreaming(): Promise<void> {
+    await expect(this.chatArea).toHaveAttribute('data-test-state', 'streaming');
+  }
+
+  async waitForIdle(): Promise<void> {
+    await expect(this.chatArea).toHaveAttribute('data-test-state', 'idle');
+  }
+
+  async expectStopVisible(): Promise<void> {
+    await expect(this.stopButton).toBeVisible();
+  }
+
+  async expectStopHidden(): Promise<void> {
+    await expect(this.stopButton).toBeHidden();
+  }
+
+  async stop(): Promise<void> {
+    await this.stopButton.click();
+  }
+
+  async expectInputDisabled(): Promise<void> {
+    await expect(this.input).toBeDisabled();
   }
 }
