@@ -136,7 +136,14 @@ export class ChatPage {
   }
 
   async send(prompt: string): Promise<void> {
-    await this.page.locator(this.selectors.chatInput).fill(prompt);
+    const input = this.page.locator(this.selectors.chatInput);
+    await input.fill(prompt);
+    // A bare slash token (e.g. `/copy`) keeps the command picker open,
+    // and ChatInput.handleSubmit guards against submitting while the
+    // picker has focus. Dismiss it so the click goes through.
+    if (/^\/\S*$/.test(prompt)) {
+      await input.press('Escape');
+    }
     await this.page.locator(this.selectors.sendButton).click();
   }
 

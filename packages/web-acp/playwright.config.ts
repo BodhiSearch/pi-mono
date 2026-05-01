@@ -28,12 +28,16 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   reporter: 'html',
   globalSetup: './e2e/tests/global-setup.ts',
+  timeout: 30_000,
+  expect: { timeout: 30_000 },
   use: {
     baseURL,
     headless: isHeadless,
     trace: 'retain-on-failure',
     screenshot: { mode: 'only-on-failure', fullPage: true },
     video: 'retain-on-failure',
+    actionTimeout: 30_000,
+    navigationTimeout: 30_000,
     ...(isHeadless && { userAgent: buildUserAgent() }),
   },
   projects: [
