@@ -19,7 +19,7 @@ export default function BashToolCall({ call }: BashToolCallProps) {
   return (
     <div
       data-testid={`tool-call-${call.toolCallId}`}
-      data-teststate={call.status}
+      data-test-state={call.status}
       data-toolname={call.toolName}
       className="my-2 rounded-md border border-gray-300 bg-white text-xs"
     >

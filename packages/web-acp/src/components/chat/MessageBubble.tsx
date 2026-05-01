@@ -32,7 +32,7 @@ export default function MessageBubble({ message, turn }: MessageBubbleProps) {
         data-testid={`chat-message-turn-${turn}`}
         data-messagetype={message.role}
         data-turn={turn}
-        data-teststate={teststate}
+        data-test-state={teststate}
         data-builtin-command={builtinTag?.command}
         className={`max-w-[70%] px-4 py-2 rounded-lg ${isUser ? userClass : assistantClass}`}
       >

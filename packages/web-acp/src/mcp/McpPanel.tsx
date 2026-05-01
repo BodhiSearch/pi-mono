@@ -63,7 +63,7 @@ export default function McpPanel({ instances, states, toggles, onSetToggle }: Mc
   return (
     <section
       data-testid="mcp-panel"
-      data-teststate={String(connectedCount)}
+      data-test-state={String(connectedCount)}
       className="border-b bg-gray-50"
     >
       <header className="flex items-center justify-between px-3 py-2">

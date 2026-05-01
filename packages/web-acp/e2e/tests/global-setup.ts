@@ -11,9 +11,9 @@ import {
   EVERYTHING_MCP_PORT,
   EVERYTHING_MCP_URL,
 } from './utils/everything-mcp-manager';
-import { LoginPage } from './pages/LoginPage';
-import { ApiModelsPage } from './pages/ApiModelsPage';
-import { McpsPage } from './pages/McpsPage';
+import { LoginPage } from './pages/admin/LoginPage';
+import { ApiModelsPage } from './pages/admin/ApiModelsPage';
+import { McpsPage } from './pages/admin/McpsPage';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -46,7 +46,7 @@ test.describe('MCP tool roundtrip', () => {
     if (await forceToggle.isVisible()) {
       await forceToggle.click();
       await page
-        .locator('[data-testid="feature-row-forceToolCall"][data-teststate="on"]')
+        .locator('[data-testid="feature-row-forceToolCall"][data-test-state="on"]')
         .waitFor();
     }
 
@@ -60,7 +60,7 @@ test.describe('MCP tool roundtrip', () => {
     await toolCall.first().waitFor({ timeout: 60_000 });
     const completed = page
       .locator(
-        `[data-testid^="tool-call-"][data-toolname="${expectedToolName}"][data-teststate="completed"]`
+        `[data-testid^="tool-call-"][data-toolname="${expectedToolName}"][data-test-state="completed"]`
       )
       .first();
     await completed.waitFor({ timeout: 60_000 });

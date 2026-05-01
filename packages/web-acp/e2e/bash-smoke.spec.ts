@@ -25,7 +25,7 @@ test.describe('bash tool smoke', () => {
     await chat.loadModels();
     await chat.selectModel(FULL_MODEL_ID);
 
-    await page.locator('[data-testid="volumes-panel"][data-teststate="1"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="1"]').waitFor();
     // forceToolCall is DEV-only and on-by-default only when the user
     // flips it. Turn it on so the smoke test doesn't depend on the
     // model choosing to call the tool.
@@ -33,7 +33,7 @@ test.describe('bash tool smoke', () => {
     if (await forceToggle.isVisible()) {
       await forceToggle.click();
       await page
-        .locator('[data-testid="feature-row-forceToolCall"][data-teststate="on"]')
+        .locator('[data-testid="feature-row-forceToolCall"][data-test-state="on"]')
         .waitFor();
     }
 
@@ -43,7 +43,7 @@ test.describe('bash tool smoke', () => {
 
     await page.locator('[data-testid^="tool-call-"]').first().waitFor({ timeout: 30000 });
     await page
-      .locator('[data-testid^="tool-call-"][data-teststate="completed"]')
+      .locator('[data-testid^="tool-call-"][data-test-state="completed"]')
       .first()
       .waitFor({ timeout: 30000 });
 

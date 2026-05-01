@@ -38,6 +38,9 @@ export default defineConfig([
     files: ['e2e/**/*.ts'],
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Playwright's fixture `use(value)` callback collides with React's
+      // `use` hook detector; e2e files don't render React.
+      'react-hooks/rules-of-hooks': 'off',
     },
   },
 ])

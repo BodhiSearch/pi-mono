@@ -36,7 +36,7 @@ test.describe('ACP session resume', () => {
     // Reload — IndexedDB rehydrates; Bodhi auth survives via stored tokens.
     await page.reload();
     await chat.waitServerReady(bodhiServerUrl);
-    await page.locator('[data-testid="section-auth"][data-teststate="authenticated"]').waitFor();
+    await page.locator('[data-testid="section-auth"][data-test-state="authenticated"]').waitFor();
     await chat.waitForSessionCount(2);
     const idsAfterReload = await chat.listSessionIds();
     expect(new Set(idsAfterReload)).toEqual(new Set([sessionA, sessionB]));

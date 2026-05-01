@@ -21,13 +21,13 @@ test.describe('Feature toggles', () => {
     await chat.loadModels();
     await chat.selectModel(FULL_MODEL_ID);
 
-    await page.locator('[data-testid="volumes-panel"][data-teststate="1"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="1"]').waitFor();
     // Turning bashEnabled off should drop the tool from the next
     // `prompt` turn; we assert no tool-call DOM node appears.
     const bashToggle = page.locator('[data-testid="feature-toggle-bashEnabled"]');
     await bashToggle.waitFor();
     await bashToggle.click();
-    await page.locator('[data-testid="feature-row-bashEnabled"][data-teststate="off"]').waitFor();
+    await page.locator('[data-testid="feature-row-bashEnabled"][data-test-state="off"]').waitFor();
 
     await chat.send('Reply with the single word "noop".');
     await chat.waitForAssistantTurn(0);

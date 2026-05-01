@@ -81,7 +81,7 @@ export default function Header() {
 
         <section
           data-testid="section-auth"
-          data-teststate={isAuthenticated ? 'authenticated' : 'unauthenticated'}
+          data-test-state={isAuthenticated ? 'authenticated' : 'unauthenticated'}
         >
           {isAuthenticated ? (
             <div className="flex items-center gap-2">

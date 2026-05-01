@@ -65,7 +65,7 @@ test.describe('prompt templates', () => {
     await chat.loadModels();
     await chat.selectModel(FULL_MODEL_ID);
 
-    await page.locator('[data-testid="volumes-panel"][data-teststate="1"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="1"]').waitFor();
 
     await test.step('typing `/` opens the picker with the seeded prompt', async () => {
       const input = page.locator('[data-testid="chat-input"]');
@@ -114,7 +114,7 @@ test.describe('prompt templates', () => {
     await chat.loadModels();
     await chat.selectModel(FULL_MODEL_ID);
 
-    await page.locator('[data-testid="volumes-panel"][data-teststate="1"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="1"]').waitFor();
 
     await test.step('only one `wiki:dup` entry appears in the picker', async () => {
       const input = page.locator('[data-testid="chat-input"]');

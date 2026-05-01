@@ -16,6 +16,7 @@ export default function ChatDemo() {
     selectedModel,
     setSelectedModel,
     sendMessage,
+    stop,
     clearMessages,
     error: chatError,
     clearError: clearChatError,
@@ -89,6 +90,8 @@ export default function ChatDemo() {
         <ChatInput
           onSendMessage={sendMessage}
           onClearMessages={clearMessages}
+          onStop={stop}
+          isStreaming={isStreaming}
           selectedModel={selectedModel}
           setSelectedModel={setSelectedModel}
           models={models}

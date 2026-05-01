@@ -29,19 +29,19 @@ test.describe('Multi-volume mount', () => {
     await chat.loadModels();
     await chat.selectModel(FULL_MODEL_ID);
 
-    await page.locator('[data-testid="volumes-panel"][data-teststate="2"]').waitFor();
-    await page.locator('[data-testid="volume-row-wiki"][data-teststate="mounted"]').waitFor();
-    await page.locator('[data-testid="volume-row-code"][data-teststate="mounted"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="2"]').waitFor();
+    await page.locator('[data-testid="volume-row-wiki"][data-test-state="mounted"]').waitFor();
+    await page.locator('[data-testid="volume-row-code"][data-test-state="mounted"]').waitFor();
 
     // Remove the 'code' volume — panel should drop to 1.
     await page.locator('[data-testid="btn-remove-volume-code"]').click();
-    await page.locator('[data-testid="volumes-panel"][data-teststate="1"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="1"]').waitFor();
 
     // Reload — seeds are injected before page boot so volumes come back.
     await page.reload();
     await chat.waitServerReady(bodhiServerUrl);
-    await page.locator('[data-testid="section-auth"][data-teststate="authenticated"]').waitFor();
-    await page.locator('[data-testid="volumes-panel"][data-teststate="2"]').waitFor();
+    await page.locator('[data-testid="section-auth"][data-test-state="authenticated"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="2"]').waitFor();
 
     await chat.selectModel(FULL_MODEL_ID);
     await chat.send(

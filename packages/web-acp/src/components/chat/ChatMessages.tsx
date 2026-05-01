@@ -82,7 +82,7 @@ export default function ChatMessages({
     <ScrollArea
       className="flex-1 overflow-hidden"
       data-testid="chat-area"
-      data-teststate={error ? 'error' : isStreaming ? 'streaming' : 'idle'}
+      data-test-state={error ? 'error' : isStreaming ? 'streaming' : 'idle'}
       ref={(node: HTMLDivElement | null) => {
         if (node) {
           const viewport = node.querySelector(

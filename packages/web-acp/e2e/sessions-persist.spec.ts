@@ -29,7 +29,7 @@ test.describe('ACP session persistence', () => {
     await page.reload();
     await chat.waitServerReady(bodhiServerUrl);
     // Auth is carried by Bodhi's stored tokens; no login needed.
-    await page.locator('[data-testid="section-auth"][data-teststate="authenticated"]').waitFor();
+    await page.locator('[data-testid="section-auth"][data-test-state="authenticated"]').waitFor();
 
     await chat.waitForSessionCount(1);
     const afterReload = await chat.listSessionIds();

@@ -83,7 +83,7 @@ test.describe('MCP per-session toggles', () => {
     // --- Reload → click the persisted session, toggles must restore -----
     await page.reload();
     await chat.waitServerReady(bodhiServerUrl);
-    await page.locator('[data-testid="section-auth"][data-teststate="authenticated"]').waitFor();
+    await page.locator('[data-testid="section-auth"][data-test-state="authenticated"]').waitFor();
     await chat.waitForSessionCount(1);
     await chat.clickSession(sessionId);
     await chat.waitForActiveSession(sessionId);

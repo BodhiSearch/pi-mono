@@ -22,7 +22,7 @@ export default function VolumesPanel({ volumes }: VolumesPanelProps) {
   return (
     <section
       data-testid="volumes-panel"
-      data-teststate={String(entries.length)}
+      data-test-state={String(entries.length)}
       className="border-b bg-gray-50"
     >
       <header className="flex items-center justify-between px-3 py-2">

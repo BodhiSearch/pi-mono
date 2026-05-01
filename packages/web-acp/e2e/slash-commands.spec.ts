@@ -38,7 +38,7 @@ test.describe('slash commands', () => {
 
     // Wait for the volume mount + the post-newSession refresh that
     // emits `available_commands_update`.
-    await page.locator('[data-testid="volumes-panel"][data-teststate="1"]').waitFor();
+    await page.locator('[data-testid="volumes-panel"][data-test-state="1"]').waitFor();
 
     await test.step('typing `/` opens the picker with the seeded command', async () => {
       const input = page.locator('[data-testid="chat-input"]');

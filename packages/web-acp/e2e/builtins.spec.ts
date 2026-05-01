@@ -39,7 +39,7 @@ test.describe('built-in slash commands', () => {
         '[data-testid="chat-message-turn-0"][data-messagetype="assistant"]'
       );
       await reply.waitFor();
-      await expect(reply).toHaveAttribute('data-teststate', 'builtin');
+      await expect(reply).toHaveAttribute('data-test-state', 'builtin');
       await expect(reply).toContainText(/nothing to copy/i);
       // Toast surfaces the no-op warning to the user.
       await expect(page.locator('text=Nothing to copy yet').first()).toBeVisible({
@@ -53,12 +53,12 @@ test.describe('built-in slash commands', () => {
         .locator('[data-testid="chat-message-turn-1"][data-messagetype="user"]')
         .first();
       await userBubble.waitFor();
-      await expect(userBubble).toHaveAttribute('data-teststate', 'builtin');
+      await expect(userBubble).toHaveAttribute('data-test-state', 'builtin');
       const replyBubble = page
         .locator('[data-testid="chat-message-turn-1"][data-messagetype="assistant"]')
         .first();
       await replyBubble.waitFor();
-      await expect(replyBubble).toHaveAttribute('data-teststate', 'builtin');
+      await expect(replyBubble).toHaveAttribute('data-test-state', 'builtin');
       await expect(replyBubble).toContainText('/help');
       await expect(replyBubble).toContainText('/copy');
       await expect(replyBubble.locator('[data-testid="builtin-badge"]')).toContainText(
@@ -73,7 +73,7 @@ test.describe('built-in slash commands', () => {
       const last = page.locator(
         '[data-testid="chat-message-turn-2"][data-messagetype="assistant"]'
       );
-      await expect(last).not.toHaveAttribute('data-teststate', 'builtin');
+      await expect(last).not.toHaveAttribute('data-test-state', 'builtin');
       realReplyText = (await last.textContent()) ?? '';
       expect(realReplyText).toContain('BODHI-COPY-OK');
     });
@@ -84,7 +84,7 @@ test.describe('built-in slash commands', () => {
         .locator('[data-testid="chat-message-turn-3"][data-messagetype="assistant"]')
         .first();
       await reply.waitFor();
-      await expect(reply).toHaveAttribute('data-teststate', 'builtin');
+      await expect(reply).toHaveAttribute('data-test-state', 'builtin');
       await expect(reply).toContainText(/copied/i);
       await expect(page.locator('text=Copied conversation to clipboard').first()).toBeVisible({
         timeout: 5_000,
@@ -102,7 +102,7 @@ test.describe('built-in slash commands', () => {
     await test.step('reloading the page restores both built-in bubbles still tagged', async () => {
       await page.reload();
       await chat.waitServerReady(bodhiServerUrl);
-      await page.locator('[data-testid="section-auth"][data-teststate="authenticated"]').waitFor();
+      await page.locator('[data-testid="section-auth"][data-test-state="authenticated"]').waitFor();
       await chat.waitForSessionCount(1);
       const [sessionId] = await chat.listSessionIds();
       await chat.clickSession(sessionId);
@@ -111,7 +111,7 @@ test.describe('built-in slash commands', () => {
         .locator('[data-testid="chat-message-turn-1"][data-messagetype="assistant"]')
         .first();
       await reply.waitFor({ timeout: 10_000 });
-      await expect(reply).toHaveAttribute('data-teststate', 'builtin');
+      await expect(reply).toHaveAttribute('data-test-state', 'builtin');
       await expect(reply).toContainText('/help');
     });
   });

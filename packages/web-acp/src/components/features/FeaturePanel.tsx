@@ -48,7 +48,7 @@ export default function FeaturePanel({
   return (
     <section
       data-testid="features-panel"
-      data-teststate={String(enabledCount)}
+      data-test-state={String(enabledCount)}
       className="border-b bg-gray-50"
     >
       <header className="flex items-center justify-between px-3 py-2">
@@ -61,7 +61,7 @@ export default function FeaturePanel({
             <li
               key={meta.key}
               data-testid={`feature-row-${meta.key}`}
-              data-teststate={current ? 'on' : 'off'}
+              data-test-state={current ? 'on' : 'off'}
               className="flex items-start gap-2 px-3 py-1.5 text-xs"
             >
               <Checkbox

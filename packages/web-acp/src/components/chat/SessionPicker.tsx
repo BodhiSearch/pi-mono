@@ -26,7 +26,7 @@ export default function SessionPicker({
   return (
     <aside
       data-testid="session-picker"
-      data-testsessions={sessions.length}
+      data-test-state={String(sessions.length)}
       className="w-64 shrink-0 border-r bg-gray-50 overflow-y-auto"
     >
       <div className="px-3 py-3 text-xs font-semibold uppercase text-gray-500 tracking-wide">
@@ -53,7 +53,7 @@ export default function SessionPicker({
                   type="button"
                   data-testid={`session-row-${session.id}`}
                   data-sessionid={session.id}
-                  data-teststate={isActive ? 'active' : 'inactive'}
+                  data-test-state={isActive ? 'active' : 'inactive'}
                   onClick={() => onSelect(session.id)}
                   className={cn(
                     'flex flex-1 min-w-0 items-center gap-2 px-3 py-2 pr-9 text-sm text-left',

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
-import { Plus, RefreshCw, ArrowUp } from 'lucide-react';
+import { Plus, RefreshCw, ArrowUp, Square } from 'lucide-react';
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,8 @@ import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 interface ChatInputProps {
   onSendMessage: (message: string) => Promise<void>;
   onClearMessages: () => void;
+  onStop: () => void;
+  isStreaming: boolean;
   selectedModel: string;
   setSelectedModel: (id: string, fmt: ApiFormat) => void;
   models: BodhiModelInfo[];
@@ -24,6 +26,8 @@ interface ChatInputProps {
 export default function ChatInput({
   onSendMessage,
   onClearMessages,
+  onStop,
+  isStreaming,
   selectedModel,
   setSelectedModel,
   models,
@@ -148,17 +152,31 @@ export default function ChatInput({
               </Button>
             </div>
 
-            <Button
-              data-testid="send-button"
-              onClick={handleSubmit}
-              disabled={isDisabled || !message.trim()}
-              variant="ghost"
-              size="icon"
-              className="row-span-2 col-start-3 self-center"
-              title="Send message"
-            >
-              <ArrowUp />
-            </Button>
+            {isStreaming ? (
+              <Button
+                data-testid="btn-stop"
+                onClick={onStop}
+                variant="ghost"
+                size="icon"
+                className="row-span-2 col-start-3 self-center"
+                title="Stop streaming"
+                aria-label="Stop streaming"
+              >
+                <Square />
+              </Button>
+            ) : (
+              <Button
+                data-testid="send-button"
+                onClick={handleSubmit}
+                disabled={isDisabled || !message.trim()}
+                variant="ghost"
+                size="icon"
+                className="row-span-2 col-start-3 self-center"
+                title="Send message"
+              >
+                <ArrowUp />
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -19,7 +19,7 @@ export default function VolumeRow({
   return (
     <li
       data-testid={`volume-row-${entry.mountName}`}
-      data-teststate={entry.state}
+      data-test-state={entry.state}
       className="flex items-center gap-2 px-3 py-2 text-sm border-b"
     >
       <div className="flex-1 min-w-0">

@@ -6,9 +6,9 @@ export class ChatPage {
   selectors = {
     appTitle: '[data-testid="app-title"]',
     loginButton: '[data-testid="btn-auth-login"]',
-    authenticated: '[data-testid="section-auth"][data-teststate="authenticated"]',
-    clientReady: '[data-testid="badge-client-status"][data-teststate="ready"]',
-    serverReady: '[data-testid="badge-server-status"][data-teststate="ready"]',
+    authenticated: '[data-testid="section-auth"][data-test-state="authenticated"]',
+    clientReady: '[data-testid="badge-client-status"][data-test-state="ready"]',
+    serverReady: '[data-testid="badge-server-status"][data-test-state="ready"]',
     setupOverlay: '[data-testid="div-setup-overlay-v2"]',
     setupIframe: '[data-testid="iframe-setup-v2"]',
     chatInput: '[data-testid="chat-input"]',
@@ -126,6 +126,10 @@ export class ChatPage {
     await expect(this.page.locator(this.selectors.modelSelector)).toBeEnabled();
   }
 
+  async refreshModels(): Promise<void> {
+    return this.loadModels();
+  }
+
   async selectModel(modelId: string): Promise<void> {
     const trigger = this.page.locator(this.selectors.modelSelector);
     await expect(trigger).toBeEnabled();
@@ -159,7 +163,7 @@ export class ChatPage {
   async waitForSessionCount(expected: number, opts: { timeout?: number } = {}): Promise<void> {
     const timeout = opts.timeout ?? 10000;
     await this.page
-      .locator(`${this.selectors.sessionPicker}[data-testsessions="${expected}"]`)
+      .locator(`${this.selectors.sessionPicker}[data-test-state="${expected}"]`)
       .waitFor({ timeout });
   }
 
@@ -186,7 +190,7 @@ export class ChatPage {
   async clickSession(sessionId: string): Promise<void> {
     await this.page.locator(this.selectors.sessionRow(sessionId)).click();
     await this.page
-      .locator(`${this.selectors.sessionRow(sessionId)}[data-teststate="active"]`)
+      .locator(`${this.selectors.sessionRow(sessionId)}[data-test-state="active"]`)
       .waitFor();
   }
 
@@ -200,7 +204,7 @@ export class ChatPage {
 
   async waitForActiveSession(sessionId: string): Promise<void> {
     await this.page
-      .locator(`${this.selectors.sessionRow(sessionId)}[data-teststate="active"]`)
+      .locator(`${this.selectors.sessionRow(sessionId)}[data-test-state="active"]`)
       .waitFor();
   }
 
