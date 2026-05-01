@@ -1,9 +1,16 @@
 # startup-sequence
 
-**Source of truth:** `packages/web-acp/src/` — this file is the
+**Source of truth:** `packages/web-acp-agent/src/` (agent runtime)
++ `packages/web-acp/src/` (browser host) — this file is the
 authoritative narrative reference for "what happens when" across
-all modules. When any step below diverges from the code, update
-this file in the same commit.
+all modules of the **browser-worker host**. When any step below
+diverges from the code, update this file in the same commit.
+
+> **Companion file.** The Node-host equivalent is in
+> [`../cli-acp-client/index.md`](../cli-acp-client/index.md) §
+> "Boot sequence". The two narratives diverge only above the
+> transport boundary; from `startAcpAgent(...)` onwards both
+> hosts feed the same agent code.
 
 **Parent:** [`./index.md`](./index.md)
 

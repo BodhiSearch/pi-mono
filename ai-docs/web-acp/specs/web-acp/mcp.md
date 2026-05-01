@@ -1,17 +1,28 @@
 # mcp
 
-**Source of truth:**
-`packages/web-acp/src/mcp/`,
-`packages/web-acp/src/agent/mcp/`,
-`packages/web-acp/src/acp/engine/session-runtime.ts` (worker-side
-MCP lifecycle: pool subscription, acquire / release,
-broadcast, tool listing),
-`packages/web-acp/src/acp/engine/ext-methods/mcp-toggles-set.ts`
-(`_bodhi/mcp/toggles/set` handler),
-`packages/web-acp/src/acp/agent-adapter.ts` (wire shim — MCP server
-list extraction in `newSession` / `loadSession`),
-`packages/web-acp/src/acp/client.ts` (main-thread wiring),
-`packages/web-acp/src/hooks/useAcp.ts` (composition).
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`agent/mcp/` (`client.ts`, `connection-pool.ts`, `tool-adapter.ts`),
+`mcp/url-canonical.ts` (slug derivation),
+`storage/mcp-toggle-store.ts` (interface + `EMPTY_MCP_TOGGLES`),
+`acp/engine/session-runtime.ts` (worker-side MCP lifecycle: pool
+subscription, acquire / release, broadcast, tool listing),
+`acp/engine/ext-methods/mcp-toggles-set.ts` (`_bodhi/mcp/toggles/set`
+handler),
+`acp/agent-adapter.ts` (wire shim — MCP server list extraction in
+`newSession` / `loadSession`).
+
+**Source of truth (browser host — `packages/web-acp/src/`):**
+`mcp/` (main-thread `useMcpInstances`, `compose-mcp-servers`,
+`McpPanel.tsx`, the host's `toggle-store.ts` adapter that delegates
+to the agent's interface),
+`runtime/storage-dexie/mcp-toggle-store.ts` (Dexie v3 implementation
+of the agent's `McpToggleStore`),
+`acp/client.ts` (main-thread wiring),
+`hooks/useAcp.ts` (composition).
+
+**Source of truth (CLI host — `packages/cli-acp-client/src/`):**
+`services/stores.ts` carries an in-memory `McpToggleStore`
+implementation; the agent's MCP runtime is otherwise host-agnostic.
 
 **Parent:** [`./index.md`](./index.md)
 

@@ -1,12 +1,29 @@
 # sessions
 
-**Source of truth:** `packages/web-acp/src/agent/session-store.ts`
-(+ wiring in `src/acp/agent-adapter.ts`,
-`src/acp/engine/session-runtime.ts`,
-`src/acp/engine/prompt-driver.ts`,
-`src/acp/engine/builtin-dispatch.ts`,
-`src/acp/engine/ext-methods/*.ts`, and
-`src/agent/agent-worker.ts`).
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`storage/session-store.ts` (the `SessionStore` interface,
+`SessionRow`, `SessionEntry`, `SessionEntryKind`,
+`TurnPayload`, `BuiltinPayload`, `deriveTitle` helper),
+`acp/agent-adapter.ts` (wire shim — newSession / loadSession /
+sessions list dispatch),
+`acp/engine/session-runtime.ts`,
+`acp/engine/prompt-driver.ts`,
+`acp/engine/builtin-dispatch.ts`,
+`acp/engine/ext-methods/{list-sessions,get-session,sessions-delete}.ts`.
+
+**Source of truth (browser host — `packages/web-acp/src/`):**
+`runtime/storage-dexie/session-store.ts` and `db.ts` — the
+Dexie v3 implementation of the agent's `SessionStore`
+(transcripts persist across page reloads).
+`agent/agent-worker.ts` — the boot shim that opens the Dexie DB
+and passes the host store impl to `assembleServices`.
+
+**Source of truth (CLI host — `packages/cli-acp-client/src/`):**
+`services/stores.ts` carries an in-memory `SessionStore` so
+multi-turn within one CLI run works; sessions do not persist
+across launches in v0. (Token + host metadata persist via
+`settings/store.ts`; transcripts are independent and can be
+backed by SQLite later behind the same interface.)
 
 **Parent:** [`./index.md`](./index.md)
 

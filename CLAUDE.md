@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Active initiative: **web-acp** at `packages/web-acp/` — a browser-native agent that speaks the **Agent Client Protocol (ACP)** as its internal wire protocol. Main thread hosts the ACP client (React UI, `/vault` mount, fs/* delegation, permission prompts). Web Worker hosts the ACP agent (turn loop, LLM calls via `@mariozechner/pi-ai`, tool invocations). The transport between them frames ACP JSON-RPC 2.0 over `MessageChannel` today, and is explicitly designed to be swappable (future HTTP/SSE for remote-agent deployments).
 
+Post-M4 phase B the agent runtime was extracted into `packages/web-acp-agent/` (`@bodhiapp/web-acp-agent`) — a transport-agnostic ACP agent with zero browser-only deps. It exposes `startAcpAgent(transport, services)` taking a byte-stream pair plus pluggable interfaces (`SessionStore`, `FeatureStore`, `McpToggleStore`, `VolumeRegistry`, `LlmProvider`). `packages/web-acp/` is the browser host; a second host shipped as `packages/cli-acp-client/` — a Claude-Code-style Node TTY CLI that embeds the same agent in-process over an in-memory `TransformStream` duplex, with a Node-native OAuth 2.1 + PKCE client and `PassthroughFS`-backed `$cwd` volume. The CLI exists primarily to validate transport-neutrality and as a second e2e seam.
+
 `packages/web-agent/` shipped M0–M8 and is now a **frozen reference spike** — no new features land, consulted for session/tool/extension-hook patterns only. See `ai-docs/web-agent/README.md` for the archive marker and the list of specific architectural drifts that motivated the pivot.
 
 Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `pods`) are upstream libraries we consume and occasionally patch. Do not extend them unless explicitly asked.
@@ -24,6 +26,8 @@ Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `p
 - @ai-docs/web-acp/steering/02-architecture.md — layer cake, transport boundary, ZenFS + ACP fs/* mapping
 - @ai-docs/web-acp/steering/04-principles.md
 - @ai-docs/web-acp/milestones/index.md — status board with load-when hooks
+- @ai-docs/web-acp/specs/web-acp/index.md — agent + browser-host living spec
+- @ai-docs/web-acp/specs/cli-acp-client/index.md — Node CLI host living spec
 
 ### Reference (web-agent archive)
 
@@ -66,6 +70,22 @@ Credentials (LLM API keys, Bodhi admin) live in `packages/web-acp/e2e/.env.test`
 before committing. Unit tests (`npm test`) and `npm run check` are necessary
 but not sufficient — the agent + transport + IndexedDB + LLM round-trip is
 only exercised end-to-end. Treat any new e2e regression as a blocker.
+
+`packages/cli-acp-client/` (active — second host runtime for `@bodhiapp/web-acp-agent`):
+
+```bash
+npm run dev                 # tsx src/cli.ts (interactive pi-tui REPL)
+npm test                    # vitest (unit)
+npm run test:e2e            # Playwright + real BodhiApp NAPI + real LLM
+npm run check               # lint + typecheck
+```
+
+The CLI's e2e setup mirrors `packages/web-acp/e2e/` exactly — same
+`@bodhiapp/app-bindings` BodhiApp boot + Playwright OAuth flow + `.env.test`
+contract. Run `npm run test:e2e` from `packages/cli-acp-client/` after any
+change under that folder OR under `packages/web-acp-agent/` (the same
+mandate as web-acp; pick whichever host's e2e is relevant — the agent
+package change should pass both).
 
 `packages/web-agent/` (frozen — reference only, do not extend):
 

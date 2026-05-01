@@ -1,13 +1,21 @@
 # Specs — web-acp
 
-Living specs for the `packages/web-acp/` module families as they
-exist **today** (post-M0). Each folder groups one module's
-**functional** (what / why) and **technical** (how / where) view;
-splitting them leads to duplication and drift.
+Living specs for the active web-acp initiative. Post-M4 phase B
+the codebase splits into a **transport-agnostic agent package**
+(`@bodhiapp/web-acp-agent`) and one or more **host runtimes** that
+embed it. Specs are organised by package; each folder groups a
+module's **functional** (what / why) and **technical** (how /
+where) view in one file.
 
-| Module subtree | Source of truth | Spec folder |
-| --- | --- | --- |
-| `web-acp` — browser-runtime ACP client + agent worker (future `@bodhiapp/bodhi-web-acp`) | `packages/web-acp/src/` | [`./web-acp/`](./web-acp/index.md) |
+| Spec folder | Package | Role | Source of truth |
+| --- | --- | --- | --- |
+| [`./web-acp/`](./web-acp/index.md) | `packages/web-acp-agent/` (engine) + `packages/web-acp/` (browser host) | Agent runtime + the React/IndexedDB host that ships it as a Web Worker | `packages/web-acp-agent/src/` (agent) and `packages/web-acp/src/` (host) |
+| [`./cli-acp-client/`](./cli-acp-client/index.md) | `packages/cli-acp-client/` | Node TTY host that embeds the same agent in-process over an in-memory duplex | `packages/cli-acp-client/src/` |
+
+The split exists to validate the M8 library-extract assertion: the
+agent runtime is genuinely host-neutral. Today's two hosts (browser
+worker, Node CLI) speak the same ACP wire to the same agent code;
+tomorrow's HTTP/SSE host slots in behind the same boundary.
 
 ## Relationship to sibling specs
 
@@ -15,8 +23,8 @@ splitting them leads to duplication and drift.
   [`../../specs/worker-bodhi/`](../../specs/worker-bodhi/) document
   `packages/web-agent/` — the **reference spike**, not an ancestor.
   Patterns (`LlmProvider`, Bodhi catalog mapping, streaming
-  primitives) are re-used in `web-acp`; wire-protocol and runtime
-  shape are intentionally different.
+  primitives) are re-used in `web-acp-agent`; wire-protocol and
+  runtime shape are intentionally different.
 
 ## Conventions
 

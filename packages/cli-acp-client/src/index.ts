@@ -1,0 +1,114 @@
+/**
+ * Public surface for `@bodhiapp/cli-acp-client`. The CLI binary lives at
+ * `bin/cli-acp -> src/cli.ts`. This index exposes the modules that are
+ * useful for embedding tests and downstream automation.
+ */
+
+export {
+  bootstrapCli,
+  type BootstrapOptions,
+  type CliRuntime,
+  type RendererMode,
+} from './bootstrap';
+export {
+  AcpClient,
+  buildClientHandler,
+  createEmbeddedHost,
+  createInMemoryDuplex,
+  type ByteTransport,
+  type DuplexPair,
+  type EmbeddedHost,
+  type EmbeddedHostOptions,
+} from './acp';
+export {
+  APP_CLIENT_ID,
+  DEFAULT_AUTH_SERVER_URL,
+  DEFAULT_CALLBACK_PORT,
+  DEFAULT_SCOPES,
+  buildScopeString,
+  createPrintOnlyOpener,
+  defaultBrowserOpener,
+  exchangeCodeForTokens,
+  fetchWithDiagnostics,
+  formatErrorChain,
+  getAccessRequestStatus,
+  refreshTokens,
+  requestAccess,
+  revokeRefreshToken,
+  runLoginFlow,
+  startCallbackServer,
+  FetchFailureError,
+  HttpStatusError,
+  type AccessRequestStatus,
+  type BrowserOpener,
+  type CallbackEvent,
+  type CallbackServer,
+  type FlowType,
+  type LoginFlowOptions,
+  type LoginFlowResult,
+  type PendingCallback,
+  type RequestAccessOptions,
+  type RequestAccessResponse,
+  type RequestedMcpServer,
+  type RequestedResources,
+  type UserScope,
+} from './auth';
+export {
+  CommandRegistry,
+  createAppContext,
+  createDispatcher,
+  History,
+  parseInputLine,
+  setStatus,
+  type AppContext,
+  type ConnectionStatus,
+  type Dispatcher,
+  type ParsedInput,
+  type Renderer,
+  type ShellMessage,
+  type SlashCommand,
+  type SlashCommandSummary,
+} from './shell';
+export {
+  buildDefaultRegistry,
+  buildHelpCommand,
+  buildQuitCommand,
+  createQuitController,
+  handlePrompt,
+  hostCommand,
+  loginCommand,
+  logoutCommand,
+  mcpCommand,
+  modelCommand,
+  modelsCommand,
+  runLogin,
+  sessionCommand,
+  type QuitController,
+} from './commands';
+export {
+  createSettingsStore,
+  type Settings,
+  type SettingsStore,
+  type TokenBundle,
+} from './settings';
+export {
+  CWD_VOLUME_NAME,
+  assembleNodeServices,
+  createCwdVolumeInit,
+  createInMemoryFeatureStore,
+  createInMemoryMcpToggleStore,
+  createInMemorySessionStore,
+  type AssembleNodeServicesOptions,
+  type AssembledNodeServices,
+  type CwdVolumeOptions,
+} from './services';
+export {
+  createLineRenderer,
+  createPiRenderer,
+  defaultEditorTheme,
+  defaultMarkdownTheme,
+  defaultSelectListTheme,
+  type LineRendererOptions,
+  type PiRendererInit,
+  type PiRendererRuntime,
+} from './tui';

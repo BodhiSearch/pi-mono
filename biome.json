@@ -38,6 +38,7 @@
 			"!packages/web-agent",
 			"!packages/web-acp",
 			"!packages/web-acp-agent",
+			"!packages/cli-acp-client",
 			"!!**/node_modules"
 		]
 	}

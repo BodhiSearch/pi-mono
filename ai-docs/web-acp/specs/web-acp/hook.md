@@ -1,8 +1,17 @@
 # hook
 
-**Source of truth:** `packages/web-acp/src/hooks/useAcp.ts` plus the
-per-concern slice hooks under `src/hooks/useAcp*.ts` and the
-host-side ACP plumbing under `src/acp/`.
+**Source of truth:** `packages/web-acp/src/hooks/useAcp.ts` plus
+the per-concern slice hooks under `src/hooks/useAcp*.ts` and the
+host-side ACP plumbing under `src/acp/{runtime,streaming-reducer,
+builtin-dispatch,…}.ts`.
+
+> **Browser-host-only file.** This topic describes the React
+> facade that's specific to `packages/web-acp/`. The CLI host
+> (`packages/cli-acp-client/`) replaces the hook with a
+> dispatcher + renderer pair (`src/shell/dispatcher.ts`,
+> `src/tui/{pi-renderer,line-renderer}.ts`) but consumes the
+> same `AcpClient` underneath; nothing in `web-acp-agent`
+> changes.
 
 **Parent:** [`./index.md`](./index.md)
 

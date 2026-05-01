@@ -1,13 +1,45 @@
 # web-acp
 
-**Source of truth:** `packages/web-acp/src/` (host runtime) and
-`packages/web-acp-agent/src/` (transport-agnostic ACP agent
-runtime, extracted post-M4 phase B). The agent package owns
-the worker-side wire shim, engine, `pi-agent-core` wrapper,
-slash commands, MCP client/pool/tool-adapter, bash tool, and
-volume registry; the host package owns React, Dexie storage,
-FSA-backed volumes, and the `MessagePort` transport. See
-[`packages/web-acp-agent/README.md`](../../../packages/web-acp-agent/README.md).
+**Source of truth.** Two packages today:
+
+- `packages/web-acp-agent/src/` — the **transport-agnostic ACP
+  agent runtime** (extracted post-M4 phase B). Owns the worker-
+  side wire shim (`acp/agent-adapter.ts`), the engine layer
+  (`acp/engine/{services,session-runtime,prompt-driver,
+  builtin-dispatch,ext-methods}`), the `pi-agent-core` wrapper
+  (`agent/inline-agent.ts`), `BodhiProvider`, vault-sourced and
+  built-in slash commands, the MCP client / pool / tool-adapter,
+  the `bash` tool, the ZenFS-based volume registry, and the
+  in-package store *interfaces* (`SessionStore`, `FeatureStore`,
+  `McpToggleStore`). Zero browser-only deps. See
+  [`packages/web-acp-agent/README.md`](../../../packages/web-acp-agent/README.md).
+- `packages/web-acp/src/` — the **browser host runtime** that
+  embeds the agent as a Web Worker. Owns React (`hooks/`,
+  `components/`), the Dexie store implementations
+  (`runtime/storage-dexie/`), the FSA-backed volume backends
+  (`runtime/volumes-fsa/`), the `MessagePort` byte-stream
+  bridge (`runtime/transport/worker-stream.ts`), the host-side
+  ACP wire/engine split (`acp/{runtime,streaming-reducer,
+  builtin-dispatch,fs-handlers,permissions,…}`), and the
+  `agent-worker.ts` boot shim that wires those host adapters to
+  `startAcpAgent` from the agent package.
+
+A second host runtime — `packages/cli-acp-client/` — embeds the
+same agent package in a Node TTY process over an in-memory
+duplex; see [`../cli-acp-client/index.md`](../cli-acp-client/index.md).
+The wire is byte-identical to the browser worker's; the proof
+that the agent runtime is genuinely host-neutral.
+
+**Topic-file note.** Most topic files below were authored before
+the agent extraction and still cite paths under
+`packages/web-acp/src/agent/`, `…/src/acp/`, `…/src/features/`,
+or `…/src/mcp/toggle-store.ts`. After extraction, the *agent-
+side* of those subtrees moved to `packages/web-acp-agent/src/`
+(same relative layout). When a topic file says e.g.
+`packages/web-acp/src/agent/inline-agent.ts`, read it as
+`packages/web-acp-agent/src/agent/inline-agent.ts` unless
+explicitly host-side. Topic files are progressively rewritten to
+the new paths as we revise them.
 
 **Status:** living document — update as part of any plan that
 changes the source folder. Reflects the **M4 phase B exit

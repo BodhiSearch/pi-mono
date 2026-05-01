@@ -1,0 +1,63 @@
+{
+  "name": "@bodhiapp/cli-acp-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Claude-Code-style interactive CLI that embeds @bodhiapp/web-acp-agent in-process and speaks ACP over an in-memory transport.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "bin": {
+    "cli-acp": "./src/cli.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "files": ["src"],
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck",
+    "check:fix": "npm run lint:fix && npm run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test --reporter=list",
+    "test:e2e:report": "playwright test --reporter=html",
+    "ci:test:e2e": "cross-env CI=true playwright test"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.17.0",
+    "@bodhiapp/web-acp-agent": "*",
+    "@mariozechner/pi-agent-core": "^0.67.3",
+    "@mariozechner/pi-ai": "^0.67.3",
+    "@mariozechner/pi-tui": "^0.67.68",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@zenfs/core": "~2.5.6",
+    "chalk": "^5.5.0",
+    "open": "^11.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@bodhiapp/app-bindings": "0.0.42",
+    "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.57.0",
+    "@types/node": "^25.0.3",
+    "@xterm/headless": "^5.5.0",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.2.3",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "globals": "^17.0.0",
+    "playwright": "^1.57.0",
+    "prettier": "^3.7.4",
+    "tsx": "^4.20.3",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.46.4",
+    "vitest": "^4.0.16"
+  }
+}

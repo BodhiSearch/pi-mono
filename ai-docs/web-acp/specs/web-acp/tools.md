@@ -1,8 +1,16 @@
 # tools
 
-**Source of truth:**
-`packages/web-acp/src/agent/tools/bash-tool.ts`,
-`packages/web-acp/src/agent/tools/volume-filesystem.ts`.
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`agent/tools/bash-tool.ts` (the LLM-facing `bash` tool, registered
+per-turn by `PromptTurnDriver` when the active session has at
+least one mounted volume and the `bashEnabled` feature is on),
+`agent/tools/volume-filesystem.ts` (the `IFileSystem` adapter
+just-bash sees, layered over the active `VolumeRegistry`).
+
+The host runtime contributes only the *backend* to each volume
+(FSA-backed in `packages/web-acp/src/runtime/volumes-fsa/`, real-FS
+`PassthroughFS` in `packages/cli-acp-client/src/services/cwd-volume.ts`);
+the tool path itself is host-agnostic.
 
 **Parent:** [`./index.md`](./index.md)
 

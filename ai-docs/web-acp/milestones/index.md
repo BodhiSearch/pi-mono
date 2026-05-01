@@ -97,6 +97,22 @@ advertising `fs/*` as a future IDE-integration seam.
   HTTP-SSE bootstraps plug into the same boundary; M8's library
   extract step folds in behind this seam. Detail in
   [`../../../.cursor/plans/extract_web-acp-agent_9dacac4b.plan.md`](../../../.cursor/plans/extract_web-acp-agent_9dacac4b.plan.md).
+- **Post-extraction CLI host (`packages/cli-acp-client/`).**
+  A second consumer of `@bodhiapp/web-acp-agent` shipped to
+  validate the host-neutral assertion: a Claude-Code-style
+  Node TTY CLI that embeds the agent in-process over an
+  in-memory `TransformStream` duplex. Same agent code, same
+  ACP wire, different transport + different services bag
+  (in-memory stores, Node OAuth 2.1/PKCE client with a local
+  callback server, `ZenfsVolumeRegistry` seeded with a
+  `PassthroughFS` over `node:fs` at `$cwd`). Has its own e2e
+  harness mirroring `packages/web-acp/e2e/` against a real
+  BodhiApp NAPI instance. The Node OAuth + settings + duplex
+  helpers are generic enough to ship as a starter kit when M8
+  extracts the agent package proper. Spec at
+  [`../specs/cli-acp-client/index.md`](../specs/cli-acp-client/index.md);
+  README at
+  [`../../../packages/cli-acp-client/README.md`](../../../packages/cli-acp-client/README.md).
 - **Pre-M5 engine-split refactor.** Between M4 phase B exit and
   M5 entry the agent-side runtime was restructured along
   coding-agent's wire/engine seam. `acp/agent-adapter.ts` shrank

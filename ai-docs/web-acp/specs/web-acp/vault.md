@@ -1,14 +1,26 @@
 # vault
 
-**Source of truth:** `packages/web-acp/src/vault/`,
-`packages/web-acp/src/agent/volume-mount.ts`,
-`packages/web-acp/src/agent/volume-channel.ts`,
-`packages/web-acp/src/agent/system-prompt.ts`,
-`packages/web-acp/src/transport/volume-control.ts`,
-`packages/web-acp/src/hooks/useVolumes.ts`,
-`packages/web-acp/src/components/volumes/`,
-`packages/web-acp/src/vault/main-zenfs.ts`,
-`packages/web-acp/src/acp/fs-handlers.ts`.
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`agent/volume-registry.ts` (`ZenfsVolumeRegistry` — the worker-side
+mount-point owner; replaces the M2 `volume-mount.ts`),
+`agent/system-prompt.ts` (`composeSystemPrompt(volumes)` —
+formats the `Volumes:\n- /mnt/<name>` block).
+
+**Source of truth (browser host — `packages/web-acp/src/`):**
+`vault/fsa-handle-store.ts` and `vault/main-zenfs.ts` (FSA-handle
+persistence + main-thread duplicate ZenFS mount),
+`runtime/volumes-fsa/` (`backends.ts`, `volume-channel.ts`,
+`volume-control.ts`, `index.ts` — the FSA-backed `VolumeInit`
+producer + the raw `postMessage` volume-control bridge),
+`hooks/useVolumes.ts`, `components/volumes/`,
+`acp/fs-handlers.ts` (the `fs/read_text_file` /
+`fs/write_text_file` handlers served against the same FSA mounts
+as an IDE-integration seam).
+
+**Source of truth (CLI host — `packages/cli-acp-client/src/`):**
+`services/cwd-volume.ts` produces a single `VolumeInit` over
+`PassthroughFS(node:fs, $cwd)` and mounts it as `/mnt/cwd`; no
+FSA, no `volumes/mount` postMessage channel.
 
 ## Purpose
 

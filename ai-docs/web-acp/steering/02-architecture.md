@@ -91,14 +91,24 @@ process pipe.
 
 **Why.** The same ACP agent should run:
 
-- in a Web Worker inside the user's tab (v1 default),
+- in a Web Worker inside the user's tab (v1 default — shipped as
+  `packages/web-acp/`),
+- in a Node TTY process over an in-memory duplex (shipped as
+  `packages/cli-acp-client/` — embedded `@bodhiapp/web-acp-agent`
+  with `TransformStream` byte-stream pairs as the transport;
+  proves transport-neutrality is real, not aspirational),
 - in a backend Node process fronted by HTTP/SSE (future),
 - in a test harness using an in-memory queue (always useful).
 
 If we let the browser transport leak `MessagePort` into the framing,
 the remote transport becomes a rewrite. If we build the framing
 against a minimal `Transport` abstraction from day one, the remote
-transport becomes a new file.
+transport becomes a new file. The CLI host validated this in
+practice — the agent code consumed by `cli-acp-client` is
+byte-identical to the browser worker's; only the transport
+adapter (`src/acp/duplex.ts` vs `runtime/transport/worker-stream.ts`)
+and the services bag (in-memory + `PassthroughFS` vs Dexie + FSA)
+differ.
 
 **Consequences.**
 

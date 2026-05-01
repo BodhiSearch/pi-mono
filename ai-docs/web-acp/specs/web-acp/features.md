@@ -1,10 +1,22 @@
 # features
 
-**Source of truth:**
-`packages/web-acp/src/features/feature-store.ts`,
-`packages/web-acp/src/agent/session-store.ts` (Dexie v2 `features`
-table),
-`packages/web-acp/src/components/features/FeaturePanel.tsx`.
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`storage/feature-store.ts` (`FeatureStore` interface,
+`FEATURE_DEFAULTS`, `isFeatureKey`, `FeatureKey` type),
+`acp/engine/ext-methods/features-list.ts` and `features-set.ts`
+(the `_bodhi/features/*` ACP extension methods).
+
+**Source of truth (browser host — `packages/web-acp/src/`):**
+`runtime/storage-dexie/feature-store.ts` (Dexie-backed
+implementation of the agent's `FeatureStore`),
+`runtime/storage-dexie/db.ts` (the v2 `features` table),
+`features/feature-store.ts` (transitional re-export — being
+dismantled),
+`components/features/FeaturePanel.tsx`.
+
+**Source of truth (CLI host — `packages/cli-acp-client/src/`):**
+`services/stores.ts` provides an in-memory `FeatureStore`
+implementation. Toggles do not persist between CLI runs in v0.
 
 **Parent:** [`./index.md`](./index.md)
 

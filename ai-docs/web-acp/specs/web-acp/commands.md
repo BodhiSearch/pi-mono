@@ -1,16 +1,24 @@
 # commands
 
-**Source of truth:** `packages/web-acp/src/agent/commands/`
-(+ wiring in `src/acp/engine/session-runtime.ts`
-(`refreshAvailableCommands`),
-`src/acp/engine/prompt-driver.ts`
-(`#applySlashCommandExpansion`),
-`src/acp/engine/builtin-dispatch.ts` (built-in interception),
-`src/acp/engine/ext-methods/get-session.ts` (transcript replay
-with built-in pairs),
-`src/components/chat/CommandPicker.tsx`,
-`src/components/chat/MessageBubble.tsx`,
-`src/hooks/useAcp.ts`, and `src/lib/builtin-format.ts`).
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`agent/commands/` (loader, expander, front-matter, types, plus
+`builtins/` for `/help`, `/version`, `/session`, `/copy`, `/mcp`),
+`acp/engine/session-runtime.ts` (`refreshAvailableCommands`),
+`acp/engine/prompt-driver.ts` (`#applySlashCommandExpansion`),
+`acp/engine/builtin-dispatch.ts` (built-in interception),
+`acp/engine/ext-methods/get-session.ts` (transcript replay with
+built-in pairs).
+
+**Source of truth (browser host — `packages/web-acp/src/`):**
+`components/chat/CommandPicker.tsx`,
+`components/chat/MessageBubble.tsx`,
+`hooks/useAcp.ts`, `lib/builtin-format.ts` (host-side dispatch
+of action discriminators like `/copy` → clipboard).
+
+**Source of truth (CLI host — `packages/cli-acp-client/src/`):**
+no command pickers; built-in slash command results render as
+plain renderer messages, vault commands ride on the agent path
+unchanged.
 
 **Parent:** [`./index.md`](./index.md)
 

@@ -1,0 +1,9 @@
+node_modules
+dist
+.tmp
+*.tsbuildinfo
+test-results
+playwright-report
+.cli-acp-client
+e2e/.env.test
+e2e/.test-state.json

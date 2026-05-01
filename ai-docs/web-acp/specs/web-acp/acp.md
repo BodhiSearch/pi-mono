@@ -1,8 +1,28 @@
 # acp
 
-**Source of truth:** `packages/web-acp/src/acp/`
+**Source of truth:**
+`packages/web-acp-agent/src/acp/` — agent-side wire shim
+(`agent-adapter.ts`), engine layer (`engine/{services,session-runtime,
+prompt-driver,builtin-dispatch,types}.ts` + `engine/ext-methods/*.ts`),
+`permissions.ts`, and `wire-utils.ts`.
+`packages/web-acp/src/acp/` — browser host's wire/engine split
+(`runtime.ts`, `streaming-reducer.ts`, `builtin-dispatch.ts`,
+`fs-handlers.ts`, `permissions.ts`, `client.ts`, `agent-adapter.ts`
+re-export shim during transition, `message-shape.ts`, `methods.ts`,
+`session-meta.ts`).
+`packages/cli-acp-client/src/acp/` — Node host's equivalent
+(`embedded-host.ts` boot, `client.ts` mirroring the browser's
+`AcpClient`, `duplex.ts` in-memory byte-stream pair).
 
 **Parent:** [`./index.md`](./index.md)
+
+> **Note (post agent-package extraction).** When this file says
+> e.g. "the adapter does X" or cites `agent-adapter.ts` /
+> `engine/...`, those files live in
+> `packages/web-acp-agent/src/acp/`. Host-side files
+> (`runtime.ts`, `streaming-reducer.ts`, etc.) live in
+> `packages/web-acp/src/acp/`. The wire surface is identical
+> across hosts.
 
 ## Functional scope
 

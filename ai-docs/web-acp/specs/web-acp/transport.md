@@ -1,6 +1,23 @@
 # transport
 
-**Source of truth:** `packages/web-acp/src/transport/`
+**Source of truth (agent — `packages/web-acp-agent/src/`):**
+`bootstrap.ts` — `startAcpAgent(transport, services, options)`.
+The agent package defines the `AcpTransport` interface
+(`{ readable, writable }` byte-stream pair) and the
+`ndJsonStream` framing happens here; the host hands over a
+transport pair and stays out of the framing entirely.
+
+**Source of truth (browser host — `packages/web-acp/src/`):**
+`runtime/transport/worker-stream.ts` — `createMessagePortStream`
+adapting a `MessagePort` to the WHATWG byte-stream pair the
+agent's `startAcpAgent` consumes.
+
+**Source of truth (CLI host — `packages/cli-acp-client/src/`):**
+`acp/duplex.ts` — `createInMemoryDuplex` joining two
+`TransformStream`s head-to-tail to give the agent and the
+client an in-process duplex byte-stream pair. No network,
+no `MessagePort`, no socket: a deliberate proof point that
+the framing is transport-agnostic.
 
 **Parent:** [`./index.md`](./index.md)
 

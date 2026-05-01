@@ -1,18 +1,34 @@
 # agent
 
-**Source of truth:** `packages/web-acp/src/agent/`
+**Source of truth:**
+`packages/web-acp-agent/src/agent/` (extracted runtime — `inline-agent.ts`,
+`bodhi-provider.ts`, `stream-fn.ts`, `system-prompt.ts`, `volume-registry.ts`,
+`commands/`, `mcp/`, `tools/`),
+`packages/web-acp/src/agent/agent-worker.ts` (browser host's boot
+shim — Web Worker `init` listener, FSA volume materialisation, then
+`startAcpAgent(transport, services)`).
 
 **Parent:** [`./index.md`](./index.md)
+
+> **Note (post agent-package extraction).** Everything described
+> below as "the worker-side runtime" now lives in
+> `@bodhiapp/web-acp-agent` and is consumed by both
+> `packages/web-acp/` (browser worker host) and
+> `packages/cli-acp-client/` (Node TTY host) via
+> `startAcpAgent(transport, services)`. The host's only job is
+> to (a) provide a byte-stream transport pair, (b) construct the
+> `services` bag (stores + volume registry + provider), and (c)
+> stay out of the way. The boot-shim file in each host is the
+> only place a host-specific construction happens.
 
 > **Note (post engine-split refactor).** `agent-worker.ts` is now
 > ~30 LoC: it constructs the provider via a local
 > `defaultProviderFactory()` and assembles services via
 > `assembleServices(...)` from `acp/engine/services.ts` before
-> handing the bag to `new AcpAgentAdapter(conn, services)`. Most
-> of what used to live in the adapter (per-session state, MCP
-> lifecycle, prompt-turn loop, ext-method dispatch) now lives
-> under `acp/engine/`. See [`./acp.md`](./acp.md) § "Engine
-> layer" for the mapping.
+> handing the bag to `startAcpAgent(...)`. Most of what used to
+> live in the adapter (per-session state, MCP lifecycle, prompt-
+> turn loop, ext-method dispatch) now lives under `acp/engine/`.
+> See [`./acp.md`](./acp.md) § "Engine layer" for the mapping.
 
 ## Functional scope
 
