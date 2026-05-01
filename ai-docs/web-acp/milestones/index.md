@@ -81,6 +81,22 @@ advertising `fs/*` as a future IDE-integration seam.
 
 **Scope adjustments vs. original plan.**
 
+- **Post-M4 phase B agent-package extraction.** The
+  worker-side ACP runtime moved from `packages/web-acp/src/{acp,
+  agent,features,mcp/url-canonical,mcp/toggle-store}` into a new
+  private `@bodhiapp/web-acp-agent` workspace at
+  `packages/web-acp-agent/src/`. The package depends on
+  `@zenfs/core` (not `@zenfs/dom`) and exposes a single
+  `startAcpAgent(transport, services)` bootstrap that takes a
+  byte-stream transport pair plus service interfaces
+  (`SessionStore`, `FeatureStore`, `McpToggleStore`,
+  `VolumeRegistry`, `LlmProvider`). `web-acp` keeps the browser
+  adapters under `packages/web-acp/src/runtime/{storage-dexie,
+  volumes-fsa,transport}/` and a thin `agent-worker.ts` shim
+  wires them together. Wire surface unchanged. Future Node /
+  HTTP-SSE bootstraps plug into the same boundary; M8's library
+  extract step folds in behind this seam. Detail in
+  [`../../../.cursor/plans/extract_web-acp-agent_9dacac4b.plan.md`](../../../.cursor/plans/extract_web-acp-agent_9dacac4b.plan.md).
 - **Pre-M5 engine-split refactor.** Between M4 phase B exit and
   M5 entry the agent-side runtime was restructured along
   coding-agent's wire/engine seam. `acp/agent-adapter.ts` shrank

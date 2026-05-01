@@ -1,6 +1,13 @@
 # web-acp
 
-**Source of truth:** `packages/web-acp/src/`
+**Source of truth:** `packages/web-acp/src/` (host runtime) and
+`packages/web-acp-agent/src/` (transport-agnostic ACP agent
+runtime, extracted post-M4 phase B). The agent package owns
+the worker-side wire shim, engine, `pi-agent-core` wrapper,
+slash commands, MCP client/pool/tool-adapter, bash tool, and
+volume registry; the host package owns React, Dexie storage,
+FSA-backed volumes, and the `MessagePort` transport. See
+[`packages/web-acp-agent/README.md`](../../../packages/web-acp-agent/README.md).
 
 **Status:** living document — update as part of any plan that
 changes the source folder. Reflects the **M4 phase B exit

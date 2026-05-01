@@ -37,6 +37,7 @@
 			"!packages/mom/data/**/*",
 			"!packages/web-agent",
 			"!packages/web-acp",
+			"!packages/web-acp-agent",
 			"!!**/node_modules"
 		]
 	}

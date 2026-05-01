@@ -1,0 +1,54 @@
+{
+  "name": "@bodhiapp/web-acp-agent",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Transport-agnostic Agent Client Protocol (ACP) agent runtime, extracted from web-acp.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./test-utils": {
+      "types": "./src/test-utils/index.ts",
+      "import": "./src/test-utils/index.ts"
+    }
+  },
+  "files": ["src"],
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck",
+    "check:fix": "npm run lint:fix && npm run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.17.0",
+    "@bodhiapp/bodhi-js-react": "^0.0.37",
+    "@mariozechner/pi-agent-core": "^0.67.3",
+    "@mariozechner/pi-ai": "^0.67.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@sinclair/typebox": "0.34.49",
+    "@zenfs/core": "~2.5.6",
+    "just-bash": "2.14.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^25.0.3",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "globals": "^17.0.0",
+    "jsdom": "^29.0.2",
+    "prettier": "^3.7.4",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^8.0.8",
+    "vitest": "^4.0.16"
+  }
+}
