@@ -70,11 +70,17 @@ async function newSession(ctx: AppContext): Promise<void> {
   ctx.renderer.emit({ kind: 'info', text: `Created session ${result.sessionId}` });
 }
 
-async function loadSession(ctx: AppContext, id: string | undefined): Promise<void> {
-  if (!id) {
-    ctx.renderer.emit({ kind: 'error', text: 'Usage: /session load <id>' });
+async function loadSession(ctx: AppContext, idOrPrefix: string | undefined): Promise<void> {
+  if (!idOrPrefix) {
+    ctx.renderer.emit({ kind: 'error', text: 'Usage: /session load <id|prefix>' });
     return;
   }
+
+  // Allow prefix matching so the user can paste a truncated id from
+  // `/session list` (which renders the first 12 chars). Full ids are
+  // accepted as-is.
+  const id = await resolveSessionId(ctx, idOrPrefix);
+  if (!id) return;
 
   // Auth-loss guard: cancel any in-flight turn before swapping
   // sessions. The agent's prompt-driver tolerates a cancel + load
@@ -141,11 +147,13 @@ async function loadSession(ctx: AppContext, id: string | undefined): Promise<voi
   }
 }
 
-async function deleteSession(ctx: AppContext, id: string | undefined): Promise<void> {
-  if (!id) {
-    ctx.renderer.emit({ kind: 'error', text: 'Usage: /session delete <id>' });
+async function deleteSession(ctx: AppContext, idOrPrefix: string | undefined): Promise<void> {
+  if (!idOrPrefix) {
+    ctx.renderer.emit({ kind: 'error', text: 'Usage: /session delete <id|prefix>' });
     return;
   }
+  const id = await resolveSessionId(ctx, idOrPrefix);
+  if (!id) return;
   const deleted = await ctx.client.deleteSession(id);
   ctx.renderer.emit({
     kind: 'info',
@@ -155,4 +163,44 @@ async function deleteSession(ctx: AppContext, id: string | undefined): Promise<v
     ctx.sessionId = null;
     ctx.stream.dispatch({ type: 'reset' });
   }
+}
+
+/**
+ * Look up a session by either full id (returned as-is) or a prefix
+ * (resolved via `listSessions` with unambiguous match). Emits an error
+ * and returns `null` when there is no match or multiple matches; the
+ * caller short-circuits on `null`.
+ */
+async function resolveSessionId(ctx: AppContext, idOrPrefix: string): Promise<string | null> {
+  // Heuristic: full UUIDs we mint are 36 chars with dashes. Skip the
+  // listSessions round-trip for those.
+  const looksFull = idOrPrefix.length >= 32 && idOrPrefix.includes('-');
+  if (looksFull) return idOrPrefix;
+
+  let sessions: Array<{ id: string }>;
+  try {
+    sessions = await ctx.client.listSessions();
+  } catch (err) {
+    ctx.renderer.emit({
+      kind: 'error',
+      text: `Failed to look up session: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return null;
+  }
+  const matches = sessions.filter(s => s.id.startsWith(idOrPrefix));
+  if (matches.length === 0) {
+    ctx.renderer.emit({
+      kind: 'error',
+      text: `No session matches '${idOrPrefix}'.`,
+    });
+    return null;
+  }
+  if (matches.length > 1) {
+    ctx.renderer.emit({
+      kind: 'error',
+      text: `Multiple sessions match '${idOrPrefix}'. Be more specific.`,
+    });
+    return null;
+  }
+  return matches[0].id;
 }

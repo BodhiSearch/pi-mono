@@ -122,6 +122,49 @@ export class CliHarness {
     });
   }
 
+  /**
+   * Like {@link waitFor} but ignores already-buffered lines. Use when the
+   * same pattern could legitimately match historical output from an
+   * earlier test in a shared-harness suite (e.g. a `> ` prompt or a
+   * common keyword like `Session`).
+   */
+  waitForFresh(re: RegExp, timeoutMs = 30_000): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter(w => w.timer !== timer);
+        reject(
+          new Error(
+            `Timed out (${timeoutMs}ms) waiting for /${re.source}/. Last output:\n${this.tail(40)}`
+          )
+        );
+      }, timeoutMs);
+      this.waiters.push({ re, resolve, reject, timer });
+    });
+  }
+
+  /**
+   * Wait for the CLI to stop emitting stdout for `quietMs` consecutive
+   * milliseconds — i.e. the agent's turn is complete and `line-repl`
+   * has re-issued its `> ` prompt prefix (which has no trailing
+   * newline so we can't pattern-match it directly).
+   *
+   * We deliberately can't listen for the re-prompt as a buffered line:
+   * `rl.prompt()` writes `> ` with no `\n`, so the harness's
+   * line-splitting parser never flushes it. Stdout silence is the
+   * next-best signal that the previous turn finished.
+   */
+  async waitForIdle(timeoutMs = 30_000, quietMs = 500): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const before = this.buffer.length;
+      await delay(quietMs);
+      if (this.buffer.length === before) return;
+    }
+    throw new Error(
+      `Timed out (${timeoutMs}ms) waiting for idle prompt. Last output:\n${this.tail(40)}`
+    );
+  }
+
   /** Snapshot of the last `n` lines for diagnostics. */
   tail(n = 40): string {
     return this.buffer.slice(-n).join('\n');

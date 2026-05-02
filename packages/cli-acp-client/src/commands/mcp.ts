@@ -110,13 +110,11 @@ async function addUrl(ctx: AppContext, raw: string | undefined): Promise<void> {
     ctx.renderer.emit({ kind: 'error', text: 'Usage: /mcp add <url>' });
     return;
   }
-  let canonical: string;
-  try {
-    canonical = canonicalizeMcpUrl(raw);
-  } catch (err) {
+  const canonical = canonicalizeMcpUrl(raw);
+  if (!canonical) {
     ctx.renderer.emit({
       kind: 'error',
-      text: `Not a valid MCP URL: ${err instanceof Error ? err.message : String(err)}`,
+      text: `Not a valid MCP URL: ${raw}`,
     });
     return;
   }
@@ -139,12 +137,9 @@ async function removeUrl(ctx: AppContext, raw: string | undefined): Promise<void
     ctx.renderer.emit({ kind: 'error', text: 'Usage: /mcp remove <url>' });
     return;
   }
-  let canonical: string;
-  try {
-    canonical = canonicalizeMcpUrl(raw);
-  } catch {
-    canonical = raw;
-  }
+  // canonicalizeMcpUrl returns null for unparseable input; fall back to
+  // the raw string so users can still drop a typo'd entry from kv.
+  const canonical = canonicalizeMcpUrl(raw) ?? raw;
   const current = ctx.host.kv.get<string[]>(KV_REQUESTED_MCPS) ?? [];
   if (!current.includes(canonical)) {
     ctx.renderer.emit({ kind: 'info', text: `Not in list: ${canonical}` });
@@ -175,12 +170,14 @@ async function setToggle(
     });
     return;
   }
-  const [slug, toolList] = target.split(':');
+  const colonIdx = target.indexOf(':');
+  const slug = colonIdx === -1 ? target : target.slice(0, colonIdx);
+  const toolList = colonIdx === -1 ? undefined : target.slice(colonIdx + 1);
   if (!slug) {
     ctx.renderer.emit({ kind: 'error', text: 'Usage: /mcp on|off <slug>[:<tools>]' });
     return;
   }
-  if (!toolList) {
+  if (toolList === undefined) {
     await ctx.client.setMcpToggle(ctx.sessionId, slug, value);
     ctx.renderer.emit({
       kind: 'info',

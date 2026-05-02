@@ -80,13 +80,11 @@ async function handleCopy(ctx: AppContext, input: BuiltinActionInput): Promise<v
 }
 
 async function handleMcpAdd(ctx: AppContext, rawUrl: string): Promise<void> {
-  let url: string;
-  try {
-    url = canonicalizeMcpUrl(rawUrl);
-  } catch (err) {
+  const url = canonicalizeMcpUrl(rawUrl);
+  if (!url) {
     ctx.renderer.emit({
       kind: 'error',
-      text: `mcp-add: invalid URL ${rawUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      text: `mcp-add: invalid URL ${rawUrl}`,
     });
     return;
   }
@@ -102,12 +100,9 @@ async function handleMcpAdd(ctx: AppContext, rawUrl: string): Promise<void> {
 }
 
 async function handleMcpRemove(ctx: AppContext, rawUrl: string): Promise<void> {
-  let url: string;
-  try {
-    url = canonicalizeMcpUrl(rawUrl);
-  } catch {
-    url = rawUrl;
-  }
+  // canonicalizeMcpUrl returns null when input is unparseable; fall back
+  // to the raw string so users can still drop a typo'd entry from kv.
+  const url = canonicalizeMcpUrl(rawUrl) ?? rawUrl;
   const current = ctx.host.kv.get<string[]>(KV_REQUESTED_MCPS) ?? [];
   if (!current.includes(url)) return;
   const next = current.filter(u => u !== url);

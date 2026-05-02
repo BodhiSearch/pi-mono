@@ -2,6 +2,7 @@
 import * as path from 'node:path';
 import { bootstrapCli } from './bootstrap';
 import { createPrintOnlyOpener } from './auth/browser-opener';
+import { resolveIsDev } from './cli/dev-flag';
 
 interface ParsedArgs {
   ciLineMode: boolean;
@@ -77,27 +78,6 @@ async function main(): Promise<void> {
 
   await runtime.exited;
   await runtime.shutdown();
-}
-
-/**
- * `CLI_ACP_DEV` resolution: defaults to true so DEV-only features
- * (forceToolCall, etc.) stay reachable for local exploration. The
- * literal strings `0`, `false`, `no`, `off` (case-insensitive) opt
- * out — anything else (including unset) keeps DEV on.
- */
-function resolveIsDev(raw: string | undefined): boolean {
-  if (raw === undefined) return true;
-  const normalised = raw.trim().toLowerCase();
-  if (
-    normalised === '' ||
-    normalised === '0' ||
-    normalised === 'false' ||
-    normalised === 'no' ||
-    normalised === 'off'
-  ) {
-    return false;
-  }
-  return true;
 }
 
 main()

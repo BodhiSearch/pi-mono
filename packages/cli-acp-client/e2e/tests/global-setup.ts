@@ -34,14 +34,17 @@ const isHeadless =
     ? false
     : process.env.HEADLESS === 'true' || process.env.CI === 'true';
 
-// Match the port web-acp/e2e uses. The BodhiApp admin OAuth client
-// `BODHIAPP_CLIENT_ID` registered at main-id has only this port's
-// callback URL on its allow-list — using a different port here trips
-// Keycloak's `Invalid parameter: redirect_uri` page during global
-// setup. The trade-off is that cli-acp-client e2e cannot run while
-// web-acp/e2e is running; assertPortsFree catches that case.
-const BODHI_SERVER_PORT = 51135;
-const BODHI_DEFAULT_PORT = 1135;
+// Distinct from the port web-acp/e2e uses (51135) so the two suites
+// can run side-by-side. The BodhiApp admin OAuth client
+// `BODHIAPP_CLIENT_ID` registered at main-id has this port's callback
+// URL on its allow-list — using a port not on the allow-list trips
+// Keycloak's `Invalid parameter: redirect_uri` page during global setup.
+const BODHI_SERVER_PORT = 31135;
+// Local OAuth callback port the CLI binds during /login (matches
+// `DEFAULT_CALLBACK_PORT` in src/auth/config.ts). Keycloak only
+// accepts this exact `redirect_uri` for the cli-acp-client OAuth
+// client; any other port trips `Invalid parameter: redirect_uri`.
+const CLI_CALLBACK_PORT = 5173;
 export const BODHI_SERVER_URL = `http://localhost:${BODHI_SERVER_PORT}`;
 export const API_MODEL_PREFIX = 'oai/';
 export const API_MODEL_NAME = 'gpt-4.1-nano';
@@ -61,7 +64,14 @@ function isPortInUse(port: number): Promise<boolean> {
 }
 
 async function assertPortsFree(): Promise<void> {
-  for (const port of [BODHI_SERVER_PORT, BODHI_DEFAULT_PORT]) {
+  // Only assert ports the CLI e2e suite actively binds: the NAPI
+  // BodhiApp test server (31135) and the OAuth callback port the CLI
+  // listens on during `/login` (5173). The default BodhiApp port
+  // 1135 is intentionally NOT checked — a developer's locally-running
+  // BodhiApp on 1135 does not interfere with this suite, and refusing
+  // to start over it was a footgun when running the suite against an
+  // already-installed Bodhi instance.
+  for (const port of [BODHI_SERVER_PORT, CLI_CALLBACK_PORT]) {
     if (await isPortInUse(port)) {
       throw new Error(
         `Port ${port} is already in use. Stop the server running on port ${port} before running the tests.`
