@@ -16,12 +16,14 @@ import {
   requestPermissionStub,
   startAcpAgent,
   type AcpAgentAdapter,
+  type VolumeRegistry,
 } from '@bodhiapp/web-acp-agent';
 import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from './client';
 import { createInMemoryDuplex } from './duplex';
 import { assembleNodeServices, type AssembleNodeServicesOptions } from '../services/assemble';
 import type { BodhiProvider } from '@bodhiapp/web-acp-agent';
+import type { AppDb, KvStore } from '../storage';
 
 export interface EmbeddedHostOptions extends AssembleNodeServicesOptions {
   /** Build version reported on `/version`. */
@@ -37,6 +39,18 @@ export interface EmbeddedHost {
   provider: BodhiProvider;
   /** Agent adapter — exposed for `dispose()` on teardown. */
   adapter: AcpAgentAdapter;
+  /** Sqlite database. Shared with the agent's stores. */
+  db: AppDb;
+  /** Host-only KV façade for requestedMcps / lastModelId / volumes. */
+  kv: KvStore;
+  /**
+   * The agent's volume registry. Exposed so `/volume add/remove`
+   * commands can mount/unmount at runtime without recreating the
+   * agent. Note: the agent's tool catalog is recomputed at the
+   * start of each turn, so newly mounted volumes are picked up by
+   * the next prompt — no explicit invalidation call is required.
+   */
+  volumes: VolumeRegistry;
   /** Tear down both ends of the embedded transport. */
   dispose(): Promise<void>;
 }
@@ -45,7 +59,7 @@ const DEFAULT_BUILD_VERSION = '0.0.0';
 const DEFAULT_ACP_SDK_VERSION = '0.17.0';
 
 export async function createEmbeddedHost(opts: EmbeddedHostOptions): Promise<EmbeddedHost> {
-  const { services, provider } = await assembleNodeServices(opts);
+  const { services, provider, db, kv } = await assembleNodeServices(opts);
   const duplex = createInMemoryDuplex();
 
   let adapter: AcpAgentAdapter | undefined;
@@ -84,10 +98,17 @@ export async function createEmbeddedHost(opts: EmbeddedHostOptions): Promise<Emb
 
   await client.initialize();
 
+  if (!services.registry) {
+    throw new Error('embedded-host: services.registry is required');
+  }
+
   return {
     client,
     provider,
     adapter,
+    db,
+    kv,
+    volumes: services.registry,
     async dispose(): Promise<void> {
       try {
         await adapter?.dispose();
@@ -101,6 +122,11 @@ export async function createEmbeddedHost(opts: EmbeddedHostOptions): Promise<Emb
         await closeStream(duplex.agent.writable);
       } catch {
         // ignore: streams may already be closed
+      }
+      try {
+        db.$sqlite.close();
+      } catch {
+        // ignore: db may already be closed
       }
     },
   };

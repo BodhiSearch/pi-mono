@@ -3,6 +3,8 @@ import type { AppContext } from '../shell/context';
 import { setStatus } from '../shell/context';
 import { runLoginFlow } from '../auth/login-flow';
 import { formatErrorChain } from '../auth/debug';
+import { refreshMcpCatalog } from '../mcp/catalog';
+import { KV_REQUESTED_MCPS } from '../storage/kv-keys';
 
 /**
  * `/login` orchestrates the BodhiApp access-request + Keycloak PKCE flow,
@@ -30,13 +32,18 @@ export async function runLogin(ctx: AppContext): Promise<void> {
 
   setStatus(ctx, { kind: 'connecting', host: settings.host });
 
+  // Pull `requestedMcps` from sqlite kv (post-migration source of
+  // truth). Falls back to settings.json for an unmigrated install.
+  const requestedMcps = ctx.host.kv.get<string[]>(KV_REQUESTED_MCPS) ?? settings.requestedMcps;
+  ctx.requestedMcps = requestedMcps;
+
   let result;
   try {
     result = await runLoginFlow({
       bodhiUrl: settings.host,
       authServerUrl: settings.authServerUrl,
       callbackPort: settings.callbackPort,
-      requested: { mcp_servers: settings.requestedMcps.map(url => ({ url })) },
+      requested: { mcp_servers: requestedMcps.map(url => ({ url })) },
       opener: ctx.opener,
       log: line => ctx.renderer.emit({ kind: 'info', text: line }),
     });
@@ -80,6 +87,25 @@ export async function runLogin(ctx: AppContext): Promise<void> {
       text: `warm-up listModels failed: ${err instanceof Error ? err.message : String(err)}`,
     });
   }
+
+  // Pull the live MCP catalog from BodhiApp now that we hold a fresh
+  // access token. The catalog populates `ctx.composedMcpServers` for
+  // the first session/new and feeds `/mcp list`.
+  try {
+    const refreshed = await refreshMcpCatalog(ctx);
+    if (refreshed.instances.length > 0) {
+      ctx.renderer.emit({
+        kind: 'info',
+        text: `MCP catalog: ${refreshed.instances.length} instance(s) available.`,
+      });
+    }
+  } catch (err) {
+    ctx.renderer.emit({
+      kind: 'system',
+      text: `MCP catalog fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
   setStatus(ctx, {
     kind: 'authenticated',
     host: settings.host,

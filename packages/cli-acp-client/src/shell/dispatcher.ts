@@ -5,9 +5,10 @@ import { formatErrorChain } from '../auth/debug';
 
 /**
  * Single entry-point the renderer calls when the user submits a line of
- * input. Decides whether the line is a slash command (routed through
- * `CommandRegistry`) or a prompt (forwarded to the agent via the context's
- * `AcpClient`).
+ * input. Decides whether the line is a CLI-shell command (routed through
+ * `CommandRegistry`), an unknown `/<cmd>` (forwarded to the agent so vault
+ * commands and agent built-ins like `/info`, `/copy`, `/mcp`, `/help`,
+ * `/version` work), or a plain prompt (forwarded to the agent's LLM).
  *
  * Errors are caught and reported via `ctx.renderer.emit({ kind: 'error' })`
  * so a misbehaving command never crashes the shell loop.
@@ -33,14 +34,15 @@ export function createDispatcher(
       try {
         if (parsed.kind === 'command') {
           const command = registry.get(parsed.name);
-          if (!command) {
-            ctx.renderer.emit({
-              kind: 'error',
-              text: `Unknown command: /${parsed.name}. Type /help for a list.`,
-            });
+          if (command) {
+            await command.handler(ctx, parsed.args);
             return;
           }
-          await command.handler(ctx, parsed.args);
+          // Fall-through: unknown CLI-shell command. Forward the raw
+          // `/<cmd> <args>` line to the agent so vault commands
+          // (`/wiki:greet alice`) and agent built-ins (`/info`,
+          // `/copy`, `/mcp`, `/help`, `/version`) work.
+          await onPrompt(parsed.raw);
           return;
         }
         await onPrompt(parsed.text);

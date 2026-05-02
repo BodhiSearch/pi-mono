@@ -5,6 +5,8 @@ export { logoutCommand } from './logout';
 export { modelsCommand, modelCommand } from './models';
 export { mcpCommand } from './mcp';
 export { sessionCommand } from './session';
+export { volumeCommand } from './volume';
+export { featureCommand } from './feature';
 export { buildHelpCommand } from './help';
 export { buildQuitCommand, createQuitController, type QuitController } from './quit';
 
@@ -15,6 +17,8 @@ import { logoutCommand } from './logout';
 import { modelsCommand, modelCommand } from './models';
 import { mcpCommand } from './mcp';
 import { sessionCommand } from './session';
+import { volumeCommand } from './volume';
+import { featureCommand } from './feature';
 import { buildHelpCommand } from './help';
 import { buildQuitCommand, type QuitController } from './quit';
 
@@ -32,6 +36,8 @@ export function buildDefaultRegistry(opts: BuildRegistryOptions): CommandRegistr
     modelCommand,
     mcpCommand,
     sessionCommand,
+    volumeCommand,
+    featureCommand,
     buildQuitCommand(opts.quitController),
   ]);
   // Help needs the registry itself, so register it last.

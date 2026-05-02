@@ -95,13 +95,25 @@ export {
   CWD_VOLUME_NAME,
   assembleNodeServices,
   createCwdVolumeInit,
-  createInMemoryFeatureStore,
-  createInMemoryMcpToggleStore,
-  createInMemorySessionStore,
+  createPathVolumeInit,
   type AssembleNodeServicesOptions,
   type AssembledNodeServices,
   type CwdVolumeOptions,
 } from './services';
+export {
+  KV_LAST_MODEL_ID,
+  KV_REQUESTED_MCPS,
+  KV_VOLUMES,
+  createKvStore,
+  createSqliteFeatureStore,
+  createSqliteMcpToggleStore,
+  createSqliteSessionStore,
+  openAppDb,
+  type AppDb,
+  type KvStore,
+  type OpenDbOptions,
+  type PersistedVolume,
+} from './storage';
 export {
   createLineRenderer,
   createPiRenderer,

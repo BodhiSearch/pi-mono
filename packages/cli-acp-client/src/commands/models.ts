@@ -1,5 +1,6 @@
 import type { SlashCommand } from '../shell/registry';
 import { setStatus } from '../shell/context';
+import { KV_LAST_MODEL_ID } from '../storage/kv-keys';
 
 export const modelsCommand: SlashCommand = {
   name: 'models',
@@ -42,7 +43,7 @@ export const modelCommand: SlashCommand = {
       return;
     }
     ctx.modelId = id;
-    await ctx.settings.patch({ lastModelId: id });
+    ctx.host.kv.set(KV_LAST_MODEL_ID, id);
     if (ctx.status.kind === 'authenticated') {
       setStatus(ctx, { ...ctx.status, modelId: id });
     }

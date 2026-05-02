@@ -9,11 +9,12 @@ import { z } from 'zod';
  *   the hardcoded dev default in `auth/config.ts` when absent.
  * - `tokens`: stored verbatim from the Keycloak token response. Plaintext on
  *   disk for v0; replace with OS keychain in a follow-up.
- * - `lastModelId`: most recently selected model id, surfaced as the default
- *   on next launch so `/model` doesn't have to be re-typed.
- * - `requestedMcps`: MCP server URLs the user has asked Bodhi to approve via
- *   `/mcp add`. Mirrors the browser SDK's IDB-stored list — survives logout
- *   so the next login keeps the resource set stable.
+ *
+ * `lastModelId`, `requestedMcps`, and `volumes` previously lived here but
+ * have moved to the sqlite `kv` table (`storage/sqlite-stores.ts`); the
+ * fields stay in the schema as optional read-only fallbacks so an existing
+ * `settings.json` from before the migration still feeds the bootstrap
+ * one-shot copy into kv.
  */
 
 export const TokenBundleSchema = z.object({
@@ -35,7 +36,9 @@ export const SettingsSchema = z.object({
    */
   callbackPort: z.number().int().min(1).max(65_535).optional(),
   tokens: TokenBundleSchema.optional(),
+  /** @deprecated read-only fallback; live source is sqlite kv (KV_LAST_MODEL_ID). */
   lastModelId: z.string().optional(),
+  /** @deprecated read-only fallback; live source is sqlite kv (KV_REQUESTED_MCPS). */
   requestedMcps: z.array(z.string().url()).default([]),
 });
 

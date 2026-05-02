@@ -17,14 +17,16 @@
 
 import { Chalk } from 'chalk';
 import {
-  CombinedAutocompleteProvider,
   Editor,
+  matchesKey,
   ProcessTerminal,
   type SlashCommand as TuiSlashCommand,
   Text,
   TUI,
 } from '@mariozechner/pi-tui';
 import type { ConnectionStatus, Renderer, ShellMessage, SlashCommandSummary } from '../shell/types';
+import { DEFAULT_CLI_KEYBINDINGS, type CliHostKeybindings } from '../shell/keybindings';
+import { DynamicAutocompleteProvider } from './dynamic-autocomplete';
 import { defaultEditorTheme } from './themes';
 
 const chalk = new Chalk({ level: 3 });
@@ -40,6 +42,18 @@ export interface PiRendererInit {
   basePath: string;
   /** Set up the submit handler — called once after the editor is ready. */
   onSubmit: (line: string) => Promise<void>;
+  /**
+   * Host-level keybindings (Esc to cancel etc). Falls back to
+   * `DEFAULT_CLI_KEYBINDINGS` when omitted.
+   */
+  keybindings?: CliHostKeybindings;
+  /**
+   * Called when the user presses the cancel-turn key (Esc by
+   * default). Return `true` to consume the keypress (so the editor
+   * doesn't see it); return `false` to fall through to the editor's
+   * own Esc handler (e.g. dismiss autocomplete popup).
+   */
+  onCancelTurn?: () => boolean;
 }
 
 export interface PiRendererRuntime {
@@ -48,6 +62,12 @@ export interface PiRendererRuntime {
   exited: Promise<void>;
   /** Force-stop the TUI. Called from the `/quit` controller. */
   stop: () => void;
+  /**
+   * Update the autocomplete provider's slash-command list. Called by
+   * the StreamController when the agent emits an
+   * `available_commands_update`.
+   */
+  setSlashCommands: (commands: SlashCommandSummary[]) => void;
 }
 
 export function createPiRenderer(init: PiRendererInit): PiRendererRuntime {
@@ -62,13 +82,25 @@ export function createPiRenderer(init: PiRendererInit): PiRendererRuntime {
   tui.addChild(statusText);
 
   const editor = new Editor(tui, defaultEditorTheme);
-  const autocompleteProvider = new CombinedAutocompleteProvider(
+  const autocompleteProvider = new DynamicAutocompleteProvider(
     init.slashCommands.map(toTuiSlashCommand),
     init.basePath
   );
   editor.setAutocompleteProvider(autocompleteProvider);
   tui.addChild(editor);
   tui.setFocus(editor);
+
+  const keybindings = init.keybindings ?? DEFAULT_CLI_KEYBINDINGS;
+  const cancelHandler = init.onCancelTurn;
+  if (cancelHandler) {
+    tui.addInputListener(data => {
+      if (!matchesKey(data, keybindings.cancelTurn)) {
+        return undefined;
+      }
+      const consumed = cancelHandler();
+      return consumed ? { consume: true } : undefined;
+    });
+  }
 
   const messageById = new Map<string, Text>();
 
@@ -134,6 +166,9 @@ export function createPiRenderer(init: PiRendererInit): PiRendererRuntime {
         // ignore
       }
       exitResolve();
+    },
+    setSlashCommands(commands: SlashCommandSummary[]): void {
+      autocompleteProvider.setSlashCommands(commands.map(toTuiSlashCommand));
     },
   };
 }

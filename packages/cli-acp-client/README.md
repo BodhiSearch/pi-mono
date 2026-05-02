@@ -6,6 +6,12 @@ duplex transport. Exists primarily to prove that the agent runtime is
 **transport- and host-neutral**: the same code that powers the browser
 worker in `packages/web-acp/` runs unchanged inside a Node.js TTY.
 
+> **Looking for task-shaped docs?** The full user guide lives at
+> [`ai-docs/cli-acp-client/guide/`](../../ai-docs/cli-acp-client/guide/index.md).
+> This README covers the architectural surface and contributor workflow;
+> day-to-day usage (slash commands, MCP, volumes, sessions,
+> troubleshooting) is in the guide.
+
 ## What it is
 
 ```
@@ -33,10 +39,15 @@ The CLI ships:
 ## Status
 
 - [x] Slash command pipeline (`/host`, `/login`, `/logout`, `/models`,
-      `/model`, `/mcp`, `/session`, `/help`, `/quit`).
+      `/model`, `/mcp`, `/session`, `/volume`, `/feature`, `/help`, `/quit`).
 - [x] OAuth flow with redirect callback server, Bodhi access-request
       consent, and Keycloak token exchange.
 - [x] Embedded ACP host with Node service adapters.
+- [x] Streaming state machine ported from `web-acp`, long-lived
+      `client.onSessionUpdate` listener, MCP catalog/lifecycle/toggle
+      wiring, builtin-action dispatcher (OSC 52 + print fallback),
+      multi-volume mounts, sqlite-backed sessions/features/MCP toggles
+      via Drizzle.
 - [x] Unit + smoke tests; Playwright e2e scaffold (mirrors
       `packages/web-acp/e2e`).
 - [ ] Token storage encryption (currently plaintext under
@@ -70,28 +81,33 @@ Useful flags:
 
 ## Quick start
 
+See [`ai-docs/cli-acp-client/guide/01-install-and-host.md`](../../ai-docs/cli-acp-client/guide/01-install-and-host.md)
+for a walkthrough. TL;DR:
+
 ```text
 $ npx cli-acp
-cli-acp - type /help for commands, /host <url> to begin.
-> /host http://localhost:1135
-[info] Host set to http://localhost:1135. Starting /login flow...
-[info] Listening for OAuth callback on http://localhost:53217/callback
-[info] Access request submitted (id=...); review at http://localhost:1135/...
-... (browser opens; user reviews + approves) ...
-[info] Login successful, tokens received
-[status] authenticated to http://localhost:1135
-> /models
-[info] Available models (2):
-  oai/gpt-4.1-nano   (openai)
-  anthropic/claude-haiku-4-5-20251001   (anthropic)
+> /host http://localhost:1135      # OAuth + tokens persisted to sqlite kv
 > /model oai/gpt-4.1-nano
-[info] Active model set to oai/gpt-4.1-nano.
 > Reply with the single word: pong.
-[you] Reply with the single word: pong.
-[bot] pong
 ```
 
-## /host + /login flow
+For the rest of the surface see the user guide:
+
+| Topic | Guide page |
+| --- | --- |
+| Prompts vs slash commands vs vault commands | [02](../../ai-docs/cli-acp-client/guide/02-vault-commands-and-prompts.md) |
+| `bash` tool + `/mnt/cwd` | [03](../../ai-docs/cli-acp-client/guide/03-bash-tool.md) |
+| MCP add / list / toggle / remove | [04](../../ai-docs/cli-acp-client/guide/04-mcp.md) |
+| `/volume` mounts | [05](../../ai-docs/cli-acp-client/guide/05-volumes.md) |
+| Sessions, replay, `/info`, `/copy` | [06](../../ai-docs/cli-acp-client/guide/06-sessions.md) |
+| Troubleshooting (OSC 52, sqlite, OAuth) | [07](../../ai-docs/cli-acp-client/guide/07-troubleshooting.md) |
+| Architecture overview (duplex, state stores) | [08](../../ai-docs/cli-acp-client/guide/08-architecture.md) |
+
+## /host + /login flow (deep dive)
+
+End-user flow lives in
+[guide 01](../../ai-docs/cli-acp-client/guide/01-install-and-host.md).
+The protocol-level steps are:
 
 1. The CLI starts a callback server on **`127.0.0.1:5173`** by default.
    This port intentionally matches the one `packages/web-acp/`'s Vite
@@ -124,11 +140,9 @@ override this per-cwd.
 
 ## $cwd volume semantics
 
-The directory you launch the CLI in is auto-mounted as the volume named
-`cwd` inside the embedded agent's ZenFS root. The agent's bash and
-filesystem tools therefore see the host filesystem rooted at `/mnt/cwd`,
-backed by a `PassthroughFS` that delegates to Node's native `fs`.
-Permissions, symlink handling, and case-sensitivity follow the host OS.
+`<cwd>` is auto-mounted at `/mnt/cwd` via `PassthroughFS`. Add more
+mounts with `/volume add <path> [<mountName>]` — see
+[guide 05](../../ai-docs/cli-acp-client/guide/05-volumes.md).
 
 To work in a different directory without changing your shell's `pwd`:
 
@@ -165,16 +179,21 @@ see `HttpStatusError` with the response body. The Bodhi side typically
 returns JSON with `error_description` — read that verbatim before
 filing a bug.
 
-## Settings storage and the plaintext-token caveat
+## State storage
 
-Settings live at `<cwd>/.cli-acp-client/settings.json`:
+Per-cwd state lives under `<cwd>/.cli-acp-client/`:
+
+| File | Owner | Contents |
+| --- | --- | --- |
+| `state.db` | sqlite (Drizzle) | `sessions`, `entries`, `features`, `mcp_toggles`, `kv` (requested MCPs, last model id, persisted volumes). |
+| `settings.json` | settings store | `host`, `authServerUrl`, `callbackPort`, `tokens`. The deprecated `lastModelId` / `requestedMcps` keys are still readable for the one-shot migration. |
+
+Plaintext example of `settings.json`:
 
 ```json
 {
   "host": "http://localhost:1135",
   "authServerUrl": "https://main-id.getbodhi.app/realms/bodhi",
-  "lastModelId": "oai/gpt-4.1-nano",
-  "requestedMcps": ["https://mcp.exa.ai/mcp"],
   "tokens": {
     "accessToken": "...",
     "refreshToken": "...",

@@ -29,11 +29,15 @@ function makeCtx(renderer: Renderer): AppContext {
     renderer,
     opener: {} as AppContext['opener'],
     cwd: '/tmp',
+    stream: {} as AppContext['stream'],
     sessionId: null,
     modelId: null,
     status: { kind: 'disconnected' },
     tokens: null,
     composedMcpServers: [],
+    mcpInstances: [],
+    requestedMcps: [],
+    isDev: true,
   };
 }
 
@@ -69,15 +73,30 @@ describe('createDispatcher', () => {
     expect(messages).toEqual([]);
   });
 
-  it('emits an error for unknown commands', async () => {
+  it('forwards unknown /commands to the prompt handler (fall-through to agent)', async () => {
     const { renderer, messages } = makeRecorder();
     const ctx = makeCtx(renderer);
     const registry = new CommandRegistry();
-    const dispatcher = createDispatcher(ctx, registry, async () => {});
-    await dispatcher.submit('/unknown');
-    expect(messages.length).toBe(1);
-    expect(messages[0].kind).toBe('error');
-    expect(messages[0].text).toMatch(/Unknown command/);
+    const seen: string[] = [];
+    const dispatcher = createDispatcher(ctx, registry, async text => {
+      seen.push(text);
+    });
+    await dispatcher.submit('/info extra args');
+    expect(seen).toEqual(['/info extra args']);
+    expect(messages).toEqual([]);
+  });
+
+  it('forwards vault-style /mount:cmd invocations to the prompt handler', async () => {
+    const { renderer, messages } = makeRecorder();
+    const ctx = makeCtx(renderer);
+    const registry = new CommandRegistry();
+    const seen: string[] = [];
+    const dispatcher = createDispatcher(ctx, registry, async text => {
+      seen.push(text);
+    });
+    await dispatcher.submit('/wiki:greet alice');
+    expect(seen).toEqual(['/wiki:greet alice']);
+    expect(messages).toEqual([]);
   });
 
   it('catches handler errors and emits chain + stack via renderer', async () => {

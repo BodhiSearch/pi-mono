@@ -72,10 +72,32 @@ async function main(): Promise<void> {
     renderer: args.ciLineMode ? 'line' : 'pi-tui',
     banner,
     opener,
+    hostOptions: { isDev: resolveIsDev(process.env.CLI_ACP_DEV) },
   });
 
   await runtime.exited;
   await runtime.shutdown();
+}
+
+/**
+ * `CLI_ACP_DEV` resolution: defaults to true so DEV-only features
+ * (forceToolCall, etc.) stay reachable for local exploration. The
+ * literal strings `0`, `false`, `no`, `off` (case-insensitive) opt
+ * out — anything else (including unset) keeps DEV on.
+ */
+function resolveIsDev(raw: string | undefined): boolean {
+  if (raw === undefined) return true;
+  const normalised = raw.trim().toLowerCase();
+  if (
+    normalised === '' ||
+    normalised === '0' ||
+    normalised === 'false' ||
+    normalised === 'no' ||
+    normalised === 'off'
+  ) {
+    return false;
+  }
+  return true;
 }
 
 main()
