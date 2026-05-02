@@ -32,14 +32,15 @@ that the agent runtime is genuinely host-neutral.
 
 **Topic-file note.** Most topic files below were authored before
 the agent extraction and still cite paths under
-`packages/web-acp/src/agent/`, `…/src/acp/`, `…/src/features/`,
-or `…/src/mcp/toggle-store.ts`. After extraction, the *agent-
-side* of those subtrees moved to `packages/web-acp-agent/src/`
+`packages/web-acp/src/agent/`, `…/src/acp/engine/`,
+`…/src/features/`, or `…/src/mcp/toggle-store.ts`. The post-M4
+phase B extraction completed the cutover: those subtrees no
+longer exist in `packages/web-acp/src/`, and every duplicated
+type / engine file lives only at `packages/web-acp-agent/src/`
 (same relative layout). When a topic file says e.g.
 `packages/web-acp/src/agent/inline-agent.ts`, read it as
-`packages/web-acp-agent/src/agent/inline-agent.ts` unless
-explicitly host-side. Topic files are progressively rewritten to
-the new paths as we revise them.
+`packages/web-acp-agent/src/agent/inline-agent.ts`. Topic files
+are progressively rewritten to the new paths as we revise them.
 
 **Status:** living document — update as part of any plan that
 changes the source folder. Reflects the **M4 phase B exit
@@ -92,16 +93,16 @@ drill into the per-module specs:
 | File | Scope |
 | --- | --- |
 | [`startup-sequence.md`](./startup-sequence.md) | End-to-end wiring: page load → worker spawn → ACP handshake → Bodhi authenticate → `bodhi/listModels` → session/prompt turn. The authoritative reference for "what happens when". |
-| [`acp.md`](./acp.md) | `src/acp/` — the **wire shim** (`AcpAgentAdapter`), the **engine layer** (`acp/engine/services.ts`, `session-runtime.ts`, `prompt-driver.ts`, `builtin-dispatch.ts`, `ext-methods/*.ts`), `AcpClient`, the `bodhi-token` auth method, ACP ↔ `pi-agent-core` streaming translation. |
-| [`agent.md`](./agent.md) | `src/agent/` — `agent-worker.ts` (Worker entry), `InlineAgent` (`pi-agent-core` wrapper), `BodhiProvider` (`LlmProvider` implementation), `createStreamFn` (pi-ai bridge). |
-| [`sessions.md`](./sessions.md) | `src/agent/session-store.ts` — Dexie-backed worker-owned session persistence (schema, CRUD, invariants, replay contract with `session/load`). |
-| [`transport.md`](./transport.md) | `src/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
-| [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` (thin facade) + the per-concern slice hooks under `src/hooks/useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}.ts` + the host-side ACP plumbing under `src/acp/{runtime,streaming-reducer,builtin-dispatch,message-shape,session-meta,permissions}.ts`. The wire/engine split that mirrors the agent-side `acp/engine/` cut. |
-| [`vault.md`](./vault.md) | `src/vault/`, `src/agent/volume-*.ts`, `src/agent/system-prompt.ts`, `src/transport/volume-control.ts`, `src/hooks/useVolumes.ts`, `src/components/volumes/`, `src/acp/fs-handlers.ts` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, the worker-side `VolumeRegistry`, and the main-thread `fs/*` IDE-integration seam (M2). |
-| [`tools.md`](./tools.md) | `src/agent/tools/` — the `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation (M2). |
-| [`features.md`](./features.md) | `src/features/`, `src/components/features/` — per-session feature-toggle store (Dexie v2 `features` table), `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). |
-| [`mcp.md`](./mcp.md) | `src/mcp/`, `src/agent/mcp/` — main-thread MCP catalog + `McpServerHttp` composition, worker-side `@modelcontextprotocol/sdk` client, refcounted connection pool, tool adapter, `_meta.bodhi.mcp` lifecycle events (M3). |
-| [`commands.md`](./commands.md) | `src/agent/commands/` — vault-sourced slash commands (M4 phase A) + agent-handled built-ins `/help` `/version` `/session` `/copy` (M4 phase B), the `_meta.bodhi.builtin` envelope, the `'builtin'` `SessionEntry` kind, and the client-side action dispatch (e.g. `/copy` → clipboard). |
+| [`acp.md`](./acp.md) | Agent-side wire shim + engine layer at **`packages/web-acp-agent/src/acp/{agent-adapter,engine/{services,session-runtime,prompt-driver,builtin-dispatch,ext-methods}}`**, plus host-side `src/acp/client.ts` and the `bodhi-token` auth method. ACP ↔ `pi-agent-core` streaming translation. |
+| [`agent.md`](./agent.md) | Host-side `src/agent/agent-worker.ts` (Worker boot shim that calls `startAcpAgent` from `@bodhiapp/web-acp-agent`). Agent-side `InlineAgent`, `BodhiProvider`, `createStreamFn` live in **`packages/web-acp-agent/src/agent/`**. |
+| [`sessions.md`](./sessions.md) | Dexie-backed `SessionStore` impl at **`src/runtime/storage-dexie/session-store.ts`** satisfying the agent-package interface. Schema, CRUD, invariants, replay contract with `session/load`. |
+| [`transport.md`](./transport.md) | `src/runtime/transport/worker-stream.ts` — `MessagePort` ↔ `ReadableStream`/`WritableStream` bridge consumed by `ndJsonStream`. |
+| [`hook.md`](./hook.md) | `src/hooks/useAcp.ts` (thin facade) + the per-concern slice hooks under `src/hooks/useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}.ts` + the host-side ACP plumbing under `src/acp/{runtime,streaming-reducer,builtin-dispatch,message-shape,session-meta,permissions}.ts`. The wire/engine split mirrors the agent-side `acp/engine/` cut now living in `@bodhiapp/web-acp-agent`. |
+| [`vault.md`](./vault.md) | `src/vault/`, **`src/runtime/volumes-fsa/`** (HostVolumeInit, `toAgentVolumeInit`, `attachVolumeChannel`, `createVolumeControl`), `src/hooks/useVolumes.ts`, `src/components/volumes/`, `src/acp/fs-handlers.ts` — multi-volume mount architecture, FSA handle persistence, the main-thread volume-control channel, and the main-thread `fs/*` IDE-integration seam (M2). The agent-side `VolumeRegistry` interface + `ZenfsVolumeRegistry` impl live in `@bodhiapp/web-acp-agent`. |
+| [`tools.md`](./tools.md) | Agent-side `bash` AgentTool, `VolumeFileSystem` adapter over ZenFS, `MountableFs` composition, cancellation & truncation, ACP `tool_call` / `tool_call_update` translation — all at **`packages/web-acp-agent/src/agent/tools/`** (M2). |
+| [`features.md`](./features.md) | `src/runtime/storage-dexie/feature-store.ts` (host-side Dexie impl) + `src/components/features/` — per-session feature-toggle store, `_bodhi/features/*` ACP extension methods, DEV-only gating for `forceToolCall` (M2). The interface + `FEATURE_DEFAULTS` live in `@bodhiapp/web-acp-agent`. |
+| [`mcp.md`](./mcp.md) | `src/mcp/` (main-thread MCP catalog + `McpServerHttp` composition + UI), `src/runtime/storage-dexie/mcp-toggle-store.ts` (host-side Dexie impl). Agent-side worker MCP client, refcounted connection pool, tool adapter, `_meta.bodhi.mcp` lifecycle events all live in `@bodhiapp/web-acp-agent` (M3). |
+| [`commands.md`](./commands.md) | Agent-side `packages/web-acp-agent/src/agent/commands/` — vault-sourced slash commands (M4 phase A) + agent-handled built-ins `/help` `/version` `/info` `/copy` `/mcp` (M4 phase B), the `_meta.bodhi.builtin` envelope, the `'builtin'` `SessionEntry` kind, and the host-side client-action dispatch under `src/acp/builtin-dispatch.ts`. |
 
 ## Overview
 
@@ -189,94 +190,93 @@ drill into the per-module specs:
 
 ### Folder layout
 
+Post-cleanup (the agent-extraction PR finished the wiring flip):
+the duplicated engine layer + agent runtime files are gone from
+`packages/web-acp/src/`. What remains is the host-side ACP wire
+half + React + the host-specific Dexie/FSA/MessagePort
+adapters under `runtime/`. Everything agent-side comes from
+`@bodhiapp/web-acp-agent`.
+
 ```
 packages/web-acp/src/
-├── acp/
-│   ├── index.ts           # public constants + SDK re-exports
-│   ├── methods.ts         # `_bodhi/*` extension method name barrel (M2)
-│   ├── client.ts          # AcpClient (main-thread wrapper over ClientSideConnection)
-│   ├── fs-handlers.ts     # main-thread `fs/readTextFile` / `fs/writeTextFile` handlers (M2.3)
-│   ├── runtime.ts         # AcpRuntime singleton + module-scope session/auth state (host wire/engine split)
-│   ├── streaming-reducer.ts # Pure reducer for session/update + turn lifecycle (host)
-│   ├── streaming-reducer.test.ts # Reducer unit tests
-│   ├── builtin-dispatch.ts # Pure dispatchBuiltinAction (copy / mcp-add / mcp-remove)
-│   ├── permissions.ts     # session/request_permission stub (deferred)
-│   ├── message-shape.ts   # Pure helpers: empty/get/withAssistantText, userMessage, …
-│   ├── session-meta.ts    # authKeyOf, toBodhiModelInfo, composeSessionMeta
-│   ├── agent-adapter.ts   # AcpAgentAdapter (wire shim, ~245 LoC after engine split)
-│   ├── wire-utils.ts      # pure ACP wire helpers (extractSessionMeta, filterHttpServers, ...)
-│   └── engine/            # engine layer (services / runtime / driver / dispatch)
-│       ├── types.ts          # SessionState + ExtMethodHost interfaces
-│       ├── services.ts       # AcpAdapterServices + assembleServices() factory
-│       ├── session-runtime.ts # AcpSessionRuntime (lifecycle owner, MCP, commands)
-│       ├── prompt-driver.ts  # PromptTurnDriver (one prompt turn end-to-end)
-│       ├── builtin-dispatch.ts # tryHandleBuiltin (/help, /version, /copy, /session, /mcp)
-│       └── ext-methods/      # per-handler files for `_bodhi/*` ext methods
-│           ├── index.ts          # dispatchExtMethod() registry
-│           ├── list-models.ts    # bodhi/listModels
-│           ├── list-sessions.ts  # bodhi/listSessions
-│           ├── volumes-list.ts   # _bodhi/volumes/list
-│           ├── features-list.ts  # _bodhi/features/list
-│           ├── features-set.ts   # _bodhi/features/set
-│           ├── get-session.ts    # bodhi/getSession (transcript rebuild)
-│           ├── mcp-toggles-set.ts # _bodhi/mcp/toggles/set
-│           └── sessions-delete.ts # _bodhi/sessions/delete
+├── acp/                       # Host-side ACP wire/engine split (no engine layer here — agent owns it)
+│   ├── index.ts               # public constants + SDK re-exports
+│   ├── methods.ts             # `_bodhi/*` extension method name barrel
+│   ├── client.ts              # AcpClient (main-thread wrapper over ClientSideConnection)
+│   ├── fs-handlers.ts         # main-thread `fs/readTextFile` / `fs/writeTextFile` handlers
+│   ├── runtime.ts             # AcpRuntime singleton + per-tab session/auth state
+│   ├── streaming-reducer.ts   # Pure reducer for session/update + turn lifecycle (host)
+│   ├── builtin-dispatch.ts    # Pure dispatchBuiltinAction (copy / mcp-add / mcp-remove)
+│   ├── permissions.ts         # session/request_permission stub (deferred)
+│   ├── message-shape.ts       # Empty/get/withAssistantText helpers, userMessage, …
+│   ├── session-meta.ts        # authKeyOf, toBodhiModelInfo, composeSessionMeta
+│   └── wire-utils.ts          # ACP wire helpers (extractSessionMeta, filterHttpServers, …)
 ├── agent/
-│   ├── agent-worker.ts    # Web Worker entry; wires AcpAgentAdapter
-│   ├── inline-agent.ts    # pi-agent-core wrapper
-│   ├── bodhi-provider.ts  # BodhiProvider (LlmProvider implementation)
-│   ├── session-store.ts   # Dexie-backed SessionStore (v3: sessions + features + mcpToggles)
-│   ├── stream-fn.ts       # createStreamFn(provider) → pi-ai bridge
-│   ├── volume-mount.ts    # VolumeRegistry (worker-side ZenFS mounts, M2)
-│   ├── volume-channel.ts  # raw-postMessage volume-control bridge (M2)
-│   └── system-prompt.ts   # composeSystemPrompt(volumes) (M2)
-├── agent/mcp/             # worker-side MCP runtime (M3)
-│   ├── client.ts          # createMcpClient (StreamableHTTPClientTransport)
-│   ├── connection-pool.ts # McpConnectionPool (refcounted, fingerprint eviction)
-│   └── tool-adapter.ts    # MCP tool descriptor → AgentTool<TSchema>
-├── mcp/                   # main-thread MCP surface (M3)
-│   ├── types.ts           # McpInstanceView, McpConnectionState, BodhiMcpUpdateMeta
-│   ├── useMcpInstances.ts # React hook over bodhiClient.mcps.list() (live fetch)
+│   └── agent-worker.ts        # Web Worker entry: opens Dexie, builds FSA registry, calls startAcpAgent from @bodhiapp/web-acp-agent
+├── runtime/                   # Host adapters that satisfy the agent-package interfaces
+│   ├── storage-dexie/         # Dexie/IndexedDB SessionStore + FeatureStore + McpToggleStore impls
+│   │   ├── db.ts              # SessionStoreDb (v3 schema)
+│   │   ├── session-store.ts   # createSessionStore / createStoreFromDb
+│   │   ├── feature-store.ts   # createFeatureStore
+│   │   ├── mcp-toggle-store.ts # createMcpToggleStore
+│   │   └── index.ts           # barrel
+│   ├── volumes-fsa/           # FSA-backed volume host (handle ↔ agent VolumeInit)
+│   │   ├── types.ts           # HostVolumeInit (host-shaped, FSA handle | seed) + VolumeSeed
+│   │   ├── backends.ts        # toAgentVolumeInit() — converts HostVolumeInit → agent's VolumeInit
+│   │   ├── volume-channel.ts  # worker-side raw-postMessage mount/unmount listener
+│   │   ├── volume-control.ts  # main-thread client for the volume-control channel
+│   │   └── index.ts           # barrel
+│   └── transport/
+│       └── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream byte-stream bridge
+├── mcp/                       # Main-thread MCP surface
+│   ├── types.ts               # McpInstanceView, McpConnectionState, BodhiMcpUpdateMeta
+│   ├── useMcpInstances.ts     # React hook over bodhiClient.mcps.list() (live fetch)
 │   ├── compose-mcp-servers.ts # pure compose(instances, jwt, baseUrl, toggles?)
-│   ├── toggle-store.ts    # worker-side per-session mcpToggles store (Dexie v3)
-│   └── McpPanel.tsx       # status chips + per-server/per-tool toggle UI
+│   ├── requested-mcps-store.ts # IndexedDB-backed wishlist of MCP URLs requested at login
+│   ├── url-canonical.ts       # canonicalizeMcpUrl helper (also re-exported by agent package)
+│   └── McpPanel.tsx           # status chips + per-server/per-tool toggle UI
 ├── vault/
-│   ├── fsa-handle-store.ts # idb-keyval-backed FSA handle persistence (M2)
-│   └── main-zenfs.ts      # main-thread ZenFS duplicate-mount manager (M2.3)
-├── features/
-│   └── feature-store.ts   # per-session feature toggles (Dexie v2) (M2)
-├── agent/tools/
-│   ├── bash-tool.ts       # just-bash-backed `bash` AgentTool (M2)
-│   └── volume-filesystem.ts # IFileSystem adapter over ZenFS (M2)
-├── transport/
-│   ├── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream
-│   └── volume-control.ts  # main-thread client for the volume-control channel (M2)
+│   ├── fsa-handle-store.ts    # idb-keyval-backed FSA handle persistence
+│   └── main-zenfs.ts          # main-thread ZenFS duplicate-mount manager (fs/* IDE-integration seam)
 ├── hooks/
-│   ├── useAcp.ts          # Thin facade composing the slice hooks; owns isAuthenticated gating
-│   ├── useAcpRuntime.ts   # ensureRuntime + useVolumes wrapper
-│   ├── useAcpAuth.ts      # Bodhi auth observation, model load, token-rotation session/load rebuild
-│   ├── useAcpModels.ts    # selectedModel, ensureDefaultModel, applyLastModel, loadModels
-│   ├── useAcpFeatures.ts  # _bodhi/features/* slice
-│   ├── useAcpMcp.ts       # mcpToggles, composeCurrentMcpServers, dispatchAction, setMcpToggle
-│   ├── useAcpSession.ts   # ensureSession, loadSession, clearMessages, deleteSession + lifecycle effects
-│   ├── useAcpStreaming.ts # session/update listener + sendMessage/stop/clearError driving the reducer
-│   └── useVolumes.ts      # React hook; manages multi-volume state (M2)
-├── components/            # shadcn/ui + ChatDemo + volumes/VolumesPanel (M2)
-├── lib/                   # bodhi-models, agent-model, utils
-├── types/                 # UI-level types
-└── App.tsx, main.tsx, env.ts
+│   ├── useAcp.ts              # Thin facade composing the slice hooks; owns isAuthenticated gating
+│   ├── useAcpRuntime.ts       # ensureRuntime + useVolumes wrapper
+│   ├── useAcpAuth.ts          # Bodhi auth observation, model load, token-rotation session/load rebuild
+│   ├── useAcpModels.ts        # selectedModel, ensureDefaultModel, applyLastModel, loadModels
+│   ├── useAcpFeatures.ts      # _bodhi/features/* slice
+│   ├── useAcpMcp.ts           # mcpToggles, composeCurrentMcpServers, dispatchAction, setMcpToggle
+│   ├── useAcpSession.ts       # ensureSession, loadSession, clearMessages, deleteSession + lifecycle effects
+│   ├── useAcpStreaming.ts     # session/update listener + sendMessage/stop/clearError driving the reducer
+│   └── useVolumes.ts          # React hook; manages multi-volume state
+├── components/                # shadcn/ui + ChatDemo + volumes/VolumesPanel + features/FeaturePanel + mcp/McpPanel
+├── lib/                       # bodhi-models, agent-model, builtin-format, utils
+├── types/                     # UI-level types (chat.ts)
+└── App.tsx, main.tsx, env.ts, vite-env.d.ts
 ```
 
-The split under `src/` is deliberate: `acp/`, `agent/`,
-`transport/` form the extractable runtime; `hooks/`, `components/`,
-`lib/`, `types/` stay with the reference app when the runtime
-eventually becomes its own package.
+The split under `src/` is deliberate: `acp/` (host-side wire),
+`agent/agent-worker.ts` (boot shim), and `runtime/` form the
+host-runtime layer that wires `@bodhiapp/web-acp-agent` to the
+browser. `hooks/`, `components/`, `lib/`, `mcp/`, `vault/`, and
+`types/` are the reference-app surface that stays here when the
+host-runtime becomes its own package.
 
 ### Public surface (today)
 
-`web-acp` does not yet export a public barrel — M0 is the
-reference app itself. The files that will form the library
-boundary at extraction time (M7) are:
+After the post-M4 phase B agent extraction, **the agent-side
+public surface lives in `@bodhiapp/web-acp-agent`** (see
+`packages/web-acp-agent/src/index.ts`): `AcpAgentAdapter`,
+`AcpAdapterServices`, `assembleServices`, `StreamOverridesRef`,
+`AcpSessionRuntime`, `PromptTurnDriver`, `InlineAgent`,
+`createInlineAgent`, `BodhiProvider`, `createStreamFn`,
+`SessionStore`, `FeatureStore`, `McpToggleStore`,
+`VolumeRegistry` / `ZenfsVolumeRegistry`, `VolumeInit`, plus the
+`startAcpAgent` bootstrap.
+
+`web-acp` does not yet export a public barrel — it is still the
+reference app embedding the agent package. The files that will
+form the **host-runtime** library boundary when this package is
+extracted (M8) are:
 
 - `src/acp/index.ts` — `BODHI_AUTH_METHOD_ID`,
   `BODHI_LIST_MODELS_METHOD`, `BODHI_LIST_SESSIONS_METHOD`,
@@ -284,28 +284,21 @@ boundary at extraction time (M7) are:
   `BodhiModelDescriptor`, `BodhiListModelsResponse`,
   `BodhiSessionSummary`, `BodhiListSessionsResponse`,
   `BodhiGetSessionRequest`, `BodhiGetSessionResponse`, plus
-  re-exported SDK types (including `LoadSessionRequest` /
-  `LoadSessionResponse`). This is the contract every ACP client
-  of the worker consumes.
+  re-exported SDK types (`LoadSessionRequest` /
+  `LoadSessionResponse`). This is the host-side ACP wire surface.
 - `src/acp/client.ts` — `AcpClient`.
-- `src/acp/agent-adapter.ts` — `AcpAgentAdapter` (wire shim).
-- `src/acp/engine/services.ts` — `AcpAdapterServices`,
-  `assembleServices()`, `StreamOverridesRef`. The deps bag the
-  adapter consumes; the worker's only assembly point.
-- `src/acp/engine/session-runtime.ts` — `AcpSessionRuntime`
-  (lifecycle owner; the M5/M6/M7 surface grows here).
-- `src/acp/engine/prompt-driver.ts` — `PromptTurnDriver` (the
-  single-turn engine).
-- `src/agent/inline-agent.ts` — `InlineAgent`, `createInlineAgent`.
-- `src/agent/session-store.ts` — `SessionStore`, `createSessionStore`
-  (M1, worker-only). Spec in [`./sessions.md`](./sessions.md).
-- `src/agent/bodhi-provider.ts` — `BodhiProvider`,
-  `BODHI_PROVIDER_TAG`, `apiFormatOfModel`, `LlmProvider`,
-  `LlmAuthCredential`.
-- `src/agent/stream-fn.ts` — `createStreamFn`.
-- `src/agent/agent-worker.ts` — `AgentWorkerInitMessage`.
-- `src/transport/worker-stream.ts` — `createMessagePortStream`,
-  `PortByteStream`.
+- `src/agent/agent-worker.ts` — `AgentWorkerInitMessage` + the
+  Worker boot shim that calls `startAcpAgent` from the agent
+  package.
+- `src/runtime/storage-dexie/` — Dexie-backed `SessionStore` /
+  `FeatureStore` / `McpToggleStore` impls satisfying the agent
+  package's interfaces.
+- `src/runtime/volumes-fsa/` — `HostVolumeInit`,
+  `toAgentVolumeInit`, `attachVolumeChannel`,
+  `createVolumeControl`. The FSA-side bridge that constructs an
+  agent-package `VolumeInit` from a browser FSA handle or seed.
+- `src/runtime/transport/worker-stream.ts` —
+  `createMessagePortStream`, `PortByteStream`.
 
 Changes that move, rename, or remove any of these need a matching
 update in the spec file that covers them.

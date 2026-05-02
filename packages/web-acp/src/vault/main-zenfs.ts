@@ -27,7 +27,7 @@
 import { configure, fs, InMemory } from '@zenfs/core';
 import { mount, umount } from '@zenfs/core/vfs';
 import { WebAccess } from '@zenfs/dom';
-import type { VolumeInit, VolumeSeed } from '@/agent/volume-mount';
+import type { HostVolumeInit, VolumeSeed } from '@/runtime/volumes-fsa';
 
 export interface MainMountSnapshot {
   mountName: string;
@@ -38,7 +38,7 @@ export class MainZenfs {
   #mounted = new Map<string, MainMountSnapshot>();
   #configured = false;
 
-  async mountAll(initial: VolumeInit[]): Promise<void> {
+  async mountAll(initial: HostVolumeInit[]): Promise<void> {
     for (const init of initial) {
       try {
         await this.mount(init);
@@ -48,7 +48,7 @@ export class MainZenfs {
     }
   }
 
-  async mount(init: VolumeInit): Promise<void> {
+  async mount(init: HostVolumeInit): Promise<void> {
     if (this.#mounted.has(init.mountName)) return;
     await this.#ensureZenfs();
     const mountPath = `/mnt/${init.mountName}`;

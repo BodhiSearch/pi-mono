@@ -4,8 +4,7 @@ import type {
   ToolCallUpdate as AcpToolCallUpdate,
 } from '@agentclientprotocol/sdk';
 import type { AgentMessage as CoreMessage, AgentMessage } from '@mariozechner/pi-agent-core';
-import type { CommandDef } from '@/agent/commands';
-import type { McpToggleSnapshot } from '@/mcp/toggle-store';
+import type { CommandDef, McpToggleSnapshot } from '@bodhiapp/web-acp-agent';
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
 import type {
   AnyBodhiBuiltinAction,

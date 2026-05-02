@@ -4,9 +4,9 @@ import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
 import type { BodhiModelDescriptor } from '@/acp/index';
 import { requestPermissionStub } from '@/acp/permissions';
-import type { VolumeInit } from '@/agent/volume-mount';
-import { createMessagePortStream } from '@/transport/worker-stream';
-import { createVolumeControl, type VolumeControl } from '@/transport/volume-control';
+import type { HostVolumeInit } from '@/runtime/volumes-fsa';
+import { createMessagePortStream } from '@/runtime/transport/worker-stream';
+import { createVolumeControl, type VolumeControl } from '@/runtime/volumes-fsa';
 import { MainZenfs } from '@/vault/main-zenfs';
 
 // M8: when the package is lifted to `@bodhiapp/bodhi-web-acp`, this
@@ -21,7 +21,7 @@ export interface AcpRuntime {
   volumeControl: VolumeControl;
   mainZenfs: MainZenfs;
   initialize: Promise<void>;
-  resolveInit: (volumes: VolumeInit[]) => void;
+  resolveInit: (volumes: HostVolumeInit[]) => void;
 }
 
 let _runtime: AcpRuntime | null = null;
@@ -41,11 +41,11 @@ export function ensureRuntime(): AcpRuntime {
   // initial volume list (FSA handles + dev/test seeds). The
   // `ClientSideConnection` below would otherwise dispatch requests
   // into a worker that hasn't constructed the agent yet.
-  let resolveInit!: (volumes: VolumeInit[]) => void;
+  let resolveInit!: (volumes: HostVolumeInit[]) => void;
   let initPosted = false;
   const mainZenfs = new MainZenfs();
   const initPromise = new Promise<void>(resolve => {
-    resolveInit = (volumes: VolumeInit[]) => {
+    resolveInit = (volumes: HostVolumeInit[]) => {
       if (initPosted) return;
       initPosted = true;
       // Mount duplicate backends on the main thread for the fs/*

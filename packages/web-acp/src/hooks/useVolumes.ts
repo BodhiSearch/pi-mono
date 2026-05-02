@@ -19,8 +19,7 @@ import {
   saveHandles,
   type VolumeHandleRecord,
 } from '@/vault/fsa-handle-store';
-import type { VolumeControl } from '@/transport/volume-control';
-import type { VolumeInit, VolumeSeed } from '@/agent/volume-mount';
+import type { HostVolumeInit, VolumeControl, VolumeSeed } from '@/runtime/volumes-fsa';
 
 export type VolumeState = 'idle' | 'mounting' | 'mounted' | 'prompt' | 'error';
 
@@ -47,7 +46,7 @@ interface DevSeedGlobal {
 
 export interface UseVolumesArgs {
   volumeControl: VolumeControl | null;
-  onInitialVolumes?: (initial: VolumeInit[]) => void;
+  onInitialVolumes?: (initial: HostVolumeInit[]) => void;
 }
 
 /**
@@ -84,7 +83,7 @@ export function useVolumes({ volumeControl, onInitialVolumes }: UseVolumesArgs):
       const { ready: grantedRecords, prompt: needsPrompt } = await requestPermissions(records);
       recordsRef.current = [...grantedRecords, ...needsPrompt];
       const initialEntries: VolumeEntry[] = [];
-      const initialMounts: VolumeInit[] = [];
+      const initialMounts: HostVolumeInit[] = [];
       for (const r of grantedRecords) {
         initialEntries.push({
           mountName: r.mountName,

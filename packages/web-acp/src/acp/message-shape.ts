@@ -1,5 +1,5 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import { isBuiltinName } from '@/agent/commands/builtins';
+import { isBuiltinName } from '@bodhiapp/web-acp-agent';
 import type { BodhiBuiltinTag } from '@/acp/index';
 import type { McpConnectionMeta } from '@/mcp/types';
 

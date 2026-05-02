@@ -95,7 +95,15 @@ advertising `fs/*` as a future IDE-integration seam.
   volumes-fsa,transport}/` and a thin `agent-worker.ts` shim
   wires them together. Wire surface unchanged. Future Node /
   HTTP-SSE bootstraps plug into the same boundary; M8's library
-  extract step folds in behind this seam. Detail in
+  extract step folds in behind this seam. The extraction commit
+  shipped the agent package + the migrated host-side homes but
+  left `agent-worker.ts` still importing from the legacy
+  in-package paths; a follow-up cleanup
+  ([`ai-docs/plans/indexed-dazzling-fairy.md`](../../plans/indexed-dazzling-fairy.md))
+  flipped the worker over, deleted ~14 duplicated engine files
+  + the legacy provider runtime + legacy stores from
+  `packages/web-acp/src/`, and switched every consumer to import
+  from `@bodhiapp/web-acp-agent`. Detail in
   [`../../../.cursor/plans/extract_web-acp-agent_9dacac4b.plan.md`](../../../.cursor/plans/extract_web-acp-agent_9dacac4b.plan.md).
 - **Post-extraction CLI host (`packages/cli-acp-client/`).**
   A second consumer of `@bodhiapp/web-acp-agent` shipped to

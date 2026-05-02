@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { ensureRuntime, type AcpRuntime } from '@/acp/runtime';
-import type { VolumeInit } from '@/agent/volume-mount';
+import type { HostVolumeInit } from '@/runtime/volumes-fsa';
 import { useVolumes, type UseVolumesResult } from '@/hooks/useVolumes';
 
 export interface UseAcpRuntimeResult {
@@ -24,7 +24,7 @@ export function useAcpRuntime(): UseAcpRuntimeResult {
   const volumeControl = runtime.volumeControl;
 
   const handleInitialVolumes = useCallback(
-    (initial: VolumeInit[]) => {
+    (initial: HostVolumeInit[]) => {
       runtime.resolveInit(initial);
     },
     [runtime]

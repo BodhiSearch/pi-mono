@@ -1,36 +1,40 @@
 /// <reference lib="webworker" />
-import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
-import { AcpAgentAdapter } from '@/acp/agent-adapter';
-import { assembleServices } from '@/acp/engine/services';
-import { BodhiProvider } from './bodhi-provider';
-import { createInlineAgent } from './inline-agent';
-import { createStoreFromDb, openSessionDb } from './session-store';
-import { createStreamFn, type StreamOptionOverrides } from './stream-fn';
-import { createMessagePortStream } from '@/transport/worker-stream';
-import { attachVolumeChannel } from './volume-channel';
-import { VolumeRegistry, type VolumeInit } from './volume-mount';
-import { createFeatureStore } from '@/features/feature-store';
-import { createMcpToggleStore } from '@/mcp/toggle-store';
+import {
+  assembleServices,
+  BodhiProvider,
+  createInlineAgent,
+  createStreamFn,
+  startAcpAgent,
+  type StreamOptionOverrides,
+  type VolumeInit,
+  ZenfsVolumeRegistry,
+} from '@bodhiapp/web-acp-agent';
+import {
+  createFeatureStore,
+  createMcpToggleStore,
+  createStoreFromDb,
+  openSessionDb,
+} from '@/runtime/storage-dexie';
+import { createMessagePortStream } from '@/runtime/transport/worker-stream';
+import { attachVolumeChannel, toAgentVolumeInit, type HostVolumeInit } from '@/runtime/volumes-fsa';
 
 export interface AgentWorkerInitMessage {
   type: 'init';
   agentPort: MessagePort;
-  volumes?: VolumeInit[];
+  volumes?: HostVolumeInit[];
 }
 
 type IncomingMessage = AgentWorkerInitMessage;
 
 /**
- * The single seam where a host app could swap in a different LLM
- * provider implementation. Default returns a `BodhiProvider`; an
- * alternate worker bootstrap (or a future runtime-injected factory)
- * can replace this without touching the engine layer.
- *
- * Kept local to the worker on purpose — `AcpAdapterServices` accepts
- * a constructed provider, so this factory's only role is to centralise
- * the constructor call.
+ * Build-time constants injected by Vite's `define` (see `vite.config.ts`
+ * + `vite-env.d.ts`). Read here and forwarded to the agent package via
+ * `startAcpAgent` options — the agent package cannot see Vite's `define`
+ * directly, so the host bridges them across the package boundary.
  */
-const defaultProviderFactory = (): BodhiProvider => new BodhiProvider();
+const IS_DEV = typeof __WEB_ACP_DEV__ === 'boolean' ? __WEB_ACP_DEV__ : false;
+const BUILD_VERSION = typeof __WEB_ACP_VERSION__ === 'string' ? __WEB_ACP_VERSION__ : 'unknown';
+const ACP_SDK_VERSION = typeof __ACP_SDK_VERSION__ === 'string' ? __ACP_SDK_VERSION__ : 'unknown';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -47,12 +51,11 @@ scope.addEventListener('message', (event: MessageEvent<IncomingMessage>) => {
   void startAgent(msg.agentPort, msg.volumes ?? []);
 });
 
-async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<void> {
-  const { readable, writable } = createMessagePortStream(port);
-  const stream = ndJsonStream(writable, readable);
-  const provider = defaultProviderFactory();
-  // Per-turn override holder threaded between the adapter and the
-  // stream function. The adapter pushes `toolChoice` into this bag
+async function startAgent(port: MessagePort, hostVolumes: HostVolumeInit[]): Promise<void> {
+  const transport = createMessagePortStream(port);
+  const provider = new BodhiProvider();
+  // Per-turn override holder threaded between the engine and the
+  // stream function. The engine pushes `toolChoice` into this bag
   // before each `prompt` turn (DEV-only forceToolCall feature). The
   // consume callback clears the bag after the first LLM call so the
   // pi-agent-core loop only forces a tool call on the initial request,
@@ -67,12 +70,15 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
     })
   );
   const db = openSessionDb();
-  const registry = new VolumeRegistry();
+  const registry = new ZenfsVolumeRegistry();
   attachVolumeChannel(scope, registry);
-  // Mount any seeded volumes before the ACP connection starts taking
-  // prompts so the first `prompt` turn already sees the right
-  // `/mnt/<name>` entries.
-  await registry.mountAll(volumes);
+  // Convert host-shaped volumes (FSA handle | seed) into the agent's
+  // transport-agnostic VolumeInit (constructed FileSystem) before
+  // the registry mounts them. This must happen before the ACP
+  // connection starts so the first `prompt` turn already sees the
+  // right `/mnt/<name>` entries.
+  const initialVolumes: VolumeInit[] = await Promise.all(hostVolumes.map(toAgentVolumeInit));
+  await registry.mountAll(initialVolumes);
   const services = assembleServices({
     inline,
     bodhi: provider,
@@ -82,6 +88,9 @@ async function startAgent(port: MessagePort, volumes: VolumeInit[]): Promise<voi
     mcpToggles: createMcpToggleStore(db),
     streamOverrides,
   });
-  const _connection = new AgentSideConnection(conn => new AcpAgentAdapter(conn, services), stream);
-  void _connection;
+  startAcpAgent(transport, services, {
+    isDev: IS_DEV,
+    buildVersion: BUILD_VERSION,
+    acpSdkVersion: ACP_SDK_VERSION,
+  });
 }
