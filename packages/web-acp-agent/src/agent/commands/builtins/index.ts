@@ -1,8 +1,8 @@
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import { copyCommand } from "./copy";
 import { helpCommand } from "./help";
+import { infoCommand } from "./info";
 import { mcpCommand } from "./mcp";
-import { sessionCommand } from "./session";
 import type { BuiltinCommand } from "./types";
 import { versionCommand } from "./version";
 
@@ -23,7 +23,7 @@ export type {
 export const BUILTIN_COMMANDS: BuiltinCommand[] = [
 	helpCommand,
 	versionCommand,
-	sessionCommand,
+	infoCommand,
 	copyCommand,
 	mcpCommand,
 ];

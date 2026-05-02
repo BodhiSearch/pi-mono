@@ -32,7 +32,7 @@ interface StreamCursor {
  * Engine-layer turn driver. Runs one `session/prompt` turn end-to-end:
  *
  *  1. early-return for built-in slash commands (`/help`, `/version`,
- *     `/copy`, `/session`, `/mcp`),
+ *     `/copy`, `/info`, `/mcp`),
  *  2. resolve the requested model from the runtime catalog cache,
  *  3. expand vault slash commands in-place on the prompt blocks,
  *  4. ensure the inline runtime's history matches this session

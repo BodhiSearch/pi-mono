@@ -1,7 +1,7 @@
 import type { BuiltinCommand } from "./types";
 
-export const sessionCommand: BuiltinCommand = {
-	name: "session",
+export const infoCommand: BuiltinCommand = {
+	name: "info",
 	description: "Show stats for the current session.",
 	handler: (_args, ctx) => {
 		const lines = [

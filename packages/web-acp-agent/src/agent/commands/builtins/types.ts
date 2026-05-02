@@ -15,7 +15,7 @@ export type BuiltinAction = AnyBodhiBuiltinAction;
 
 /**
  * Lightweight projection of a connected MCP server, fed to built-in
- * handlers so `/session` and `/mcp` can render the live catalog
+ * handlers so `/info` and `/mcp` can render the live catalog
  * without re-walking the worker's MCP pool.
  */
 export interface BuiltinMcpInstance {

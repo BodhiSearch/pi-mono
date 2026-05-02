@@ -35,7 +35,7 @@ describe("findBuiltin", () => {
 		["/help topic", "help", "topic"],
 		["/help   spaced  args  ", "help", "spaced  args"],
 		["/version", "version", ""],
-		["/session", "session", ""],
+		["/info", "info", ""],
 		["/copy", "copy", ""],
 		["/mcp", "mcp", ""],
 		["/mcp add https://example.com/mcp", "mcp", "add https://example.com/mcp"],
@@ -53,7 +53,7 @@ describe("findBuiltin", () => {
 });
 
 describe("isBuiltinName", () => {
-	it.each(["help", "version", "session", "copy", "mcp"])("recognises %s", (name) => {
+	it.each(["help", "version", "info", "copy", "mcp"])("recognises %s", (name) => {
 		expect(isBuiltinName(name)).toBe(true);
 	});
 	it.each(["HELP", "wiki:greet", "random", ""])("rejects %s", (name) => {
@@ -64,7 +64,7 @@ describe("isBuiltinName", () => {
 describe("builtinAvailableCommands", () => {
 	it("returns one AvailableCommand per registered built-in", () => {
 		const list = builtinAvailableCommands();
-		expect(list.map((c) => c.name).sort()).toEqual(["copy", "help", "mcp", "session", "version"]);
+		expect(list.map((c) => c.name).sort()).toEqual(["copy", "help", "info", "mcp", "version"]);
 		for (const c of list) {
 			expect(typeof c.description).toBe("string");
 			expect(c.description.length).toBeGreaterThan(0);
@@ -81,7 +81,7 @@ describe("/help handler", () => {
 		const help = BUILTIN_COMMANDS.find((c) => c.name === "help")!;
 		const result = await help.handler("", ctx({ advertisedCommands: advertised }));
 		expect(result.action).toBeUndefined();
-		for (const name of ["help", "version", "session", "copy", "mcp", "wiki:greet"]) {
+		for (const name of ["help", "version", "info", "copy", "mcp", "wiki:greet"]) {
 			expect(result.replyText).toContain(`/${name}`);
 		}
 		expect(result.replyText).toContain("Greet someone");
@@ -121,10 +121,10 @@ describe("/version handler", () => {
 	});
 });
 
-describe("/session handler", () => {
+describe("/info handler", () => {
 	it("renders session id, turn count, message count, and connected servers", async () => {
-		const session = BUILTIN_COMMANDS.find((c) => c.name === "session")!;
-		const result = await session.handler(
+		const info = BUILTIN_COMMANDS.find((c) => c.name === "info")!;
+		const result = await info.handler(
 			"",
 			ctx({
 				sessionId: "sess-42",
@@ -142,8 +142,8 @@ describe("/session handler", () => {
 	});
 
 	it('says "none connected" when no MCP servers are live', async () => {
-		const session = BUILTIN_COMMANDS.find((c) => c.name === "session")!;
-		const result = await session.handler("", ctx({ mcpServersConnected: [] }));
+		const info = BUILTIN_COMMANDS.find((c) => c.name === "info")!;
+		const result = await info.handler("", ctx({ mcpServersConnected: [] }));
 		expect(result.replyText).toMatch(/none connected/i);
 	});
 });

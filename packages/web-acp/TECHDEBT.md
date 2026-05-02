@@ -5,6 +5,43 @@ have not been addressed yet. Each entry: what, where, why it
 matters, and a hint at the fix. Add an entry the moment you trip on
 something — leaving it implicit always costs more later.
 
+## Builtin name divergence: web-acp keeps `/session`, web-acp-agent renamed to `/info`
+
+**What.** As part of the cli-acp-client parity bridge the agent
+runtime in `@bodhiapp/web-acp-agent` renamed its built-in slash
+command from `/session` to `/info` so the CLI host's
+session-management slash command (`/session list|new|load|delete`)
+no longer collides with the agent-introspection built-in. web-acp
+was intentionally left untouched in that round; its embedded copy
+of the same command set still publishes `/session` because web-acp
+maintains its own copy of the builtins under
+`packages/web-acp/src/agent/commands/builtins/` rather than
+importing from `@bodhiapp/web-acp-agent`.
+
+**Where.**
+- `packages/web-acp/src/agent/commands/builtins/session.ts`
+  (still exports `sessionCommand` with `name: "session"`)
+- `packages/web-acp/src/agent/commands/builtins/index.ts:5`
+  imports `sessionCommand`
+- `packages/web-acp/src/acp/agent-adapter.test.ts:285`
+  asserts `['copy', 'help', 'mcp', 'session', 'version']`
+- `packages/web-acp/e2e/builtins.spec.ts:53,67`
+  type and assert `/session`
+
+**Why it matters.** The two ACP agents now publish divergent
+`available_commands_update` payloads. A user moving between the
+browser host and the CLI host learns different command names for
+the same affordance. Snapshots and integration tests that assume
+both agents publish the same builtin list will diverge.
+
+**Fix sketch.** When this is addressed, mirror the rename in
+web-acp: `session.ts` → `info.ts`, update
+`BUILTIN_COMMANDS`, the `agent-adapter.test.ts` assertion, and
+the e2e suite. Because web-acp persists `_builtin: { command }`
+metadata in IndexedDB on every reply, also bump the schema version
+or write a migration so historical `/session` reply rows continue
+to render with the muted-builtin badge.
+
 ## MCP per-server toggle off→on after `/mcp add` re-auth doesn't disconnect the pool
 
 **What.** When the user adds an MCP server via the `/mcp add <url>`
