@@ -19,30 +19,38 @@
 
 /** Snapshot returned to the main thread on `bodhi/getSession`. */
 export interface McpToggleSnapshot {
-	servers: Record<string, boolean>;
-	tools: Record<string, Record<string, boolean>>;
+  servers: Record<string, boolean>;
+  tools: Record<string, Record<string, boolean>>;
 }
 
 export const EMPTY_MCP_TOGGLES: McpToggleSnapshot = Object.freeze({
-	servers: Object.freeze({}) as Record<string, boolean>,
-	tools: Object.freeze({}) as Record<string, Record<string, boolean>>,
+  servers: Object.freeze({}) as Record<string, boolean>,
+  tools: Object.freeze({}) as Record<string, Record<string, boolean>>,
 }) as McpToggleSnapshot;
 
 export interface McpToggleStore {
-	get(sessionId: string): Promise<McpToggleSnapshot>;
-	setServer(sessionId: string, serverSlug: string, value: boolean): Promise<McpToggleSnapshot>;
-	setTool(sessionId: string, serverSlug: string, toolName: string, value: boolean): Promise<McpToggleSnapshot>;
-	clear(sessionId: string): Promise<void>;
+  get(sessionId: string): Promise<McpToggleSnapshot>;
+  setServer(sessionId: string, serverSlug: string, value: boolean): Promise<McpToggleSnapshot>;
+  setTool(
+    sessionId: string,
+    serverSlug: string,
+    toolName: string,
+    value: boolean
+  ): Promise<McpToggleSnapshot>;
+  clear(sessionId: string): Promise<void>;
 }
 
 /**
  * True iff the given server slug is *enabled* (not explicitly turned
  * off) according to the snapshot. Absent entries are treated as on.
  */
-export function isServerEnabled(toggles: McpToggleSnapshot | undefined, serverSlug: string): boolean {
-	if (!toggles) return true;
-	const explicit = toggles.servers?.[serverSlug];
-	return explicit !== false;
+export function isServerEnabled(
+  toggles: McpToggleSnapshot | undefined,
+  serverSlug: string
+): boolean {
+  if (!toggles) return true;
+  const explicit = toggles.servers?.[serverSlug];
+  return explicit !== false;
 }
 
 /**
@@ -51,10 +59,14 @@ export function isServerEnabled(toggles: McpToggleSnapshot | undefined, serverSl
  * precedence (an off server implies all its tools are off, which
  * callers typically handle upstream by skipping the server entirely).
  */
-export function isToolEnabled(toggles: McpToggleSnapshot | undefined, serverSlug: string, toolName: string): boolean {
-	if (!toggles) return true;
-	if (!isServerEnabled(toggles, serverSlug)) return false;
-	const perServer = toggles.tools?.[serverSlug];
-	if (!perServer) return true;
-	return perServer[toolName] !== false;
+export function isToolEnabled(
+  toggles: McpToggleSnapshot | undefined,
+  serverSlug: string,
+  toolName: string
+): boolean {
+  if (!toggles) return true;
+  if (!isServerEnabled(toggles, serverSlug)) return false;
+  const perServer = toggles.tools?.[serverSlug];
+  if (!perServer) return true;
+  return perServer[toolName] !== false;
 }

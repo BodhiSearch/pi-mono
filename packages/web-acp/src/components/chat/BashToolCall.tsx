@@ -5,10 +5,10 @@ export interface BashToolCallProps {
 }
 
 /**
- * Minimal renderer for the `bash` tool call. The title already
- * captures the first line of the script; we surface the status and a
- * truncated stdout/stderr preview. Anything richer is out of scope for
- * M2 — richer rendering is deferred to the coding-agent surface.
+ * Minimal renderer for the `bash` tool call. The title already captures
+ * the first line of the script; we surface the status and a truncated
+ * stdout/stderr preview. Richer rendering is deferred to the coding-agent
+ * surface.
  */
 export default function BashToolCall({ call }: BashToolCallProps) {
   const input = call.rawInput as { script?: string } | undefined;

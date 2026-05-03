@@ -1,44 +1,59 @@
 import {
-	BODHI_FEATURES_LIST_METHOD,
-	BODHI_FEATURES_SET_METHOD,
-	BODHI_GET_SESSION_METHOD,
-	BODHI_LIST_MODELS_METHOD,
-	BODHI_LIST_SESSIONS_METHOD,
-	BODHI_MCP_TOGGLES_SET_METHOD,
-	BODHI_SESSIONS_DELETE_METHOD,
-	BODHI_VOLUMES_LIST_METHOD,
-} from "../../../wire";
-import type { ExtMethodHost } from "../types";
-import { featuresList } from "./features-list";
-import { featuresSet } from "./features-set";
-import { getSession } from "./get-session";
-import { listModels } from "./list-models";
-import { listSessions } from "./list-sessions";
-import { mcpTogglesSet } from "./mcp-toggles-set";
-import { sessionsDelete } from "./sessions-delete";
-import { volumesList } from "./volumes-list";
+  BODHI_GET_SESSION_METHOD,
+  BODHI_GET_SESSION_METHOD_LEGACY,
+  BODHI_MCP_TOGGLES_SET_METHOD,
+  BODHI_SESSIONS_DELETE_METHOD,
+  BODHI_VOLUMES_LIST_METHOD,
+} from '../../../wire';
+import type { ExtMethodHost } from '../types';
+import { getSession } from './get-session';
+import { mcpTogglesSet } from './mcp-toggles-set';
+import { EXT_METHOD_SCHEMAS } from './schemas';
+import { sessionsDelete } from './sessions-delete';
+import { volumesList } from './volumes-list';
 
-export type ExtMethodHandler = (params: unknown, host: ExtMethodHost) => Promise<Record<string, unknown>>;
+export type ExtMethodHandler = (
+  params: unknown,
+  host: ExtMethodHost
+) => Promise<Record<string, unknown>>;
 
+// Legacy alias kept for one release; remove next release.
 const HANDLERS: Record<string, ExtMethodHandler> = {
-	[BODHI_LIST_MODELS_METHOD]: listModels,
-	[BODHI_LIST_SESSIONS_METHOD]: listSessions,
-	[BODHI_VOLUMES_LIST_METHOD]: volumesList,
-	[BODHI_FEATURES_LIST_METHOD]: featuresList,
-	[BODHI_FEATURES_SET_METHOD]: featuresSet,
-	[BODHI_GET_SESSION_METHOD]: getSession,
-	[BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSet,
-	[BODHI_SESSIONS_DELETE_METHOD]: sessionsDelete,
+  [BODHI_VOLUMES_LIST_METHOD]: volumesList,
+  [BODHI_GET_SESSION_METHOD]: getSession,
+  [BODHI_GET_SESSION_METHOD_LEGACY]: getSession,
+  [BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSet,
+  [BODHI_SESSIONS_DELETE_METHOD]: sessionsDelete,
 };
 
+const legacyMethodWarned = new Set<string>();
+
 export async function dispatchExtMethod(
-	method: string,
-	params: unknown,
-	host: ExtMethodHost,
+  method: string,
+  params: unknown,
+  host: ExtMethodHost
 ): Promise<Record<string, unknown>> {
-	const handler = HANDLERS[method];
-	if (!handler) {
-		throw new Error(`Unknown extension method: ${method}`);
-	}
-	return handler(params, host);
+  const handler = HANDLERS[method];
+  if (!handler) {
+    const err = new Error(`Method not found: ${method}`);
+    (err as unknown as { code: number }).code = -32601;
+    throw err;
+  }
+  if (method === BODHI_GET_SESSION_METHOD_LEGACY && !legacyMethodWarned.has(method)) {
+    legacyMethodWarned.add(method);
+    console.warn(
+      `[acp-agent] '${BODHI_GET_SESSION_METHOD_LEGACY}' is deprecated; clients should use '${BODHI_GET_SESSION_METHOD}'.`
+    );
+  }
+  const schema = EXT_METHOD_SCHEMAS[method];
+  if (schema) {
+    const result = schema.safeParse(params);
+    if (!result.success) {
+      const err = new Error(`${method}: invalid params (${result.error.message})`);
+      (err as unknown as { code: number }).code = -32602;
+      throw err;
+    }
+    return handler(result.data, host);
+  }
+  return handler(params, host);
 }

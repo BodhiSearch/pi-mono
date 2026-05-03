@@ -1,30 +1,30 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, MutableRefObject } from 'react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { McpServerHttp } from '@agentclientprotocol/sdk';
-import type { BodhiModelDescriptor, BodhiSessionSummary } from '@/acp/index';
+import type {
+  LoadSessionResponse,
+  McpServerHttp,
+  NewSessionResponse,
+} from '@agentclientprotocol/sdk';
+import { EMPTY_MCP_TOGGLES, type SessionInfoView } from '@/acp/index';
 import {
   ensureRuntime,
-  getAuthModels,
   getAuthPromise,
   getSession,
   getSessionPromise,
+  setModelUpdatePromise,
   setSession,
   setSessionPromise,
+  subscribeToSession,
 } from '@/acp/runtime';
 import { composeSessionMeta } from '@/acp/session-meta';
-import type { StreamingAction } from '@/acp/streaming-reducer';
+import type { AcpAction } from '@/acp/streaming-reducer';
 import { getErrorMessage } from '@/lib/utils';
 import type { McpToggleSnapshot } from '@/mcp/compose-mcp-servers';
 import type { McpInstanceView } from '@/mcp/types';
 
-const EMPTY_MCP_TOGGLES: McpToggleSnapshot = Object.freeze({
-  servers: Object.freeze({}) as Record<string, boolean>,
-  tools: Object.freeze({}) as Record<string, Record<string, boolean>>,
-}) as McpToggleSnapshot;
-
 export interface UseAcpSessionResult {
-  sessions: BodhiSessionSummary[];
+  sessions: SessionInfoView[];
   currentSessionId: string | null;
   isLoadingSession: boolean;
   refreshSessions: () => Promise<void>;
@@ -40,23 +40,19 @@ export interface UseAcpSessionDeps {
   composeCurrentMcpServers: (toggles?: McpToggleSnapshot) => McpServerHttp[];
   requestedMcpUrlsRef: MutableRefObject<string[]>;
   mcpInstancesRef: MutableRefObject<McpInstanceView[]>;
-  streamingDispatch: Dispatch<StreamingAction>;
-  refreshFeatures: (sessionId: string) => Promise<void>;
-  clearFeatures: () => void;
-  applyLastModel: (lastModelId: string, list: BodhiModelDescriptor[]) => void;
+  streamingDispatch: Dispatch<AcpAction>;
+  hydrateModelsFromSessionResponse: (
+    state: NewSessionResponse['models'] | LoadSessionResponse['models'] | null | undefined
+  ) => void;
   setMcpToggles: (toggles: McpToggleSnapshot) => void;
   setError: (msg: string | null) => void;
 }
 
 /**
- * Owns the ACP session lifecycle on the host side: `session/new`
- * (`ensureSession`), `session/load` with snapshot rehydration
- * (`loadSession`), `session/cancel` + state reset (`clearMessages`),
- * `_bodhi/sessions/delete` (`deleteSession`), and the
- * `bodhi/listSessions` mirror (`refreshSessions`). Cross-hook
- * coordination flows through `streamingDispatch` (`load-start` /
- * `load-end` / `reset`) and the injected mutators for features /
- * MCP toggles.
+ * Owns the ACP session lifecycle on the host side: `session/new`,
+ * `session/load` with snapshot rehydration, `session/cancel` + state
+ * reset, `_bodhi/sessions/delete`, and `Agent.listSessions`.
+ * Cross-hook coordination flows through `streamingDispatch`.
  */
 export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
   const {
@@ -66,15 +62,15 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
     requestedMcpUrlsRef,
     mcpInstancesRef,
     streamingDispatch,
-    refreshFeatures,
-    clearFeatures,
-    applyLastModel,
+    hydrateModelsFromSessionResponse,
     setMcpToggles,
     setError,
   } = deps;
 
-  const [sessions, setSessions] = useState<BodhiSessionSummary[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionInfoView[]>([]);
+  // Subscribe to the runtime singleton's `_session` so external `setSession` calls
+  // (auth-loss effect, cancel path) repaint the picker without local mirror state.
+  const currentSessionId = useSyncExternalStore(subscribeToSession, getSession, getSession);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
 
   const refreshSessions = useCallback(async () => {
@@ -86,9 +82,11 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
       const runtime = ensureRuntime();
       await runtime.initialize;
       const list = await runtime.client.listSessions();
+      // Re-check auth after the await — auth-loss can fire mid-flight from the prompt-end path.
+      if (!isAuthenticated) return;
       setSessions(list);
     } catch (err) {
-      console.error('bodhi/listSessions failed:', err);
+      console.error('session/list failed:', err);
     }
   }, [isAuthenticated]);
 
@@ -120,29 +118,33 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
       const sessionMeta = composeSessionMeta(requestedMcpUrlsRef.current, mcpInstancesRef.current);
       const response = await runtime.client.newSession(servers, sessionMeta);
       setSession(response.sessionId);
+      streamingDispatch({
+        type: 'config-options-init',
+        configOptions: response.configOptions ?? [],
+      });
+      hydrateModelsFromSessionResponse(response.models);
       return response.sessionId;
     })();
     setSessionPromise(promise);
     try {
       const id = await promise;
-      setCurrentSessionId(id);
       setMcpToggles(EMPTY_MCP_TOGGLES);
-      void refreshFeatures(id);
       return id;
     } finally {
       setSessionPromise(null);
     }
   }, [
     composeCurrentMcpServers,
-    refreshFeatures,
+    streamingDispatch,
     setMcpToggles,
+    hydrateModelsFromSessionResponse,
     requestedMcpUrlsRef,
     mcpInstancesRef,
   ]);
 
   // Ensure a session exists once auth lands so feature defaults are
-  // fetched before the user interacts with the feature panel. This
-  // also gives `_bodhi/features/set` a sessionId to write against.
+  // fetched before the user interacts with the feature panel and so
+  // `setSessionConfigOption` has a sessionId to write against.
   //
   // The MCP instances fetch kicks off from `useMcpInstances` at the
   // same moment auth lands. We gate `ensureSession` on `isReady` —
@@ -185,8 +187,6 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
       streamingDispatch({ type: 'load-start' });
       try {
         await runtime.initialize;
-        // If auth already landed we also want to ensure models are
-        // loaded so the caller can re-select `lastModelId`.
         const authPromise = getAuthPromise();
         if (authPromise) {
           try {
@@ -195,11 +195,19 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
             /* handled by auth effect */
           }
         }
-        // Fetch the persisted snapshot (messages + lastModelId + toggles)
-        // *before* `session/load` so we can filter the composed
-        // `mcpServers` with the stored per-session toggles. `getSession`
-        // reads straight from Dexie — it does not require the session
-        // to be resident in the worker's in-memory map.
+        // Close the prior active session so the agent releases MCP refcounts and
+        // detaches the inline runtime; the persisted row stays intact.
+        const priorSessionId = getSession();
+        if (priorSessionId && priorSessionId !== sessionId) {
+          try {
+            await runtime.client.closeSession(priorSessionId);
+          } catch {
+            /* swallow — the agent may already have torn the prior session down */
+          }
+        }
+        // TODO(web-acp TECHDEBT): collapse the bodhi/getSession pre-pass once
+        // loadSession carries transcript + toggles. Today we read Dexie first so
+        // composeCurrentMcpServers can honour stored toggles. See packages/web-acp/TECHDEBT.md.
         const snapshot = await runtime.client.getSession(sessionId);
         const toggles = snapshot.mcpToggles ?? { servers: {}, tools: {} };
         const servers = composeCurrentMcpServers(toggles);
@@ -207,18 +215,21 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
           requestedMcpUrlsRef.current,
           mcpInstancesRef.current
         );
-        await runtime.client.loadSession(sessionId, servers, sessionMeta);
+        const loadResponse = await runtime.client.loadSession(sessionId, servers, sessionMeta);
         setSession(sessionId);
-        setCurrentSessionId(sessionId);
+        // Drop any in-flight set-model promise owned by the prior session so
+        // `sendMessage` doesn't await a stale round-trip and surface a spurious error.
+        setModelUpdatePromise(null);
         setMcpToggles(toggles);
-        void refreshFeatures(sessionId);
+        streamingDispatch({
+          type: 'config-options-init',
+          configOptions: loadResponse.configOptions ?? [],
+        });
         streamingDispatch({
           type: 'load-end',
           messages: (snapshot.messages ?? []) as AgentMessage[],
         });
-        if (snapshot.lastModelId) {
-          applyLastModel(snapshot.lastModelId, getAuthModels());
-        }
+        hydrateModelsFromSessionResponse(loadResponse.models);
       } catch (err) {
         console.error('session/load failed:', err);
         setError(getErrorMessage(err, 'Failed to load session'));
@@ -229,8 +240,7 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
     },
     [
       composeCurrentMcpServers,
-      refreshFeatures,
-      applyLastModel,
+      hydrateModelsFromSessionResponse,
       streamingDispatch,
       setMcpToggles,
       setError,
@@ -243,15 +253,16 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
     const sessionId = getSession();
     if (sessionId) {
       const runtime = ensureRuntime();
+      // Cancel + close are fire-and-forget worker-side cleanup; the local UI reset below is what the user sees.
       void runtime.client.cancel(sessionId);
+      void runtime.client.closeSession(sessionId).catch(() => undefined);
     }
     setSession(null);
+    setModelUpdatePromise(null);
     setError(null);
-    setCurrentSessionId(null);
-    clearFeatures();
     setMcpToggles(EMPTY_MCP_TOGGLES);
     streamingDispatch({ type: 'reset' });
-  }, [clearFeatures, streamingDispatch, setMcpToggles, setError]);
+  }, [streamingDispatch, setMcpToggles, setError]);
 
   const deleteSession = useCallback(
     async (sessionId: string) => {
@@ -285,7 +296,6 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
   // facade masks the rest of the UI on its own.
   useEffect(() => {
     if (isAuthenticated || !getSession()) return;
-    let cancelled = false;
     const run = async () => {
       const runtime = ensureRuntime();
       const sessionId = getSession();
@@ -297,12 +307,9 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
         }
       }
       setSession(null);
-      if (!cancelled) setCurrentSessionId(null);
+      setModelUpdatePromise(null);
     };
     void run();
-    return () => {
-      cancelled = true;
-    };
   }, [isAuthenticated]);
 
   return {

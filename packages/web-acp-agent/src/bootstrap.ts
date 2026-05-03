@@ -1,15 +1,15 @@
-import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import { AcpAgentAdapter, type AcpAgentAdapterOptions } from "./acp/agent-adapter";
-import type { AcpAdapterServices } from "./acp/engine/services";
+import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
+import { AcpAgentAdapter, type AcpAgentAdapterOptions } from './acp/agent-adapter';
+import type { AcpAdapterServices } from './acp/engine/services';
 
 export interface AcpTransport {
-	readable: ReadableStream<Uint8Array>;
-	writable: WritableStream<Uint8Array>;
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
 }
 
 export interface StartAcpAgentOptions extends AcpAgentAdapterOptions {
-	/** Optional callback invoked with the adapter so the host can dispose it on teardown. */
-	onAdapter?: (adapter: AcpAgentAdapter) => void;
+  /** Optional callback invoked with the adapter so the host can dispose it on teardown. */
+  onAdapter?: (adapter: AcpAgentAdapter) => void;
 }
 
 /**
@@ -26,18 +26,18 @@ export interface StartAcpAgentOptions extends AcpAgentAdapterOptions {
  * `dispose()` on teardown without a second factory step.
  */
 export function startAcpAgent(
-	transport: AcpTransport,
-	services: AcpAdapterServices,
-	options: StartAcpAgentOptions,
+  transport: AcpTransport,
+  services: AcpAdapterServices,
+  options: StartAcpAgentOptions
 ): AgentSideConnection {
-	const stream = ndJsonStream(transport.writable, transport.readable);
-	return new AgentSideConnection((conn) => {
-		const adapter = new AcpAgentAdapter(conn, services, {
-			isDev: options.isDev,
-			buildVersion: options.buildVersion,
-			acpSdkVersion: options.acpSdkVersion,
-		});
-		options.onAdapter?.(adapter);
-		return adapter;
-	}, stream);
+  const stream = ndJsonStream(transport.writable, transport.readable);
+  return new AgentSideConnection(conn => {
+    const adapter = new AcpAgentAdapter(conn, services, {
+      isDev: options.isDev,
+      buildVersion: options.buildVersion,
+      acpSdkVersion: options.acpSdkVersion,
+    });
+    options.onAdapter?.(adapter);
+    return adapter;
+  }, stream);
 }

@@ -3,8 +3,8 @@
  *
  * The worker owns the source-of-truth ZenFS VFS: `WebAccess` backends
  * for real FSA handles and `InMemory` backends for dev/test seeds.
- * For the M2.3 `fs/*` client handlers, the main thread needs to read
- * the same bytes. Rather than round-tripping every read/write through
+ * For the `fs/*` client handlers, the main thread needs to read the
+ * same bytes. Rather than round-tripping every read/write through
  * the worker, we keep a *duplicate* ZenFS context on the main thread
  * that mounts the **same** `FileSystemDirectoryHandle`s — FSA handles
  * are structured-cloneable and the underlying storage is shared by

@@ -58,6 +58,13 @@ test.describe('sessions', () => {
       });
     });
 
+    await test.step('newChat — closeSession on B fires, B row stays in picker (close ≠ delete)', async () => {
+      // closeSession only releases in-memory state; the persisted row must remain.
+      await chat.newChat();
+      await sessions.row(sessionB).waitFor();
+      await sessions.row(sessionA).waitFor();
+    });
+
     await test.step('reload — both sessions persist with stable titles + transcript', async () => {
       await page.reload();
       await appReloadReady({ page, setup, status });
@@ -73,6 +80,13 @@ test.describe('sessions', () => {
         ignoreCase: true,
       });
       expect(await sessions.getTitle(sessionA)).toBe(titleA);
+      await sessions.click(sessionA);
+      await expect(chat.modelSelector).toContainText(FULL_MODEL_ID);
+      await expect(messages.bubble(0, 'assistant')).toContainText('tuesday', {
+        ignoreCase: true,
+      });
+      await sessions.click(sessionB);
+      await sessions.expectActive(sessionB);
     });
 
     await test.step('follow-up turn on resumed session B works', async () => {

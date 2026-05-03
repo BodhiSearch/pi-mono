@@ -38,12 +38,13 @@ import { createMcpToggleStore } from './mcp-toggle-store';
 const ADAPTER_OPTIONS = {
   isDev: false,
   buildVersion: '0.0.0-test',
-  acpSdkVersion: '0.17.0-test',
+  acpSdkVersion: '0.21.0-test',
 };
 
 function fakeConn(): AgentSideConnection {
   return {
     sessionUpdate: vi.fn(async () => undefined),
+    extNotification: vi.fn(async () => undefined),
   } as unknown as AgentSideConnection;
 }
 
@@ -131,10 +132,10 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
   it('_bodhi/mcp/toggles/set rejects malformed params', async () => {
     await expect(
       adapter.extMethod(BODHI_MCP_TOGGLES_SET_METHOD, { sessionId: 's1', value: true })
-    ).rejects.toThrow(/params must be/);
+    ).rejects.toThrow(/invalid params/);
     await expect(
       adapter.extMethod(BODHI_MCP_TOGGLES_SET_METHOD, { sessionId: 's1', serverSlug: 'x' })
-    ).rejects.toThrow(/params must be/);
+    ).rejects.toThrow(/invalid params/);
   });
 
   it('_bodhi/sessions/delete removes the row and returns deleted: true', async () => {
@@ -159,7 +160,7 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
 
   it('_bodhi/sessions/delete rejects malformed params', async () => {
     await expect(adapter.extMethod(BODHI_SESSIONS_DELETE_METHOD, {})).rejects.toThrow(
-      /params\.sessionId is required/
+      /invalid params/
     );
   });
 
@@ -242,6 +243,7 @@ describe('AcpAgentAdapter slash commands', () => {
       sessionUpdate: vi.fn(async (notif: SessionNotification) => {
         updates.push(notif);
       }),
+      extNotification: vi.fn(async () => undefined),
     } as unknown as AgentSideConnection;
     inline = fakeInline();
     commandsFs = new FakeCommandsFs();
@@ -346,12 +348,10 @@ describe('AcpAgentAdapter slash commands', () => {
       }),
       ADAPTER_OPTIONS
     );
-    await adapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     const req: PromptRequest = {
       sessionId,
       prompt: [{ type: 'text', text: '/wiki:greet alice paris' }],
-      _meta: { bodhi: { modelId: 'test-model' } },
     };
     await adapter.prompt(req);
     expect(inline.prompt).toHaveBeenCalledWith('Hello alice, welcome to paris.');
@@ -381,12 +381,10 @@ describe('AcpAgentAdapter slash commands', () => {
     inline.getErrorMessage = vi.fn(() => undefined);
     inline.setModel = vi.fn();
     inline.subscribe = vi.fn(() => () => undefined);
-    await adapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     await adapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: 'just a normal message' }],
-      _meta: { bodhi: { modelId: 'test-model' } },
     });
     expect(inline.prompt).toHaveBeenCalledWith('just a normal message');
   });
@@ -415,17 +413,15 @@ describe('AcpAgentAdapter slash commands', () => {
     inline.getErrorMessage = vi.fn(() => undefined);
     inline.setModel = vi.fn();
     inline.subscribe = vi.fn(() => () => undefined);
-    await adapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     await adapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: '/wiki:nope something' }],
-      _meta: { bodhi: { modelId: 'test-model' } },
     });
     expect(inline.prompt).toHaveBeenCalledWith('/wiki:nope something');
   });
 
-  it('advertises prompts from .pi/prompts/ alongside vault commands (M4.2)', async () => {
+  it('advertises prompts from .pi/prompts/ alongside vault commands', async () => {
     commandsFs.add('/mnt/wiki/.pi/commands/greet.md', '---\ndescription: greet\n---\nHello $1!');
     commandsFs.add(
       '/mnt/wiki/.pi/prompts/poem.md',
@@ -450,7 +446,7 @@ describe('AcpAgentAdapter slash commands', () => {
     expect(poem?.input).toEqual({ hint: '<topic>' });
   });
 
-  it('expands a prompt template through the same prompt() path as commands (M4.2)', async () => {
+  it('expands a prompt template through the same prompt() path as commands', async () => {
     commandsFs.add(
       '/mnt/wiki/.pi/prompts/poem.md',
       '---\ndescription: poem\n---\nWrite a haiku about $1 and $2.'
@@ -477,17 +473,15 @@ describe('AcpAgentAdapter slash commands', () => {
     inline.getMessages = vi.fn(() => []);
     inline.getErrorMessage = vi.fn(() => undefined);
     inline.setModel = vi.fn();
-    await adapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     await adapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: '/wiki:poem cherry spring' }],
-      _meta: { bodhi: { modelId: 'test-model' } },
     });
     expect(inline.prompt).toHaveBeenCalledWith('Write a haiku about cherry and spring.');
   });
 
-  it('drops a prompt with the same canonical name as an existing command (M4.2 conflict)', async () => {
+  it('drops a prompt with the same canonical name as an existing command (conflict)', async () => {
     commandsFs.add(
       '/mnt/wiki/.pi/commands/dup.md',
       '---\ndescription: cmd-version\n---\nCMD-WIN body'
@@ -515,21 +509,26 @@ describe('AcpAgentAdapter slash commands', () => {
   });
 });
 
-describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
+describe('AcpAgentAdapter built-in slash commands', () => {
   let db: SessionStoreDb;
   let store: SessionStore;
   let conn: AgentSideConnection;
   let inline: InlineAgent;
   let updates: SessionNotification[];
+  let extNotifications: Array<{ method: string; params: Record<string, unknown> }>;
   let adapter: AcpAgentAdapter;
 
   beforeEach(async () => {
     db = new SessionStoreDb(`web-acp-builtin-${crypto.randomUUID()}`);
     store = createStoreFromDb(db);
     updates = [];
+    extNotifications = [];
     conn = {
       sessionUpdate: vi.fn(async (notif: SessionNotification) => {
         updates.push(notif);
+      }),
+      extNotification: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        extNotifications.push({ method, params });
       }),
     } as unknown as AgentSideConnection;
     inline = fakeInline();
@@ -596,7 +595,7 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
     expect(payload.replyText.length).toBeGreaterThan(0);
   });
 
-  it('/copy emits a copy action when the LLM history has an assistant turn', async () => {
+  it('/copy emits a copy action via extNotification when the LLM history has an assistant turn', async () => {
     inline.getMessages = vi.fn(
       () =>
         [
@@ -606,20 +605,26 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
     );
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     updates.length = 0;
+    extNotifications.length = 0;
     await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/copy' }] });
+    // Chunk carries only the command tag; action rides extNotification.
     const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
-    const meta = chunk!._meta as { bodhi?: { builtin?: { action?: { kind?: string } } } } | null;
-    expect(meta?.bodhi?.builtin?.action?.kind).toBe('copy');
+    const meta = chunk!._meta as { bodhi?: { builtin?: { command?: string } } } | null;
+    expect(meta?.bodhi?.builtin?.command).toBe('copy');
+    const evt = extNotifications.find(n => n.method === '_bodhi/builtin/action');
+    expect(evt).toBeDefined();
+    const params = evt!.params as { command?: string; action?: { kind?: string } };
+    expect(params.command).toBe('copy');
+    expect(params.action?.kind).toBe('copy');
   });
 
-  it('/copy emits no action when the conversation is empty', async () => {
+  it('/copy emits no action extNotification when the conversation is empty', async () => {
     inline.getMessages = vi.fn(() => []);
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     updates.length = 0;
+    extNotifications.length = 0;
     await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/copy' }] });
-    const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
-    const meta = chunk!._meta as { bodhi?: { builtin?: { action?: unknown } } } | null;
-    expect(meta?.bodhi?.builtin?.action).toBeUndefined();
+    expect(extNotifications.find(n => n.method === '_bodhi/builtin/action')).toBeUndefined();
   });
 
   it('a real prompt after a built-in does NOT see the built-in in inline history', async () => {
@@ -638,14 +643,12 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
       }),
       ADAPTER_OPTIONS
     );
-    await realAdapter.extMethod('bodhi/listModels', {});
     const { sessionId } = await realAdapter.newSession({ cwd: '/', mcpServers: [] });
     await realAdapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/help' }] });
     expect(inline.prompt).not.toHaveBeenCalled();
     await realAdapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: 'real follow-up' }],
-      _meta: { bodhi: { modelId: 'test-model' } },
     });
     expect(inline.prompt).toHaveBeenCalledTimes(1);
     expect(inline.prompt).toHaveBeenCalledWith('real follow-up');
@@ -681,25 +684,28 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
     ]);
   });
 
-  it('/mcp add emits an mcp-add action with the canonical URL params', async () => {
+  it('/mcp add emits an mcp-add action via extNotification with the canonical URL params', async () => {
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     updates.length = 0;
+    extNotifications.length = 0;
     await adapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: '/mcp add HTTPS://Mcp.Example.COM/path' }],
     });
     const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
-    const meta = chunk!._meta as {
-      bodhi?: {
-        builtin?: { command?: string; action?: { kind?: string; params?: { url?: string } } };
-      };
-    } | null;
+    const meta = chunk!._meta as { bodhi?: { builtin?: { command?: string } } } | null;
     expect(meta?.bodhi?.builtin?.command).toBe('mcp');
-    expect(meta?.bodhi?.builtin?.action?.kind).toBe('mcp-add');
-    expect(meta?.bodhi?.builtin?.action?.params?.url).toBe('https://mcp.example.com/path');
+    const evt = extNotifications.find(n => n.method === '_bodhi/builtin/action');
+    const params = evt!.params as {
+      command?: string;
+      action?: { kind?: string; params?: { url?: string } };
+    };
+    expect(params.command).toBe('mcp');
+    expect(params.action?.kind).toBe('mcp-add');
+    expect(params.action?.params?.url).toBe('https://mcp.example.com/path');
   });
 
-  it('/mcp add of an already-requested URL emits no action and explains in transcript', async () => {
+  it('/mcp add of an already-requested URL emits no action extNotification and explains in transcript', async () => {
     const url = 'https://mcp.deepwiki.com/mcp';
     const { sessionId } = await adapter.newSession({
       cwd: '/',
@@ -707,32 +713,27 @@ describe('AcpAgentAdapter built-in slash commands (M4 phase B)', () => {
       _meta: { bodhi: { requestedMcpUrls: [url] } },
     } as Parameters<typeof adapter.newSession>[0]);
     updates.length = 0;
+    extNotifications.length = 0;
     await adapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: `/mcp add ${url}` }],
     });
+    expect(extNotifications.find(n => n.method === '_bodhi/builtin/action')).toBeUndefined();
     const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
-    const meta = chunk!._meta as {
-      bodhi?: { builtin?: { command?: string; action?: unknown } };
-    } | null;
-    expect(meta?.bodhi?.builtin?.command).toBe('mcp');
-    expect(meta?.bodhi?.builtin?.action).toBeUndefined();
     const text = (chunk!.update as { content?: { text?: string } }).content?.text ?? '';
     expect(text).toMatch(/already in your requested list/i);
   });
 
-  it('/mcp remove of a URL not in the list emits no action', async () => {
+  it('/mcp remove of a URL not in the list emits no action extNotification', async () => {
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     updates.length = 0;
+    extNotifications.length = 0;
     await adapter.prompt({
       sessionId,
       prompt: [{ type: 'text', text: '/mcp remove https://other.example/mcp' }],
     });
+    expect(extNotifications.find(n => n.method === '_bodhi/builtin/action')).toBeUndefined();
     const chunk = updates.find(u => u.update.sessionUpdate === 'agent_message_chunk');
-    const meta = chunk!._meta as {
-      bodhi?: { builtin?: { command?: string; action?: unknown } };
-    } | null;
-    expect(meta?.bodhi?.builtin?.action).toBeUndefined();
     const text = (chunk!.update as { content?: { text?: string } }).content?.text ?? '';
     expect(text).toMatch(/not in your requested list/i);
   });

@@ -1,6 +1,5 @@
 import { test, expect } from './tests/fixtures';
-import { appReady } from './tests/flows';
-import { FULL_MODEL_ID, SECOND_FULL_MODEL_ID } from './tests/global-setup';
+import { FULL_MODEL_ID, SECOND_FULL_MODEL_ID, getTestState } from './tests/global-setup';
 
 test.describe('chat', () => {
   test('round-trip, model swap, stop streaming, logout/re-login', async ({
@@ -12,8 +11,23 @@ test.describe('chat', () => {
     messages,
     sessions,
   }) => {
-    await test.step('setup — boot, authenticate, pick the OpenAI model', async () => {
-      await appReady({ page, setup, status, auth, chat }, { selectModel: FULL_MODEL_ID });
+    await test.step('boot — pre-auth ModelCombobox is empty', async () => {
+      const state = getTestState();
+      await page.goto('/');
+      await setup.walkIfPresent(state.bodhiServerUrl);
+      await status.waitReady();
+      await expect(chat.modelSelector).toHaveAttribute('data-test-state', 'empty');
+    });
+
+    await test.step('authenticate — combobox flips to loaded', async () => {
+      const state = getTestState();
+      await auth.login({ username: state.username, password: state.password });
+      await status.expectAuthenticated();
+      await chat.waitForModelsLoaded();
+    });
+
+    await test.step('pick OpenAI model', async () => {
+      await chat.selectModel(FULL_MODEL_ID);
     });
 
     await test.step('simple round-trip — what day comes after monday', async () => {
@@ -58,7 +72,8 @@ test.describe('chat', () => {
       // path skips the Keycloak password screen entirely.
       await auth.reloginAfterLogout();
       await status.expectAuthenticated();
-      await chat.refreshModels();
+      await expect(sessions.picker).not.toHaveAttribute('data-test-state', '0');
+      await chat.waitForModelsLoaded();
       await chat.selectModel(FULL_MODEL_ID);
       await chat.send('reply with the single word ready');
       await expect(messages.bubble(0, 'assistant')).toContainText('ready', {

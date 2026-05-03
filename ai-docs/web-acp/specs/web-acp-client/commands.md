@@ -1,5 +1,18 @@
 # Commands — picker UI, format helpers, host-side dispatch
 
+> **ACP 0.21 migration delta (M6).** The `command` tag still rides on
+> `agent_message_chunk._meta.bodhi.builtin.command` so
+> `MessageBubble` keeps rendering the muted "not sent to LLM" badge.
+> The optional `action` (copy / mcp-add / mcp-remove) **no longer
+> rides on the chunk**: the agent emits
+> `extNotification("_bodhi/builtin/action", { sessionId, command,
+> action })`. The host's `useAcpStreaming` listener routes that
+> through `dispatchBuiltinAction` against the current message log.
+> `extractBuiltinMeta` has been simplified to ignore `action` (it
+> only narrows `command`); the persisted `'builtin'` store entry on
+> the agent side still records the action for `bodhi/getSession`
+> replay (M5 deferred).
+
 **Source of truth:** `packages/web-acp/src/components/chat/CommandPicker.tsx`,
 `packages/web-acp/src/lib/builtin-format.ts`,
 `packages/web-acp/src/acp/builtin-dispatch.ts`,

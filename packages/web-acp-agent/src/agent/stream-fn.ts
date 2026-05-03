@@ -1,6 +1,6 @@
-import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
-import type { LlmProvider } from "./bodhi-provider";
+import type { StreamFn } from '@mariozechner/pi-agent-core';
+import { streamSimple } from '@mariozechner/pi-ai';
+import type { LlmProvider } from './bodhi-provider';
 
 /**
  * Per-turn option overrides the adapter can push before each prompt.
@@ -19,31 +19,34 @@ import type { LlmProvider } from "./bodhi-provider";
  * assistant reply.
  */
 export interface StreamOptionOverrides {
-	toolChoice?: "auto" | "required" | "none";
+  toolChoice?: 'auto' | 'required' | 'none';
 }
 
 export type StreamOverrideProvider = () => StreamOptionOverrides | undefined;
 
-export function createStreamFn(provider: LlmProvider, consumeOverrides?: StreamOverrideProvider): StreamFn {
-	return async (model, context, options) => {
-		const auth = await provider.getApiKeyAndHeaders(model);
-		const headers = mergeHeaders(auth.headers, options?.headers);
-		const overrides = consumeOverrides?.() ?? {};
-		const extra: Record<string, unknown> = {};
-		if (overrides.toolChoice) extra.toolChoice = overrides.toolChoice;
-		return streamSimple(model, context, {
-			...options,
-			...extra,
-			apiKey: auth.apiKey,
-			headers,
-		});
-	};
+export function createStreamFn(
+  provider: LlmProvider,
+  consumeOverrides?: StreamOverrideProvider
+): StreamFn {
+  return async (model, context, options) => {
+    const auth = await provider.getApiKeyAndHeaders(model);
+    const headers = mergeHeaders(auth.headers, options?.headers);
+    const overrides = consumeOverrides?.() ?? {};
+    const extra: Record<string, unknown> = {};
+    if (overrides.toolChoice) extra.toolChoice = overrides.toolChoice;
+    return streamSimple(model, context, {
+      ...options,
+      ...extra,
+      apiKey: auth.apiKey,
+      headers,
+    });
+  };
 }
 
 function mergeHeaders(
-	base: Record<string, string> | undefined,
-	override: Record<string, string> | undefined,
+  base: Record<string, string> | undefined,
+  override: Record<string, string> | undefined
 ): Record<string, string> | undefined {
-	if (!base && !override) return undefined;
-	return { ...base, ...override };
+  if (!base && !override) return undefined;
+  return { ...base, ...override };
 }

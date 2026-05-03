@@ -1,5 +1,5 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { AnyBodhiBuiltinAction, BodhiBuiltinTag } from '@/acp';
+import type { BodhiBuiltinTag } from '@/acp';
 
 /**
  * Read the `_builtin` marker stamped onto a chat message by either:
@@ -22,7 +22,8 @@ export function withBuiltinTag<T extends AgentMessage>(msg: T, tag: BodhiBuiltin
 
 /**
  * Extract `_meta.bodhi.builtin` from a `SessionNotification`'s `_meta`
- * envelope. Mirrors `extractMcpMeta` in `useAcp.ts`.
+ * envelope. Only the `command` tag rides on the chunk; the optional
+ * `action` rides on a dedicated extNotification side-channel.
  */
 export function extractBuiltinMeta(meta: unknown): BodhiBuiltinTag | undefined {
   if (!meta || typeof meta !== 'object') return undefined;
@@ -32,31 +33,7 @@ export function extractBuiltinMeta(meta: unknown): BodhiBuiltinTag | undefined {
   if (!builtin || typeof builtin !== 'object') return undefined;
   const rec = builtin as Record<string, unknown>;
   if (typeof rec.command !== 'string') return undefined;
-  const out: BodhiBuiltinTag = { command: rec.command };
-  const narrowed = narrowBuiltinAction(rec.action);
-  if (narrowed) out.action = narrowed;
-  return out;
-}
-
-/**
- * Validate a wire-shape `action` blob against the per-kind contract in
- * `acp/index.ts`. Unknown kinds and malformed payloads return
- * `undefined` so the dispatcher only ever sees fully-narrowed values.
- */
-function narrowBuiltinAction(input: unknown): AnyBodhiBuiltinAction | undefined {
-  if (!input || typeof input !== 'object') return undefined;
-  const rec = input as Record<string, unknown>;
-  const kind = rec.kind;
-  if (typeof kind !== 'string') return undefined;
-  if (kind === 'copy') return { kind: 'copy' };
-  if (kind === 'mcp-add' || kind === 'mcp-remove') {
-    const params = rec.params;
-    if (!params || typeof params !== 'object') return undefined;
-    const url = (params as { url?: unknown }).url;
-    if (typeof url !== 'string') return undefined;
-    return { kind, params: { url } };
-  }
-  return undefined;
+  return { command: rec.command };
 }
 
 function extractText(msg: AgentMessage): string {

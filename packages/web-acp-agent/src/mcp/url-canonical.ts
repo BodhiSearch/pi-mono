@@ -20,17 +20,17 @@
  *    them, so stripping would be lossy)
  */
 export function canonicalizeMcpUrl(input: string): string | null {
-	const trimmed = input.trim();
-	if (!trimmed) return null;
-	try {
-		return new URL(trimmed).toString();
-	} catch {
-		return null;
-	}
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    return null;
+  }
 }
 
-const GENERIC_HOST_LABELS = new Set(["mcp", "api", "www"]);
-const GENERIC_PATH_SEGMENTS = new Set(["mcp", "sse", "v1", "v2", "api"]);
+const GENERIC_HOST_LABELS = new Set(['mcp', 'api', 'www']);
+const GENERIC_PATH_SEGMENTS = new Set(['mcp', 'sse', 'v1', 'v2', 'api']);
 
 /**
  * Derive a candidate slug from an MCP URL for best-effort matching
@@ -48,23 +48,23 @@ const GENERIC_PATH_SEGMENTS = new Set(["mcp", "sse", "v1", "v2", "api"]);
  * Pending" rather than data loss.
  */
 export function deriveSlugFromUrl(url: string): string {
-	try {
-		const u = new URL(url);
-		const hostLabels = u.hostname.toLowerCase().split(".");
-		// Strip generic leading subdomain labels.
-		while (hostLabels.length > 1 && GENERIC_HOST_LABELS.has(hostLabels[0])) {
-			hostLabels.shift();
-		}
-		// Drop the TLD to get to the meaningful identifier label.
-		const hostSlug = hostLabels.length >= 2 ? hostLabels[0] : (hostLabels[0] ?? "");
-		if (hostSlug && hostSlug !== "localhost") return hostSlug;
-		// Host is too generic — fall back to the path.
-		const segments = u.pathname
-			.split("/")
-			.map((s) => s.toLowerCase())
-			.filter((s) => s.length > 0 && !GENERIC_PATH_SEGMENTS.has(s));
-		return segments[segments.length - 1] ?? "";
-	} catch {
-		return "";
-	}
+  try {
+    const u = new URL(url);
+    const hostLabels = u.hostname.toLowerCase().split('.');
+    // Strip generic leading subdomain labels.
+    while (hostLabels.length > 1 && GENERIC_HOST_LABELS.has(hostLabels[0])) {
+      hostLabels.shift();
+    }
+    // Drop the TLD to get to the meaningful identifier label.
+    const hostSlug = hostLabels.length >= 2 ? hostLabels[0] : (hostLabels[0] ?? '');
+    if (hostSlug && hostSlug !== 'localhost') return hostSlug;
+    // Host is too generic — fall back to the path.
+    const segments = u.pathname
+      .split('/')
+      .map(s => s.toLowerCase())
+      .filter(s => s.length > 0 && !GENERIC_PATH_SEGMENTS.has(s));
+    return segments[segments.length - 1] ?? '';
+  } catch {
+    return '';
+  }
 }

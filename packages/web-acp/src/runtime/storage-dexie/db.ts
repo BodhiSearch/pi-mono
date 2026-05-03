@@ -9,9 +9,9 @@ import type { FeatureRow, McpTogglesRow, SessionEntry, SessionRow } from '@bodhi
  * Dexie tables to the agent's interfaces.
  *
  * Schema versions:
- *   v1 — initial sessions + entries.
- *   v2 — added per-session features table (M2 phase B).
- *   v3 — added per-session mcpToggles table (M3 phase B).
+ *   v1 — sessions + entries.
+ *   v2 — per-session features table.
+ *   v3 — per-session mcpToggles table.
  *
  * `dbName` defaults to `'web-acp'`; do NOT rename this without a
  * migration plan — the constant is on-disk identity for every

@@ -9,19 +9,19 @@
  */
 
 export interface CommandSource {
-	mountName: string;
-	/** Path relative to the mount root, e.g. `.pi/commands/review/api.md`. */
-	relPath: string;
+  mountName: string;
+  /** Path relative to the mount root, e.g. `.pi/commands/review/api.md`. */
+  relPath: string;
 }
 
 export interface CommandDef {
-	/** Canonical, fully-qualified name advertised to the client. */
-	name: string;
-	/** One-line description; falls back to a body snippet when missing. */
-	description: string;
-	/** Optional argument-hint string, surfaced via ACP `input.hint`. */
-	argumentHint?: string;
-	/** Markdown body after front-matter stripping; the expansion target. */
-	template: string;
-	source: CommandSource;
+  /** Canonical, fully-qualified name advertised to the client. */
+  name: string;
+  /** One-line description; falls back to a body snippet when missing. */
+  description: string;
+  /** Optional argument-hint string, surfaced via ACP `input.hint`. */
+  argumentHint?: string;
+  /** Markdown body after front-matter stripping; the expansion target. */
+  template: string;
+  source: CommandSource;
 }

@@ -2,6 +2,20 @@
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/agent/`.
 
+> **ACP 0.21 migration delta (M1, M4).** Per-session model selection
+> moved from `_meta.bodhi.modelId` (carried on every `prompt`
+> request) to `Agent.unstable_setSessionModel({ sessionId, modelId })`
+> + `SessionState.currentModelId`. The prompt-driver's
+> `#resolveModel(sessionId)` now reads `currentModelId` from session
+> state — the per-prompt `_meta.bodhi.modelId` envelope has been
+> deleted. The agent lazy-loads the model catalog on first
+> `newSession`/`loadSession` via
+> `AcpSessionRuntime.ensureModelsLoaded` (calls
+> `LlmProvider.getAvailableModels` once per worker boot, cleared
+> on `authenticate`). The catalog ships back to the host on
+> `NewSessionResponse.models` / `LoadSessionResponse.models` as
+> `SessionModelState`. `bodhi/listModels` ext-method deleted.
+
 ## Purpose
 
 Wraps the LLM-driving runtime that the engine layer

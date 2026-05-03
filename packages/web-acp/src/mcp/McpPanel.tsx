@@ -10,8 +10,7 @@ import type { McpConnectionMeta, McpConnectionState, McpInstanceView } from './t
  * `[data-testid="mcp-tool-<slug>-<tool>"]` so e2e can assert the
  * worker's `tools/list` reached the main thread.
  *
- * Phase B also surfaces per-session toggles — two extra data-testids
- * ride each row:
+ * Per-session toggles add two extra data-testids on each row:
  *
  * - `[data-testid="mcp-session-server-<slug>"]` with
  *   `data-test-state="on|off"` for the per-server flag.

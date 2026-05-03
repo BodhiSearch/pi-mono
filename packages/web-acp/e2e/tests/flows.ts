@@ -14,8 +14,9 @@ type VolumesReadyDeps = ReadyDeps & Pick<AppFixtures, 'volumes'>;
 /**
  * Boot the app to "ready + authenticated + (optionally) model selected".
  * Walks the setup overlay if it shows up, waits for client/server badges,
- * runs OAuth, optionally accepts MCP scopes, refreshes models, and selects
- * one. Replaces the per-spec login boilerplate.
+ * runs OAuth, optionally accepts MCP scopes, waits for the model picker
+ * to finish loading, and selects one. Replaces the per-spec login
+ * boilerplate.
  */
 export async function appReady(
   deps: ReadyDeps,
@@ -29,7 +30,7 @@ export async function appReady(
     { username: state.username, password: state.password },
     { acceptMcps: opts.acceptMcps }
   );
-  await deps.chat.refreshModels();
+  await deps.chat.waitForModelsLoaded();
   if (opts.selectModel) {
     await deps.chat.selectModel(opts.selectModel);
   }

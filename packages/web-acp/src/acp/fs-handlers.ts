@@ -1,8 +1,8 @@
 /**
  * ACP `fs/*` client handlers backed by the main-thread ZenFS context.
  *
- * Advertised in M2.3 as the **IDE-integration seam**: the built-in
- * `bash` tool (worker-side) never calls `fs/*`; these handlers exist
+ * Advertised as the **IDE-integration seam**: the built-in `bash`
+ * tool (worker-side) never calls `fs/*`; these handlers exist
  * so external ACP agents — or a future editor-buffer bridge — can
  * read / write the same mounted volumes without round-tripping
  * through the worker.

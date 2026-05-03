@@ -3,9 +3,9 @@ import type { McpInstanceView } from './types';
 
 /**
  * Per-session MCP toggle overrides. `servers[slug] === false` strips
- * the server from the composed `mcpServers` array (Phase B); per-tool
- * filtering is applied worker-side after `tools/list` because the
- * catalog is not known on the main thread.
+ * the server from the composed `mcpServers` array; per-tool filtering
+ * is applied worker-side after `tools/list` because the catalog is not
+ * known on the main thread.
  */
 export interface McpToggleSnapshot {
   servers: Record<string, boolean>;

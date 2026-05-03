@@ -66,9 +66,16 @@ gate file lands with the first real milestone if the rules diverge.
 | Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
 | MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; Streamable HTTP only; JWT in `McpServerHttp.headers` (M3 shipped) | compliant |
 | Provider-native tools | Reported as standard `tool_call` notifications                | **Deferred** — M3 ships MCP only; provider-native passthrough parked to a later milestone (see [deferred.md](deferred.md)) | **deferred (see deferred.md)** |
-| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands expand **agent-side** in `prompt()` (M4 phase A, shipped); vault prompt templates (`<mount>/.pi/prompts/**/*.md`) ride the same loader + expander + advertisement (M4.2 first slice, shipped — commands win on canonical-name collisions with a `[prompts]` warning); built-in commands `/help` `/version` `/info` `/copy` `/mcp` intercepted before the LLM and replied via `_meta.bodhi.builtin` on `agent_message_chunk` (M4 phase B, shipped — `/mcp` rides the typed `BodhiBuiltinAction<K, P>` discriminated-union action shape); all ride the same `available_commands_update` advertisement | compliant |
-| Extension methods    | `_`-prefixed, namespaced                                      | `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15 | compliant |
-| Session fork         | `session/fork` (unstable schema)                              | Adopted behind a feature flag, pinned SDK version (M6)                 | unstable-with-flag |
+| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands expand **agent-side** in `prompt()` (M4 phase A, shipped); vault prompt templates (`<mount>/.pi/prompts/**/*.md`) ride the same loader + expander + advertisement (M4.2 first slice, shipped — commands win on canonical-name collisions with a `[prompts]` warning); built-in commands `/help` `/version` `/info` `/copy` `/mcp` intercepted before the LLM and replied with the `command` tag on `agent_message_chunk._meta.bodhi.builtin`. **Action ride moved to `extNotification("_bodhi/builtin/action")` post-ACP-0.21 migration M6.** All ride the same `available_commands_update` advertisement | compliant |
+| Extension methods    | `_`-prefixed, namespaced                                      | `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15. `bodhi/getSession` is the last un-prefixed name; deferred at M5 of the ACP-0.21 migration | partial (M5 deferred) |
+| Model selection      | `unstable_setSessionModel` + `SessionModelState` on session-create/load responses | Adopted at M1 + M4 of the ACP-0.21 migration. `bodhi/listModels` and `_meta.bodhi.modelId` retired; the agent resolves `currentModelId` from `SessionState` per prompt | compliant (unstable surface) |
+| Session listing      | `Agent.listSessions` (stable since 0.20) | Adopted at M1 + M2 of the ACP-0.21 migration; `bodhi/listSessions` retired. `turnCount` / `lastModelId` / `createdAt` ride `SessionInfo._meta.bodhi` | compliant |
+| Session close        | `Agent.closeSession` (stable since 0.20) | Adopted at M1 of the ACP-0.21 migration for in-memory cleanup; `_bodhi/sessions/delete` retained as a user-visible delete gesture that wraps close path + `store.deleteSession` | compliant |
+| Per-session config   | `Agent.setSessionConfigOption` + `config_option_update` notification + `NewSessionResponse.configOptions` | Adopted at M1 + M3 of the ACP-0.21 migration; `_bodhi/features/list` and `_bodhi/features/set` retired. Config IDs `_bodhi/features/{bashEnabled,forceToolCall}` (DEV-only `forceToolCall`) | compliant |
+| MCP lifecycle        | No first-class transport; ACP allows extensions | Rides on `extNotification("_bodhi/mcp/state", { sessionId, server, state, error?, tools? })` per M6 of the ACP-0.21 migration. Replaced the legacy empty-`agent_message_chunk` + `_meta.bodhi.mcp` carrier | compliant (extension) |
+| `agentInfo`          | `InitializeResponse.agentInfo: { name, version }` | Stamped at M1 of the ACP-0.21 migration | compliant |
+| `SessionUpdate` kinds (11 in spec) | All explicit | Reducer at host has explicit case arms for every kind plus a default `console.warn` for unknowns (M7 of the ACP-0.21 migration); the 6 not-yet-rendered kinds are slotted no-ops awaiting UI | compliant |
+| Session fork         | `session/fork` (unstable schema)                              | Adopted behind a feature flag, pinned SDK version (M6 of original roadmap, post-migration)                 | unstable-with-flag |
 
 The divergent row (filesystem) is the one to understand. See
 [steering/02-architecture.md](../steering/02-architecture.md) §
@@ -80,6 +87,32 @@ architecturally worse than mounting the vault on the agent and
 advertising `fs/*` as a future IDE-integration seam.
 
 **Scope adjustments vs. original plan.**
+
+- **ACP 0.21 compliance migration (M1–M8 of
+  [`ai-docs/plans/reviewed-the-acp-compliance-report-peaceful-journal.md`](../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md)).**
+  Driven by the audit at
+  [`../reviews/acp-compliance-2026-05-03.md`](../reviews/acp-compliance-2026-05-03.md).
+  Eight features the spec ships natively that we previously served
+  via custom `_bodhi/*` extension methods or `_meta.bodhi.*`
+  envelope rides have been migrated to native ACP 0.21 surfaces:
+  `Agent.listSessions`, `Agent.closeSession`,
+  `Agent.unstable_setSessionModel` + `SessionModelState`,
+  `Agent.setSessionConfigOption` + `config_option_update`,
+  `agentInfo` on `InitializeResponse`, and explicit reducer arms
+  for all 11 `SessionUpdate` kinds. MCP lifecycle and built-in
+  actions migrated to dedicated `extNotification` side-channels
+  (`_bodhi/mcp/state`, `_bodhi/builtin/action`), keeping
+  `_`-prefixed extension naming compliant. **`bodhi/getSession`
+  collapse (M5) was deferred** after analysis showed the planned
+  reducer-folds-replay-chunks approach was incomplete (the
+  agent's `loadSession` only re-emits `'notification'` entries,
+  not `'turn'` / `'builtin'` ones); see
+  `packages/web-acp/TECHDEBT.md` § "M5 deferred" for the two
+  viable paths. **`packages/cli-acp-client/` was deliberately
+  left out** of this migration per the user's "leave broken"
+  direction; see
+  `packages/cli-acp-client/TECHDEBT.md` for the per-call-site
+  port.
 
 - **Post-M4 phase B agent-package extraction.** The
   worker-side ACP runtime moved from `packages/web-acp/src/{acp,

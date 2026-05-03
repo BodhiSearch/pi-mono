@@ -1,6 +1,6 @@
-import type { SessionNotification } from "@agentclientprotocol/sdk";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AnyBodhiBuiltinAction } from "../wire";
+import type { SessionNotification } from '@agentclientprotocol/sdk';
+import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import type { AnyBodhiBuiltinAction } from '../wire';
 
 /**
  * Worker-owned persistence interface for ACP sessions.
@@ -12,63 +12,59 @@ import type { AnyBodhiBuiltinAction } from "../wire";
  * the transcript of `session/update` events.
  */
 
-// Adding a new kind here is on-disk compatible: the `entries` table
-// stores `payload` as a polymorphic blob keyed only by `[sessionId+seq]`,
-// so introducing `'builtin'` (M4 phase B) does not require a Dexie
-// version bump. Old DBs that never wrote a 'builtin' row read back
-// the same shape as before.
-export type SessionEntryKind = "notification" | "turn" | "builtin";
+// Adding a new SessionEntryKind stays on-disk compatible: `entries.payload`
+// is an opaque blob keyed by [sessionId+seq], so new kinds (e.g. `builtin`)
+// do not require a Dexie schema bump.
+export type SessionEntryKind = 'notification' | 'turn' | 'builtin';
 
 export interface TurnPayload {
-	userText: string;
-	finalMessages: AgentMessage[];
-	modelId: string;
+  userText: string;
+  finalMessages: AgentMessage[];
+  modelId: string;
 }
 
 /**
- * Persisted record of a built-in slash-command exchange (M4 phase B).
- * Built-ins bypass the LLM — the worker recognises `/help` etc. in
- * `prompt()`, runs a handler, and writes one of these instead of a
- * `'turn'` entry. Because they are not `'turn'` entries, they are
- * naturally invisible to `inline.restoreMessages()` on reload, which
- * keeps the LLM blind to built-in exchanges on subsequent prompts.
+ * Persisted built-in slash-command exchange. The worker handles `/help`, etc.
+ * in `prompt()`, emits the reply on the wire, and stores this instead of a
+ * `turn` row. `inline.restoreMessages()` replays only `turn` payloads so
+ * the LLM never sees built-in text on follow-up prompts; the UI transcript
+ * still includes built-ins via `bodhi/getSession`, which walks `builtin` rows.
  *
- * `action` is an optional client-action descriptor (e.g.
- * `{ kind: 'copy' }`); the client builds the actual payload at
- * dispatch time. `kind` is open-ended for future commands like
- * `/share`, `/export-html`, `/feedback`.
+ * `action` is an optional client-action descriptor (e.g. `{ kind: 'copy' }`);
+ * the client materialises the concrete notification. `kind` stays open for
+ * future commands such as `/share`.
  */
 export interface BuiltinPayload {
-	command: string;
-	userText: string;
-	replyText: string;
-	action?: AnyBodhiBuiltinAction;
+  command: string;
+  userText: string;
+  replyText: string;
+  action?: AnyBodhiBuiltinAction;
 }
 
 export interface SessionEntry {
-	sessionId: string;
-	seq: number;
-	at: number;
-	kind: SessionEntryKind;
-	payload: SessionNotification | TurnPayload | BuiltinPayload;
+  sessionId: string;
+  seq: number;
+  at: number;
+  kind: SessionEntryKind;
+  payload: SessionNotification | TurnPayload | BuiltinPayload;
 }
 
 export interface SessionRow {
-	id: string;
-	createdAt: number;
-	updatedAt: number;
-	title: string | null;
-	turnCount: number;
-	lastModelId: string | null;
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  title: string | null;
+  turnCount: number;
+  lastModelId: string | null;
 }
 
 export interface SessionSummary {
-	id: string;
-	title: string | null;
-	createdAt: number;
-	updatedAt: number;
-	turnCount: number;
-	lastModelId: string | null;
+  id: string;
+  title: string | null;
+  createdAt: number;
+  updatedAt: number;
+  turnCount: number;
+  lastModelId: string | null;
 }
 
 const MAX_TITLE_LENGTH = 60;
@@ -78,29 +74,25 @@ const MAX_TITLE_LENGTH = 60;
  * readable without needing an LLM call.
  */
 export function deriveTitle(userText: string): string {
-	const single = userText.replace(/\s+/g, " ").trim();
-	if (single.length <= MAX_TITLE_LENGTH) return single;
-	return `${single.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
+  const single = userText.replace(/\s+/g, ' ').trim();
+  if (single.length <= MAX_TITLE_LENGTH) return single;
+  return `${single.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
 }
 
 /**
- * Per-session feature toggle row stored alongside sessions. Added in
- * M2 phase B; see `feature-store.ts` for the wrapper contract and
- * `features.md` for the public wire shape.
+ * Per-session feature toggle row (Dexie `features` table).
+ * See `feature-store.ts` / `features.md` for wrapper + wire shape.
  */
 export interface FeatureRow {
-	sessionId: string;
-	flags: Record<string, boolean>;
-	updatedAt: number;
+  sessionId: string;
+  flags: Record<string, boolean>;
+  updatedAt: number;
 }
 
 /**
- * Per-session MCP toggle row — one entry per ACP session storing the
- * user's per-server on/off flags and, nested under each server slug,
- * per-tool on/off flags. Added in M3 phase B; see
- * `mcp-toggle-store.ts` for the wrapper contract and
- * `specs/web-acp-agent/mcp.md` for the public wire shape returned by
- * `bodhi/getSession` + mutated via `_bodhi/mcp/toggles/set`.
+ * Per-session MCP toggle row — per-server overrides plus per-tool overrides
+ * keyed by server slug. See `mcp-toggle-store.ts` and `specs/web-acp-agent/mcp.md`
+ * for the wire shape on `bodhi/getSession` and `_bodhi/mcp/toggles/set`.
  *
  * Semantics:
  * - **Absent keys mean "default on".** We never materialise a
@@ -114,20 +106,26 @@ export interface FeatureRow {
  *   registration.
  */
 export interface McpTogglesRow {
-	sessionId: string;
-	servers: Record<string, boolean>;
-	tools: Record<string, Record<string, boolean>>;
-	updatedAt: number;
+  sessionId: string;
+  servers: Record<string, boolean>;
+  tools: Record<string, Record<string, boolean>>;
+  updatedAt: number;
 }
 
 export interface SessionStore {
-	createSession(id: string, at?: number): Promise<void>;
-	recordNotification(id: string, notification: SessionNotification, at?: number): Promise<void>;
-	recordTurn(id: string, userText: string, finalMessages: AgentMessage[], modelId: string, at?: number): Promise<void>;
-	recordBuiltin(id: string, payload: BuiltinPayload, at?: number): Promise<void>;
-	listSummaries(): Promise<SessionSummary[]>;
-	readEntries(id: string): Promise<SessionEntry[]>;
-	getSession(id: string): Promise<SessionRow | undefined>;
-	setTitle(id: string, title: string): Promise<void>;
-	deleteSession(id: string): Promise<void>;
+  createSession(id: string, at?: number): Promise<void>;
+  recordNotification(id: string, notification: SessionNotification, at?: number): Promise<void>;
+  recordTurn(
+    id: string,
+    userText: string,
+    finalMessages: AgentMessage[],
+    modelId: string,
+    at?: number
+  ): Promise<void>;
+  recordBuiltin(id: string, payload: BuiltinPayload, at?: number): Promise<void>;
+  listSummaries(): Promise<SessionSummary[]>;
+  readEntries(id: string): Promise<SessionEntry[]>;
+  getSession(id: string): Promise<SessionRow | undefined>;
+  setTitle(id: string, title: string): Promise<void>;
+  deleteSession(id: string): Promise<void>;
 }

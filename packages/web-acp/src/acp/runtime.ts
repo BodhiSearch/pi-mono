@@ -1,19 +1,15 @@
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
-import type { Client, SessionNotification } from '@agentclientprotocol/sdk';
+import type { Client, InitializeResponse, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
 import { buildFsHandlers } from '@/acp/fs-handlers';
-import type { BodhiModelDescriptor } from '@/acp/index';
 import { requestPermissionStub } from '@/acp/permissions';
 import type { HostVolumeInit } from '@/runtime/volumes-fsa';
 import { createMessagePortStream } from '@/runtime/transport/worker-stream';
 import { createVolumeControl, type VolumeControl } from '@/runtime/volumes-fsa';
 import { MainZenfs } from '@/vault/main-zenfs';
 
-// M8: when the package is lifted to `@bodhiapp/bodhi-web-acp`, this
-// module-scope state moves to a context-bound runtime instance. Kept
-// at module scope today so the singleton survives React StrictMode's
-// double-mount of every effect — we spawn exactly one agent worker
-// per tab, regardless of how many `useAcp()` consumers mount.
+// Module-scope singleton so we spawn exactly one agent worker per tab
+// (StrictMode double-mount must not create a second worker).
 
 export interface AcpRuntime {
   worker: Worker;
@@ -25,11 +21,15 @@ export interface AcpRuntime {
 }
 
 let _runtime: AcpRuntime | null = null;
+let _initResponse: InitializeResponse | null = null;
 let _authKey: string | null = null;
 let _authPromise: Promise<void> | null = null;
-let _authModels: BodhiModelDescriptor[] = [];
 let _session: string | null = null;
 let _sessionPromise: Promise<string> | null = null;
+// Backs `useSyncExternalStore` for the active session id.
+const _sessionListeners = new Set<() => void>();
+// Awaited by `sendMessage` so a model swap can't race the next prompt.
+let _modelUpdatePromise: Promise<void> | null = null;
 
 export function ensureRuntime(): AcpRuntime {
   if (_runtime) return _runtime;
@@ -37,10 +37,8 @@ export function ensureRuntime(): AcpRuntime {
     type: 'module',
   });
   const channel = new MessageChannel();
-  // `init` is posted lazily once the main thread has resolved the
-  // initial volume list (FSA handles + dev/test seeds). The
-  // `ClientSideConnection` below would otherwise dispatch requests
-  // into a worker that hasn't constructed the agent yet.
+  // `init` is posted lazily after the initial volume list resolves so the
+  // worker isn't asked to dispatch requests before the agent is constructed.
   let resolveInit!: (volumes: HostVolumeInit[]) => void;
   let initPosted = false;
   const mainZenfs = new MainZenfs();
@@ -48,12 +46,8 @@ export function ensureRuntime(): AcpRuntime {
     resolveInit = (volumes: HostVolumeInit[]) => {
       if (initPosted) return;
       initPosted = true;
-      // Mount duplicate backends on the main thread for the fs/*
-      // client handler seam. We don't block ACP init on this — the
-      // worker owns the source of truth and the handlers defensively
-      // check membership on every call — but we do start mounting
-      // immediately so handlers see the right entries by the time
-      // an external ACP agent calls fs/readTextFile.
+      // Duplicate-mount on the main thread for the fs/* handler seam;
+      // worker is authoritative so we don't block init on this.
       void mainZenfs.mountAll(volumes);
       worker.postMessage({ type: 'init', agentPort: channel.port2, volumes }, [channel.port2]);
       resolve();
@@ -69,6 +63,9 @@ export function ensureRuntime(): AcpRuntime {
     async sessionUpdate(params: SessionNotification) {
       holder.client?.dispatchSessionUpdate(params);
     },
+    async extNotification(method: string, params: Record<string, unknown>) {
+      holder.client?.dispatchExtNotification(method, params);
+    },
     async readTextFile(params) {
       return fsHandlers.readTextFile(params);
     },
@@ -80,9 +77,27 @@ export function ensureRuntime(): AcpRuntime {
   const client = new AcpClient(conn);
   holder.client = client;
 
-  const initialize = initPromise.then(() => client.initialize()).then(() => undefined);
+  const initialize = initPromise
+    .then(() => client.initialize())
+    .then(resp => {
+      _initResponse = resp;
+    });
   const volumeControl = wrapVolumeControl(createVolumeControl(worker), mainZenfs);
   _runtime = { worker, client, volumeControl, mainZenfs, initialize, resolveInit };
+
+  // Best-effort tab-close hook so the agent can release MCP refcounts and
+  // abort in-flight work. `pagehide` covers close/nav/bfcache; `beforeunload`
+  // is the legacy fallback. Fire-and-forget — the message may not round-trip.
+  if (typeof window !== 'undefined') {
+    const onUnload = () => {
+      const sessionId = _session;
+      if (!sessionId) return;
+      void client.closeSession(sessionId).catch(() => undefined);
+    };
+    window.addEventListener('pagehide', onUnload);
+    window.addEventListener('beforeunload', onUnload);
+  }
+
   return _runtime;
 }
 
@@ -117,7 +132,6 @@ function wrapVolumeControl(inner: VolumeControl, mainZenfs: MainZenfs): VolumeCo
   };
 }
 
-// --- Per-tab session/auth singletons ---------------------------------
 // Accessor surface for the per-tab session and auth state. Module-scope
 // `let`s rather than a class so Hot Module Reload boundaries stay clean
 // and StrictMode-driven double effects observe the same identity.
@@ -127,7 +141,24 @@ export function getSession(): string | null {
 }
 
 export function setSession(id: string | null): void {
+  if (_session === id) return;
   _session = id;
+  // Snapshot the set so a listener that unsubscribes itself doesn't disturb the loop.
+  for (const listener of [..._sessionListeners]) {
+    try {
+      listener();
+    } catch (err) {
+      console.error('[acp/runtime] session listener threw:', err);
+    }
+  }
+}
+
+/** Subscribe form for `useSyncExternalStore`; pair with {@link getSession}. */
+export function subscribeToSession(listener: () => void): () => void {
+  _sessionListeners.add(listener);
+  return () => {
+    _sessionListeners.delete(listener);
+  };
 }
 
 export function getSessionPromise(): Promise<string> | null {
@@ -154,10 +185,14 @@ export function setAuthPromise(p: Promise<void> | null): void {
   _authPromise = p;
 }
 
-export function getAuthModels(): BodhiModelDescriptor[] {
-  return _authModels;
+export function getModelUpdatePromise(): Promise<void> | null {
+  return _modelUpdatePromise;
 }
 
-export function setAuthModels(m: BodhiModelDescriptor[]): void {
-  _authModels = m;
+export function setModelUpdatePromise(p: Promise<void> | null): void {
+  _modelUpdatePromise = p;
+}
+
+export function getInitResponse(): InitializeResponse | null {
+  return _initResponse;
 }

@@ -1,9 +1,8 @@
 import { Checkbox } from '@/components/ui/checkbox';
-import type { BodhiFeatureBag } from '@/acp/index';
+import type { FeatureBag } from '@/acp/feature-keys';
 
 export interface FeaturePanelProps {
-  features: BodhiFeatureBag;
-  defaults: BodhiFeatureBag;
+  features: FeatureBag;
   onChange: (key: string, value: boolean) => void | Promise<void>;
   disabled?: boolean;
 }
@@ -37,14 +36,9 @@ const FEATURE_META: FeatureMeta[] = [
  * `onChange`. DEV-only features are rendered collapsed outside DEV
  * builds so production users can't see them at all.
  */
-export default function FeaturePanel({
-  features,
-  defaults,
-  onChange,
-  disabled,
-}: FeaturePanelProps) {
+export default function FeaturePanel({ features, onChange, disabled }: FeaturePanelProps) {
   const visible = FEATURE_META.filter(meta => !meta.devOnly || IS_DEV);
-  const enabledCount = visible.filter(meta => resolve(features, defaults, meta.key)).length;
+  const enabledCount = visible.filter(meta => resolve(features, meta.key)).length;
   return (
     <section
       data-testid="features-panel"
@@ -56,7 +50,7 @@ export default function FeaturePanel({
       </header>
       <ul className="flex flex-col pb-2">
         {visible.map(meta => {
-          const current = resolve(features, defaults, meta.key);
+          const current = resolve(features, meta.key);
           return (
             <li
               key={meta.key}
@@ -86,8 +80,7 @@ export default function FeaturePanel({
   );
 }
 
-function resolve(features: BodhiFeatureBag, defaults: BodhiFeatureBag, key: string): boolean {
+function resolve(features: FeatureBag, key: string): boolean {
   if (key in features) return Boolean(features[key]);
-  if (key in defaults) return Boolean(defaults[key]);
   return false;
 }

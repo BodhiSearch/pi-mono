@@ -4,14 +4,11 @@ import { useBodhi } from '@bodhiapp/bodhi-js-react';
 import {
   ensureRuntime,
   getAuthKey,
-  getAuthModels,
   getAuthPromise,
   getSession,
   setAuthKey,
-  setAuthModels,
   setAuthPromise,
 } from '@/acp/runtime';
-import type { BodhiModelDescriptor } from '@/acp/index';
 import { authKeyOf, composeSessionMeta } from '@/acp/session-meta';
 import { getErrorMessage } from '@/lib/utils';
 import { getServerUrlOrThrow } from '@/lib/agent-model';
@@ -20,10 +17,6 @@ import type { McpInstanceView } from '@/mcp/types';
 
 export interface UseAcpAuthDeps {
   setError: (msg: string | null) => void;
-  setModels: (list: BodhiModelDescriptor[]) => void;
-  setIsLoadingModels: (loading: boolean) => void;
-  ensureDefaultModel: (list: BodhiModelDescriptor[]) => void;
-  loadingModelsRef: MutableRefObject<boolean>;
   /**
    * Snapshot of the currently approved MCP instance catalog. Read on
    * token rotation so the rebuilt `session/load` carries the same set
@@ -34,32 +27,30 @@ export interface UseAcpAuthDeps {
   mcpTogglesRef: MutableRefObject<McpToggleSnapshot>;
   /** Latest user-requested MCP URL list for the rotation path. */
   requestedMcpUrlsRef: MutableRefObject<string[]>;
+  /**
+   * Gate the token-rotation `session/load` rebuild on the MCP catalog
+   * being hydrated. Without this, a rotation that lands before the
+   * IDB-backed instance list resolves would compose an empty server array
+   * and the worker pool would drop every connected MCP.
+   */
+  mcpInstancesIsReady: boolean;
 }
 
 /**
  * Owns the auth-side ACP wire. On `auth.accessToken` change:
- * - calls `acp.authenticate` + `bodhi/listModels` (deduped via
- *   `getAuthKey()` + `getAuthPromise()`),
- * - publishes the model catalog to `useAcpModels`,
+ * - calls `acp.authenticate` (deduped via `getAuthKey()` +
+ *   `getAuthPromise()`),
  * - on rotation (token A → token B with an active session),
  *   re-issues `session/load` so the worker's MCP pool picks up the
  *   new `Bearer` header.
  *
- * Module-scope state in `acp/runtime.ts` (`_authKey` / `_authPromise`
- * / `_authModels`) survives StrictMode double-mounts, so the
- * dedupe key holds across the duplicate effect fire.
+ * Module-scope state in `acp/runtime.ts` (`_authKey` / `_authPromise`)
+ * survives StrictMode double-mounts, so the dedupe key holds across
+ * the duplicate effect fire.
  */
 export function useAcpAuth(deps: UseAcpAuthDeps): void {
-  const {
-    setError,
-    setModels,
-    setIsLoadingModels,
-    ensureDefaultModel,
-    loadingModelsRef,
-    mcpInstancesRef,
-    mcpTogglesRef,
-    requestedMcpUrlsRef,
-  } = deps;
+  const { setError, mcpInstancesRef, mcpTogglesRef, requestedMcpUrlsRef, mcpInstancesIsReady } =
+    deps;
   const { client: bodhiClient, auth, isReady } = useBodhi();
 
   // Remembers the last `auth.accessToken` we *handed to the worker*.
@@ -78,17 +69,14 @@ export function useAcpAuth(deps: UseAcpAuthDeps): void {
     if (!token) {
       setAuthKey(null);
       setAuthPromise(null);
-      setAuthModels([]);
       lastWorkerTokenRef.current = null;
       return;
     }
 
-    loadingModelsRef.current = true;
     let cancelled = false;
     const prevWorkerToken = lastWorkerTokenRef.current;
 
     const run = async () => {
-      setIsLoadingModels(true);
       setError(null);
       try {
         const serverUrl = getServerUrlOrThrow(bodhiClient.getState());
@@ -99,16 +87,12 @@ export function useAcpAuth(deps: UseAcpAuthDeps): void {
             (async () => {
               await runtime.initialize;
               await runtime.client.authenticate({ token, baseUrl: serverUrl });
-              setAuthModels(await runtime.client.listModels());
             })()
           );
         }
         await getAuthPromise();
         if (cancelled) return;
         lastWorkerTokenRef.current = token;
-        const fetchedModels = getAuthModels();
-        setModels(fetchedModels);
-        if (fetchedModels.length > 0) ensureDefaultModel(fetchedModels);
         // Token *rotation* (A → B, both non-null) on an already-active
         // session: the worker's MCP pool still holds the stale
         // `Bearer A` header, so re-issue `session/load` with freshly
@@ -117,6 +101,11 @@ export function useAcpAuth(deps: UseAcpAuthDeps): void {
         // the auto-`ensureSession` effect in `useAcpSession`.
         const sessionId = getSession();
         if (prevWorkerToken && prevWorkerToken !== token && sessionId) {
+          // Skip the rebuild until the MCP catalog is ready; composing
+          // with an empty list would tell the worker to drop every
+          // connection. The effect re-runs when `mcpInstancesIsReady`
+          // flips true, giving us a second chance once the catalog hydrates.
+          if (!mcpInstancesIsReady) return;
           try {
             const servers = composeMcpServers(
               mcpInstancesRef.current,
@@ -134,15 +123,12 @@ export function useAcpAuth(deps: UseAcpAuthDeps): void {
           }
         }
       } catch (err) {
-        console.error('ACP authenticate/listModels failed:', err);
+        console.error('ACP authenticate failed:', err);
         setAuthKey(null);
         setAuthPromise(null);
         if (!cancelled) {
           setError(getErrorMessage(err, 'Failed to connect to agent'));
         }
-      } finally {
-        loadingModelsRef.current = false;
-        if (!cancelled) setIsLoadingModels(false);
       }
     };
 
@@ -154,13 +140,10 @@ export function useAcpAuth(deps: UseAcpAuthDeps): void {
     auth.accessToken,
     bodhiClient,
     isReady,
-    ensureDefaultModel,
-    loadingModelsRef,
-    setIsLoadingModels,
-    setModels,
     setError,
     mcpInstancesRef,
     mcpTogglesRef,
     requestedMcpUrlsRef,
+    mcpInstancesIsReady,
   ]);
 }

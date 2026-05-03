@@ -30,12 +30,10 @@ export default defineConfig(({ mode }) => ({
   server: {
     strictPort: true,
   },
-  // M2 phase B: surface the dev flag both on the main thread (via
-  // `import.meta.env.DEV`) and inside the Web Worker bundle via a
-  // replaced global so `agent-adapter` can gate DEV-only features
-  // (e.g. `forceToolCall`) without importing the Vite-only meta.
-  //
-  // M4 phase B: expose the package + ACP SDK versions for the
+  // Surface the dev flag both on the main thread (via `import.meta.env.DEV`)
+  // and inside the Web Worker bundle via a replaced global so `agent-adapter`
+  // can gate DEV-only features (e.g. `forceToolCall`) without importing the
+  // Vite-only meta. Also expose the package + ACP SDK versions used by the
   // built-in `/version` slash command.
   define: {
     __WEB_ACP_DEV__: JSON.stringify(mode === 'development'),

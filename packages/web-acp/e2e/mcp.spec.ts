@@ -59,10 +59,13 @@ test.describe('mcp', () => {
       await mcp.expectServerState(slug, 'connected');
       await mcp.expectToolVisible(slug, 'echo');
       await mcp.expectToolVisible(slug, 'get-sum');
+      await expect(mcp.panel).toHaveAttribute('data-test-state', '1');
     });
 
     await test.step('forced echo prompt — model calls everything__echo and surfaces the token', async () => {
       await chat.newChat();
+      // 'reset' arm preserves mcpStates so the panel does not flicker between sessions.
+      await mcp.expectServerState(slug, 'connected');
       await chat.selectModel(FULL_MODEL_ID);
       await features.setForceToolCallOn();
       const token = `WEB_ACP_M3_ECHO_${crypto.randomUUID().slice(0, 8).toUpperCase()}`;

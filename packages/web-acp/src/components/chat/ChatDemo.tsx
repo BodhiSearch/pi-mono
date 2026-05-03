@@ -21,15 +21,12 @@ export default function ChatDemo() {
     error: chatError,
     clearError: clearChatError,
     models,
-    isLoadingModels,
-    loadModels,
     sessions,
     loadSession,
     deleteSession,
     currentSessionId,
     volumes,
     features,
-    featureDefaults,
     setFeature,
     toolCalls,
     mcp,
@@ -58,12 +55,7 @@ export default function ChatDemo() {
     <div className="flex flex-1 min-h-0">
       <div className="flex flex-col w-64 shrink-0 border-r overflow-y-auto bg-gray-50">
         <VolumesPanel volumes={volumes} />
-        <FeaturePanel
-          features={features}
-          defaults={featureDefaults}
-          onChange={setFeature}
-          disabled={isStreaming}
-        />
+        <FeaturePanel features={features} onChange={setFeature} disabled={isStreaming} />
         <McpPanel
           instances={mcp.instances}
           states={mcp.states}
@@ -95,8 +87,7 @@ export default function ChatDemo() {
           selectedModel={selectedModel}
           setSelectedModel={setSelectedModel}
           models={models}
-          isLoadingModels={isLoadingModels}
-          onRefreshModels={loadModels}
+          error={chatError}
           availableCommands={availableCommands}
         />
       </div>

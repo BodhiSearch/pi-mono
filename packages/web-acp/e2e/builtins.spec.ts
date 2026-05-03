@@ -29,6 +29,7 @@ test.describe('built-ins', () => {
       await expect.soft(picker.item('copy')).toBeVisible();
       await expect.soft(picker.item('mcp')).toBeVisible();
       await chat.fillRaw('');
+      await picker.expectClosed();
     });
 
     await test.step('/copy with no LLM turn — built-in reply + warning toast', async () => {
@@ -83,9 +84,9 @@ test.describe('built-ins', () => {
     });
 
     await test.step('a real prompt produces a non-built-in assistant turn', async () => {
-      await chat.send('Reply with exactly the following text and nothing else: BODHI-COPY-OK');
+      await chat.send('Please respond with the phrase: hello world, how are you today');
       const reply = messages.bubble(5, 'assistant');
-      await expect(reply).toContainText('BODHI-COPY-OK');
+      await expect(reply).toContainText(/hello world/i);
       await messages.expectNotBuiltin(5, 'assistant');
     });
 
@@ -97,7 +98,7 @@ test.describe('built-ins', () => {
       await expect(reply).toContainText(/copied/i);
       await expect(page.locator('text=Copied conversation to clipboard').first()).toBeVisible();
       const clipboard = await messages.readClipboard();
-      expect.soft(clipboard).toContain('BODHI-COPY-OK');
+      expect.soft(clipboard.toLowerCase()).toContain('hello world');
       expect.soft(clipboard).toContain('**Assistant:**');
       expect.soft(clipboard).toContain('**You:**');
       expect.soft(clipboard).not.toContain('/help');

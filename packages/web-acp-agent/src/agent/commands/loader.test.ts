@@ -1,277 +1,281 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CommandsFs, CommandsFsEntry } from "./loader";
-import { loadCommandsFromVolumes, loadPromptsFromVolumes } from "./loader";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandsFs, CommandsFsEntry } from './loader';
+import { loadCommandsFromVolumes, loadPromptsFromVolumes } from './loader';
 
 interface FakeFile {
-	content: string;
+  content: string;
 }
 
 class FakeCommandsFs implements CommandsFs {
-	readonly files = new Map<string, FakeFile>();
+  readonly files = new Map<string, FakeFile>();
 
-	add(absolutePath: string, content: string): void {
-		this.files.set(absolutePath, { content });
-	}
+  add(absolutePath: string, content: string): void {
+    this.files.set(absolutePath, { content });
+  }
 
-	async readdir(absolutePath: string): Promise<CommandsFsEntry[]> {
-		const prefix = absolutePath.endsWith("/") ? absolutePath : `${absolutePath}/`;
-		const direct = new Map<string, CommandsFsEntry>();
-		for (const path of this.files.keys()) {
-			if (!path.startsWith(prefix)) continue;
-			const tail = path.slice(prefix.length);
-			const slash = tail.indexOf("/");
-			if (slash === -1) {
-				direct.set(tail, { name: tail, isFile: true, isDirectory: false });
-			} else {
-				const dirName = tail.slice(0, slash);
-				if (!direct.has(dirName)) {
-					direct.set(dirName, { name: dirName, isFile: false, isDirectory: true });
-				}
-			}
-		}
-		return [...direct.values()].sort((a, b) => a.name.localeCompare(b.name));
-	}
+  async readdir(absolutePath: string): Promise<CommandsFsEntry[]> {
+    const prefix = absolutePath.endsWith('/') ? absolutePath : `${absolutePath}/`;
+    const direct = new Map<string, CommandsFsEntry>();
+    for (const path of this.files.keys()) {
+      if (!path.startsWith(prefix)) continue;
+      const tail = path.slice(prefix.length);
+      const slash = tail.indexOf('/');
+      if (slash === -1) {
+        direct.set(tail, { name: tail, isFile: true, isDirectory: false });
+      } else {
+        const dirName = tail.slice(0, slash);
+        if (!direct.has(dirName)) {
+          direct.set(dirName, { name: dirName, isFile: false, isDirectory: true });
+        }
+      }
+    }
+    return [...direct.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
 
-	async readFile(absolutePath: string): Promise<string> {
-		const file = this.files.get(absolutePath);
-		if (!file) throw new Error(`ENOENT: ${absolutePath}`);
-		return file.content;
-	}
+  async readFile(absolutePath: string): Promise<string> {
+    const file = this.files.get(absolutePath);
+    if (!file) throw new Error(`ENOENT: ${absolutePath}`);
+    return file.content;
+  }
 }
 
-const cmdMd = (description: string, body: string): string => `---\ndescription: ${description}\n---\n${body}`;
+const cmdMd = (description: string, body: string): string =>
+  `---\ndescription: ${description}\n---\n${body}`;
 
-describe("loadCommandsFromVolumes", () => {
-	let warnings: Array<{ msg: string; err?: unknown }>;
-	let warn: (msg: string, err?: unknown) => void;
+describe('loadCommandsFromVolumes', () => {
+  let warnings: Array<{ msg: string; err?: unknown }>;
+  let warn: (msg: string, err?: unknown) => void;
 
-	beforeEach(() => {
-		warnings = [];
-		warn = (msg, err) => {
-			warnings.push({ msg, err });
-		};
-	});
+  beforeEach(() => {
+    warnings = [];
+    warn = (msg, err) => {
+      warnings.push({ msg, err });
+    };
+  });
 
-	it("returns an empty list when no mount has a .pi/commands directory", async () => {
-		const fs = new FakeCommandsFs();
-		const result = await loadCommandsFromVolumes({
-			mounts: [{ mountName: "wiki" }, { mountName: "code" }],
-			fs,
-			warn,
-		});
-		expect(result).toEqual([]);
-		expect(warnings).toEqual([]);
-	});
+  it('returns an empty list when no mount has a .pi/commands directory', async () => {
+    const fs = new FakeCommandsFs();
+    const result = await loadCommandsFromVolumes({
+      mounts: [{ mountName: 'wiki' }, { mountName: 'code' }],
+      fs,
+      warn,
+    });
+    expect(result).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
 
-	it("loads flat commands from a single mount", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/greet.md", cmdMd("Greet someone", "Hello $1!"));
-		fs.add("/mnt/wiki/.pi/commands/farewell.md", cmdMd("Say bye", "Bye $@"));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		const names = result.map((r) => r.name).sort();
-		expect(names).toEqual(["wiki:farewell", "wiki:greet"]);
-		expect(result.find((r) => r.name === "wiki:greet")?.template).toBe("Hello $1!");
-		expect(result.find((r) => r.name === "wiki:greet")?.description).toBe("Greet someone");
-	});
+  it('loads flat commands from a single mount', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/greet.md', cmdMd('Greet someone', 'Hello $1!'));
+    fs.add('/mnt/wiki/.pi/commands/farewell.md', cmdMd('Say bye', 'Bye $@'));
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    const names = result.map(r => r.name).sort();
+    expect(names).toEqual(['wiki:farewell', 'wiki:greet']);
+    expect(result.find(r => r.name === 'wiki:greet')?.template).toBe('Hello $1!');
+    expect(result.find(r => r.name === 'wiki:greet')?.description).toBe('Greet someone');
+  });
 
-	it("walks subdirectories with `:` flattening", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/review/api.md", cmdMd("Review an API", "Review the API at $1."));
-		fs.add("/mnt/wiki/.pi/commands/review/style.md", cmdMd("Review styling", "Style notes for $1."));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		const names = result.map((r) => r.name).sort();
-		expect(names).toEqual(["wiki:review:api", "wiki:review:style"]);
-	});
+  it('walks subdirectories with `:` flattening', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/review/api.md', cmdMd('Review an API', 'Review the API at $1.'));
+    fs.add(
+      '/mnt/wiki/.pi/commands/review/style.md',
+      cmdMd('Review styling', 'Style notes for $1.')
+    );
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    const names = result.map(r => r.name).sort();
+    expect(names).toEqual(['wiki:review:api', 'wiki:review:style']);
+  });
 
-	it("mount-prefixes commands across multiple mounts", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/greet.md", cmdMd("w", "wiki greeting"));
-		fs.add("/mnt/code/.pi/commands/greet.md", cmdMd("c", "code greeting"));
-		const result = await loadCommandsFromVolumes({
-			mounts: [{ mountName: "wiki" }, { mountName: "code" }],
-			fs,
-			warn,
-		});
-		const names = result.map((r) => r.name).sort();
-		expect(names).toEqual(["code:greet", "wiki:greet"]);
-		expect(warnings).toEqual([]);
-	});
+  it('mount-prefixes commands across multiple mounts', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/greet.md', cmdMd('w', 'wiki greeting'));
+    fs.add('/mnt/code/.pi/commands/greet.md', cmdMd('c', 'code greeting'));
+    const result = await loadCommandsFromVolumes({
+      mounts: [{ mountName: 'wiki' }, { mountName: 'code' }],
+      fs,
+      warn,
+    });
+    const names = result.map(r => r.name).sort();
+    expect(names).toEqual(['code:greet', 'wiki:greet']);
+    expect(warnings).toEqual([]);
+  });
 
-	it("first-wins on intra-mount duplicates and emits a warning", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/dup.md", cmdMd("first", "first body"));
-		// Subdir collision is impossible because the canonical name differs;
-		// duplicate must come from the same subdir + stem to test first-wins.
-		// We force the duplicate by registering both mounts but with the same
-		// mount name (the registry forbids that, so we simulate via
-		// identical files appearing twice in a sorted scan order).
-		fs.add("/mnt/wiki/.pi/commands/keep/dup.md", cmdMd("second", "second body"));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name).sort()).toEqual(["wiki:dup", "wiki:keep:dup"]);
-	});
+  it('first-wins on intra-mount duplicates and emits a warning', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/dup.md', cmdMd('first', 'first body'));
+    // Subdir collision is impossible because the canonical name differs;
+    // duplicate must come from the same subdir + stem to test first-wins.
+    // We force the duplicate by registering both mounts but with the same
+    // mount name (the registry forbids that, so we simulate via
+    // identical files appearing twice in a sorted scan order).
+    fs.add('/mnt/wiki/.pi/commands/keep/dup.md', cmdMd('second', 'second body'));
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name).sort()).toEqual(['wiki:dup', 'wiki:keep:dup']);
+  });
 
-	it("skips files with a non-conforming stem with a warning", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/Bad-Name.md", cmdMd("x", "body"));
-		fs.add("/mnt/wiki/.pi/commands/good.md", cmdMd("ok", "ok body"));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:good"]);
-		expect(warnings.some((w) => w.msg.includes("Bad-Name.md"))).toBe(true);
-	});
+  it('skips files with a non-conforming stem with a warning', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/Bad-Name.md', cmdMd('x', 'body'));
+    fs.add('/mnt/wiki/.pi/commands/good.md', cmdMd('ok', 'ok body'));
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:good']);
+    expect(warnings.some(w => w.msg.includes('Bad-Name.md'))).toBe(true);
+  });
 
-	it("skips files with malformed front-matter", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/broken.md", "---\nfoo: [a, b]\n---\nbody");
-		fs.add("/mnt/wiki/.pi/commands/good.md", cmdMd("ok", "ok body"));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:good"]);
-		expect(warnings.some((w) => w.msg.includes("broken.md"))).toBe(true);
-	});
+  it('skips files with malformed front-matter', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/broken.md', '---\nfoo: [a, b]\n---\nbody');
+    fs.add('/mnt/wiki/.pi/commands/good.md', cmdMd('ok', 'ok body'));
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:good']);
+    expect(warnings.some(w => w.msg.includes('broken.md'))).toBe(true);
+  });
 
-	it("falls back to the body first line when description is missing", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/silent.md", "Use this command to greet folks.\n\nMore detail.");
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result[0]?.description).toBe("Use this command to greet folks.");
-	});
+  it('falls back to the body first line when description is missing', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/silent.md', 'Use this command to greet folks.\n\nMore detail.');
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result[0]?.description).toBe('Use this command to greet folks.');
+  });
 
-	it("threads argument-hint through to the def", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add(
-			"/mnt/wiki/.pi/commands/with-hint.md",
-			["---", "description: Hinted", "argument-hint: <name>", "---", "Hi $1"].join("\n"),
-		);
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result[0]?.argumentHint).toBe("<name>");
-	});
+  it('threads argument-hint through to the def', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add(
+      '/mnt/wiki/.pi/commands/with-hint.md',
+      ['---', 'description: Hinted', 'argument-hint: <name>', '---', 'Hi $1'].join('\n')
+    );
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result[0]?.argumentHint).toBe('<name>');
+  });
 
-	it("ignores hidden files (e.g. .DS_Store)", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/.DS_Store", "noise");
-		fs.add("/mnt/wiki/.pi/commands/real.md", cmdMd("r", "r body"));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:real"]);
-	});
+  it('ignores hidden files (e.g. .DS_Store)', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/.DS_Store', 'noise');
+    fs.add('/mnt/wiki/.pi/commands/real.md', cmdMd('r', 'r body'));
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:real']);
+  });
 
-	it("does not load non-md files", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/notes.txt", "should be ignored");
-		fs.add("/mnt/wiki/.pi/commands/cmd.md", cmdMd("ok", "ok body"));
-		const result = await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:cmd"]);
-	});
+  it('does not load non-md files', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/notes.txt', 'should be ignored');
+    fs.add('/mnt/wiki/.pi/commands/cmd.md', cmdMd('ok', 'ok body'));
+    const result = await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:cmd']);
+  });
 
-	it("uses console.warn by default", async () => {
-		const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/Bad.md", cmdMd("x", "body"));
-		await loadCommandsFromVolumes({ mounts: [{ mountName: "wiki" }], fs });
-		expect(spy).toHaveBeenCalled();
-		spy.mockRestore();
-	});
+  it('uses console.warn by default', async () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/Bad.md', cmdMd('x', 'body'));
+    await loadCommandsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });
 
-describe("loadPromptsFromVolumes", () => {
-	let warnings: Array<{ msg: string; err?: unknown }>;
-	let warn: (msg: string, err?: unknown) => void;
+describe('loadPromptsFromVolumes', () => {
+  let warnings: Array<{ msg: string; err?: unknown }>;
+  let warn: (msg: string, err?: unknown) => void;
 
-	beforeEach(() => {
-		warnings = [];
-		warn = (msg, err) => {
-			warnings.push({ msg, err });
-		};
-	});
+  beforeEach(() => {
+    warnings = [];
+    warn = (msg, err) => {
+      warnings.push({ msg, err });
+    };
+  });
 
-	it("returns an empty list when no mount has a .pi/prompts directory", async () => {
-		const fs = new FakeCommandsFs();
-		const result = await loadPromptsFromVolumes({
-			mounts: [{ mountName: "wiki" }, { mountName: "code" }],
-			fs,
-			warn,
-		});
-		expect(result).toEqual([]);
-		expect(warnings).toEqual([]);
-	});
+  it('returns an empty list when no mount has a .pi/prompts directory', async () => {
+    const fs = new FakeCommandsFs();
+    const result = await loadPromptsFromVolumes({
+      mounts: [{ mountName: 'wiki' }, { mountName: 'code' }],
+      fs,
+      warn,
+    });
+    expect(result).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
 
-	it("loads flat prompts from a single mount and parses front-matter", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/prompts/poem.md", cmdMd("Write a poem", "A poem about $1."));
-		fs.add("/mnt/wiki/.pi/prompts/letter.md", cmdMd("Write a letter", "Dear $1, $@"));
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		const names = result.map((r) => r.name).sort();
-		expect(names).toEqual(["wiki:letter", "wiki:poem"]);
-		const poem = result.find((r) => r.name === "wiki:poem");
-		expect(poem?.template).toBe("A poem about $1.");
-		expect(poem?.description).toBe("Write a poem");
-		expect(poem?.source.relPath).toBe(".pi/prompts/poem.md");
-	});
+  it('loads flat prompts from a single mount and parses front-matter', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/prompts/poem.md', cmdMd('Write a poem', 'A poem about $1.'));
+    fs.add('/mnt/wiki/.pi/prompts/letter.md', cmdMd('Write a letter', 'Dear $1, $@'));
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    const names = result.map(r => r.name).sort();
+    expect(names).toEqual(['wiki:letter', 'wiki:poem']);
+    const poem = result.find(r => r.name === 'wiki:poem');
+    expect(poem?.template).toBe('A poem about $1.');
+    expect(poem?.description).toBe('Write a poem');
+    expect(poem?.source.relPath).toBe('.pi/prompts/poem.md');
+  });
 
-	it("walks subdirectories with `:` flattening", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/prompts/review/api.md", cmdMd("Review an API", "Body $1."));
-		fs.add("/mnt/wiki/.pi/prompts/review/style.md", cmdMd("Review styling", "Body $1."));
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		const names = result.map((r) => r.name).sort();
-		expect(names).toEqual(["wiki:review:api", "wiki:review:style"]);
-	});
+  it('walks subdirectories with `:` flattening', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/prompts/review/api.md', cmdMd('Review an API', 'Body $1.'));
+    fs.add('/mnt/wiki/.pi/prompts/review/style.md', cmdMd('Review styling', 'Body $1.'));
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    const names = result.map(r => r.name).sort();
+    expect(names).toEqual(['wiki:review:api', 'wiki:review:style']);
+  });
 
-	it("mount-prefixes prompts across multiple mounts", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/prompts/poem.md", cmdMd("w", "wiki poem"));
-		fs.add("/mnt/code/.pi/prompts/poem.md", cmdMd("c", "code poem"));
-		const result = await loadPromptsFromVolumes({
-			mounts: [{ mountName: "wiki" }, { mountName: "code" }],
-			fs,
-			warn,
-		});
-		const names = result.map((r) => r.name).sort();
-		expect(names).toEqual(["code:poem", "wiki:poem"]);
-		expect(warnings).toEqual([]);
-	});
+  it('mount-prefixes prompts across multiple mounts', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/prompts/poem.md', cmdMd('w', 'wiki poem'));
+    fs.add('/mnt/code/.pi/prompts/poem.md', cmdMd('c', 'code poem'));
+    const result = await loadPromptsFromVolumes({
+      mounts: [{ mountName: 'wiki' }, { mountName: 'code' }],
+      fs,
+      warn,
+    });
+    const names = result.map(r => r.name).sort();
+    expect(names).toEqual(['code:poem', 'wiki:poem']);
+    expect(warnings).toEqual([]);
+  });
 
-	it("first-wins on intra-mount duplicates with a [prompts]-tagged warning", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/prompts/dup.md", cmdMd("first", "first body"));
-		fs.add("/mnt/wiki/.pi/prompts/keep/dup.md", cmdMd("second", "second body"));
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name).sort()).toEqual(["wiki:dup", "wiki:keep:dup"]);
-	});
+  it('first-wins on intra-mount duplicates with a [prompts]-tagged warning', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/prompts/dup.md', cmdMd('first', 'first body'));
+    fs.add('/mnt/wiki/.pi/prompts/keep/dup.md', cmdMd('second', 'second body'));
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name).sort()).toEqual(['wiki:dup', 'wiki:keep:dup']);
+  });
 
-	it("skips files with a non-conforming stem with a [prompts] warning", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/prompts/Bad-Name.md", cmdMd("x", "body"));
-		fs.add("/mnt/wiki/.pi/prompts/good.md", cmdMd("ok", "ok body"));
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:good"]);
-		const tagged = warnings.filter((w) => w.msg.startsWith("[prompts]"));
-		expect(tagged.some((w) => w.msg.includes("Bad-Name.md"))).toBe(true);
-	});
+  it('skips files with a non-conforming stem with a [prompts] warning', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/prompts/Bad-Name.md', cmdMd('x', 'body'));
+    fs.add('/mnt/wiki/.pi/prompts/good.md', cmdMd('ok', 'ok body'));
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:good']);
+    const tagged = warnings.filter(w => w.msg.startsWith('[prompts]'));
+    expect(tagged.some(w => w.msg.includes('Bad-Name.md'))).toBe(true);
+  });
 
-	it("skips files with malformed front-matter (tagged as [prompts])", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/prompts/broken.md", "---\nfoo: [a, b]\n---\nbody");
-		fs.add("/mnt/wiki/.pi/prompts/good.md", cmdMd("ok", "ok body"));
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:good"]);
-		const tagged = warnings.filter((w) => w.msg.startsWith("[prompts]"));
-		expect(tagged.some((w) => w.msg.includes("broken.md"))).toBe(true);
-	});
+  it('skips files with malformed front-matter (tagged as [prompts])', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/prompts/broken.md', '---\nfoo: [a, b]\n---\nbody');
+    fs.add('/mnt/wiki/.pi/prompts/good.md', cmdMd('ok', 'ok body'));
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:good']);
+    const tagged = warnings.filter(w => w.msg.startsWith('[prompts]'));
+    expect(tagged.some(w => w.msg.includes('broken.md'))).toBe(true);
+  });
 
-	it("threads argument-hint through to the def", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add(
-			"/mnt/wiki/.pi/prompts/with-hint.md",
-			["---", "description: Hinted", "argument-hint: <topic>", "---", "About $1"].join("\n"),
-		);
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result[0]?.argumentHint).toBe("<topic>");
-	});
+  it('threads argument-hint through to the def', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add(
+      '/mnt/wiki/.pi/prompts/with-hint.md',
+      ['---', 'description: Hinted', 'argument-hint: <topic>', '---', 'About $1'].join('\n')
+    );
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result[0]?.argumentHint).toBe('<topic>');
+  });
 
-	it("does not pick up files from .pi/commands/", async () => {
-		const fs = new FakeCommandsFs();
-		fs.add("/mnt/wiki/.pi/commands/cmd.md", cmdMd("a command", "cmd body"));
-		fs.add("/mnt/wiki/.pi/prompts/poem.md", cmdMd("a poem", "poem body"));
-		const result = await loadPromptsFromVolumes({ mounts: [{ mountName: "wiki" }], fs, warn });
-		expect(result.map((r) => r.name)).toEqual(["wiki:poem"]);
-	});
+  it('does not pick up files from .pi/commands/', async () => {
+    const fs = new FakeCommandsFs();
+    fs.add('/mnt/wiki/.pi/commands/cmd.md', cmdMd('a command', 'cmd body'));
+    fs.add('/mnt/wiki/.pi/prompts/poem.md', cmdMd('a poem', 'poem body'));
+    const result = await loadPromptsFromVolumes({ mounts: [{ mountName: 'wiki' }], fs, warn });
+    expect(result.map(r => r.name)).toEqual(['wiki:poem']);
+  });
 });

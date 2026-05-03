@@ -2,6 +2,21 @@
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/storage/session-store.ts`.
 
+> **ACP 0.21 migration delta (M1, M2, M5-deferred).**
+> - `Agent.listSessions` (M2) returns `SessionInfo[]` with
+>   Bodhi-extras (`turnCount`, `lastModelId`, `createdAt`) on
+>   `_meta.bodhi`. The legacy `bodhi/listSessions` ext-method has
+>   been deleted.
+> - `Agent.closeSession` (M1) does in-memory cleanup only;
+>   `_bodhi/sessions/delete` retained for the user-visible delete
+>   gesture, internally calling close path → `store.deleteSession`.
+> - `LoadSessionResponse._meta.bodhi.{title, mcpToggles}` (M1)
+>   carry the snapshot the host needs to rebuild picker label +
+>   toggle UI in a single round-trip.
+> - **`bodhi/getSession` collapse (M5) deferred.** Still live; the
+>   pre-load snapshot fetch remains for now. See
+>   `packages/web-acp/TECHDEBT.md` § "M5 deferred".
+
 ## Purpose
 
 The agent package defines the **shape types** and **interface

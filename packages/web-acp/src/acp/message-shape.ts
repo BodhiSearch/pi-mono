@@ -1,7 +1,30 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { isBuiltinName } from '@bodhiapp/web-acp-agent';
-import type { BodhiBuiltinTag } from '@/acp/index';
+import type { AnyBodhiBuiltinAction, BodhiBuiltinTag } from '@/acp/index';
 import type { McpConnectionMeta } from '@/mcp/types';
+
+export function parseMcpStateParams(
+  params: Record<string, unknown>
+): McpConnectionMeta | undefined {
+  const server = params.server;
+  const state = params.state;
+  if (typeof server !== 'string') return undefined;
+  if (
+    state !== 'disconnected' &&
+    state !== 'connecting' &&
+    state !== 'connected' &&
+    state !== 'error'
+  ) {
+    console.warn('[acp/message-shape] parseMcpStateParams: unknown mcp state value:', state);
+    return undefined;
+  }
+  const out: McpConnectionMeta = { server, state };
+  if (typeof params.error === 'string') out.error = params.error;
+  if (Array.isArray(params.tools) && params.tools.every(t => typeof t === 'string')) {
+    out.tools = params.tools as string[];
+  }
+  return out;
+}
 
 export function emptyAssistantMessage(): AgentMessage {
   return {
@@ -44,12 +67,7 @@ export function userMessage(text: string): AgentMessage {
   } as unknown as AgentMessage;
 }
 
-/**
- * Recognise an agent-handled built-in invocation in raw user input
- * (M4 phase B). Mirrors the worker's prefix rule (`/<name>` then
- * end-of-string or whitespace) so client-side bubble tagging stays
- * aligned with how the worker decides to dispatch the command.
- */
+/** Mirrors the worker's `/<name>` prefix rule so bubble tagging matches dispatch. */
 export function detectBuiltinTag(text: string): BodhiBuiltinTag | undefined {
   if (!text.startsWith('/')) return undefined;
   const rest = text.slice(1);
@@ -89,28 +107,19 @@ export function mapToolStatus(
   return undefined;
 }
 
-export function extractMcpMeta(meta: unknown): McpConnectionMeta | undefined {
-  if (!meta || typeof meta !== 'object') return undefined;
-  const bodhi = (meta as { bodhi?: unknown }).bodhi;
-  if (!bodhi || typeof bodhi !== 'object') return undefined;
-  const mcp = (bodhi as { mcp?: unknown }).mcp;
-  if (!mcp || typeof mcp !== 'object') return undefined;
-  const rec = mcp as Record<string, unknown>;
-  const server = rec.server;
-  const state = rec.state;
-  if (typeof server !== 'string') return undefined;
-  if (
-    state !== 'disconnected' &&
-    state !== 'connecting' &&
-    state !== 'connected' &&
-    state !== 'error'
-  ) {
-    return undefined;
+/** Returns `undefined` for malformed payloads so non-Bodhi agents can't crash `dispatchAction`. */
+export function parseBuiltinActionParams(
+  params: Record<string, unknown>
+): AnyBodhiBuiltinAction | undefined {
+  const action = (params as { action?: unknown }).action;
+  if (!action || typeof action !== 'object') return undefined;
+  const kind = (action as { kind?: unknown }).kind;
+  if (kind === 'copy') return action as AnyBodhiBuiltinAction;
+  if (kind === 'mcp-add' || kind === 'mcp-remove') {
+    const inner = (action as { params?: unknown }).params;
+    if (!inner || typeof inner !== 'object') return undefined;
+    if (typeof (inner as { url?: unknown }).url !== 'string') return undefined;
+    return action as AnyBodhiBuiltinAction;
   }
-  const out: McpConnectionMeta = { server, state };
-  if (typeof rec.error === 'string') out.error = rec.error;
-  if (Array.isArray(rec.tools) && rec.tools.every(t => typeof t === 'string')) {
-    out.tools = rec.tools as string[];
-  }
-  return out;
+  return undefined;
 }

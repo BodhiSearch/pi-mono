@@ -1,8 +1,7 @@
 /**
- * Re-export of the agent-package stub. The bridge is **deferred**
- * post-M2 — see `ai-docs/web-acp/milestones/deferred.md` for the
- * pre-execution classifier + allow-always persistence design that
- * re-enters at a future milestone kickoff.
+ * Re-export of the agent-package permission stub. The full bridge is
+ * deferred — see `ai-docs/web-acp/milestones/deferred.md` for the
+ * pre-execution classifier + allow-always persistence design.
  *
  * Until then the worker's `bash` tool runs commands as-is, so the
  * client never receives a `session/request_permission` request — but

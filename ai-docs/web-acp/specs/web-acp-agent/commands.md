@@ -2,6 +2,16 @@
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/agent/commands/`.
 
+> **ACP 0.21 migration delta (M6).** Built-in slash commands still
+> reply with a single `agent_message_chunk` carrying the muted-bubble
+> tag at `_meta.bodhi.builtin.command`. The optional `action`
+> (e.g. `{ kind: 'copy' }`, `{ kind: 'mcp-add', params }`) **no
+> longer rides on the chunk** — `tryHandleBuiltin` now emits
+> `extNotification("_bodhi/builtin/action", { sessionId, command,
+> action })` after the chunk so live action dispatch travels on a
+> dedicated side-channel. The persisted `'builtin'` store entry
+> still records the action for replay.
+
 ## Purpose
 
 The agent advertises a single merged list of slash commands

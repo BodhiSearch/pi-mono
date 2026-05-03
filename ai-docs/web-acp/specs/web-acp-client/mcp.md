@@ -2,6 +2,18 @@
 
 **Source of truth:** `packages/web-acp/src/mcp/`.
 
+> **ACP 0.21 migration delta (M6).** MCP lifecycle no longer arrives
+> as `_meta.bodhi.mcp` on empty `agent_message_chunk`
+> notifications. The agent emits
+> `extNotification("_bodhi/mcp/state", { sessionId, server, state,
+> error?, tools? })`. The host's `useAcpStreaming` registers an
+> `onExtNotification` listener (`AcpClient`) that parses the params
+> via `parseMcpStateParams` (`acp/message-shape.ts`) and dispatches
+> the reducer's new `'mcp-state'` action, which updates
+> `state.mcpStates` exactly the same way the legacy chunk-meta
+> path used to. `extractMcpMeta` and the early-return at the top
+> of `applySessionUpdate` have been removed.
+
 ## Purpose
 
 Browser-host MCP surface. The host:

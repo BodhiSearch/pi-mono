@@ -7,7 +7,7 @@ const GREET_TEMPLATE = [
   'description: Greet someone by name',
   'argument-hint: <name>',
   '---',
-  'Reply with exactly the following text and nothing else: BODHI-SLASH-OK $1',
+  'Please respond with the phrase: hello $1, how are you today',
 ].join('\n');
 
 const POEM_TEMPLATE = [
@@ -15,21 +15,21 @@ const POEM_TEMPLATE = [
   'description: Write a short poem',
   'argument-hint: <topic>',
   '---',
-  'Reply with exactly the following text and nothing else: BODHI-PROMPT-OK $1',
+  'Please respond with the phrase: roses are red, violets are blue, $1 is sweet too',
 ].join('\n');
 
 const CMD_DUP = [
   '---',
-  'description: command version (wins on conflict)',
+  'description: command version takes priority',
   '---',
-  'Reply with exactly the following text and nothing else: BODHI-CMD-WIN',
+  'Please respond with the phrase: a journey of a thousand miles begins with a single step',
 ].join('\n');
 
 const PROMPT_DUP = [
   '---',
-  'description: prompt version (loses on conflict)',
+  'description: prompt version is shadowed',
   '---',
-  'Reply with exactly the following text and nothing else: BODHI-PROMPT-LOSE',
+  'Please respond with the phrase: actions speak louder than words',
 ].join('\n');
 
 test.describe('tools and volumes', () => {
@@ -40,10 +40,13 @@ test.describe('tools and volumes', () => {
     auth,
     chat,
     messages,
+    sessions,
     volumes,
     features,
     picker,
   }) => {
+    let bashSessionId = '';
+
     await test.step('setup — install two seeded volumes, boot, authenticate, pick OpenAI model', async () => {
       await appReadyWithVolumes(
         { page, setup, status, auth, chat, volumes },
@@ -52,7 +55,7 @@ test.describe('tools and volumes', () => {
             name: 'wiki',
             description: 'knowledge base',
             files: {
-              '/marker.txt': 'BODHI-M2-SMOKE',
+              '/marker.txt': 'be the change you want to see in the world',
               '/.pi/commands/greet.md': GREET_TEMPLATE,
               '/.pi/prompts/poem.md': POEM_TEMPLATE,
               '/.pi/commands/dup.md': CMD_DUP,
@@ -90,7 +93,7 @@ test.describe('tools and volumes', () => {
       await chat.fillRaw('/wiki:greet alice');
       await chat.sendButton.click();
       const reply = messages.bubble(0, 'assistant');
-      await expect.soft(reply).toContainText('BODHI-SLASH-OK');
+      await expect.soft(reply).toContainText(/hello/i);
       await expect.soft(reply).toContainText('alice');
     });
 
@@ -105,7 +108,7 @@ test.describe('tools and volumes', () => {
       await chat.fillRaw('/wiki:poem cherry');
       await chat.sendButton.click();
       const reply = messages.bubble(0, 'assistant');
-      await expect.soft(reply).toContainText('BODHI-PROMPT-OK');
+      await expect.soft(reply).toContainText(/roses are red/i);
       await expect.soft(reply).toContainText('cherry');
     });
 
@@ -119,17 +122,50 @@ test.describe('tools and volumes', () => {
       await expect(chat.input).toHaveValue('/wiki:dup ');
       await chat.sendButton.click();
       const reply = messages.bubble(0, 'assistant');
-      await expect.soft(reply).toContainText('BODHI-CMD-WIN');
-      await expect.soft(reply).not.toContainText('BODHI-PROMPT-LOSE');
+      await expect.soft(reply).toContainText(/thousand miles/i);
+      await expect.soft(reply).not.toContainText(/actions speak/i);
     });
 
-    await test.step('bashEnabled OFF — no tool-call rendered for the next turn', async () => {
+    await test.step('bashEnabled OFF — no tool-call rendered for the next turn (anchor session id)', async () => {
       await chat.newChat();
       await chat.selectModel(FULL_MODEL_ID);
       await features.setState('bashEnabled', 'off');
+      await expect(features.panel).toHaveAttribute('data-test-state', '0');
       await chat.send('Reply with the single word "noop".');
       await chat.waitForAssistantTurn(0);
       await messages.expectNoToolCalls();
+      const ids = await sessions.listIds();
+      bashSessionId = ids[0] ?? '';
+      expect(bashSessionId).toBeTruthy();
+    });
+
+    await test.step('reload + re-pick session — bashEnabled toggle survives via LoadSessionResponse.configOptions', async () => {
+      await page.reload();
+      await appReloadReady({ page, setup, status });
+      await sessions.row(bashSessionId).waitFor();
+      await sessions.click(bashSessionId);
+      await features.expectState('bashEnabled', 'off');
+    });
+
+    let forceToolSessionId = '';
+
+    await test.step('forceToolCall ON — anchor session id', async () => {
+      await chat.newChat();
+      await chat.selectModel(FULL_MODEL_ID);
+      await features.setForceToolCallOn();
+      await chat.send('Reply with the single word "noop".');
+      await chat.waitForAssistantTurn(0);
+      const ids = await sessions.listIds();
+      forceToolSessionId = ids[0] ?? '';
+      expect(forceToolSessionId).toBeTruthy();
+    });
+
+    await test.step('reload + re-pick session — forceToolCall survives via LoadSessionResponse.configOptions', async () => {
+      await page.reload();
+      await appReloadReady({ page, setup, status });
+      await sessions.row(forceToolSessionId).waitFor();
+      await sessions.click(forceToolSessionId);
+      await features.expectState('forceToolCall', 'on');
     });
 
     await test.step('bashEnabled ON + forceToolCall — agent reads /mnt/wiki/marker.txt', async () => {
@@ -137,12 +173,13 @@ test.describe('tools and volumes', () => {
       await chat.selectModel(FULL_MODEL_ID);
       await features.setState('bashEnabled', 'on');
       await features.setForceToolCallOn();
+      await expect(features.panel).toHaveAttribute('data-test-state', '2');
       await chat.send(
         'Use the bash tool. Run `cat /mnt/wiki/marker.txt` and respond with the file contents.'
       );
       await messages.toolCalls().first().waitFor({ timeout: 60_000 });
       await messages.waitForToolCallCompleted();
-      await expect(messages.bubble(0, 'assistant')).toContainText('BODHI-M2-SMOKE');
+      await expect(messages.bubble(0, 'assistant')).toContainText(/be the change/i);
     });
 
     await test.step('bash error — missing file surfaces non-zero exit code', async () => {

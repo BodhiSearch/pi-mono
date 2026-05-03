@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { Dispatch } from 'react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { AnyBodhiBuiltinAction } from '@/acp/index';
-import { detectBuiltinTag, userMessage } from '@/acp/message-shape';
-import { ensureRuntime, getAuthPromise, getSession } from '@/acp/runtime';
-import type { StreamingAction, StreamingState } from '@/acp/streaming-reducer';
-import { getBuiltinTag, withBuiltinTag } from '@/lib/builtin-format';
+import {
+  BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD,
+  BODHI_MCP_STATE_NOTIFICATION_METHOD,
+  type AnyBodhiBuiltinAction,
+} from '@/acp/index';
+import {
+  detectBuiltinTag,
+  parseBuiltinActionParams,
+  parseMcpStateParams,
+  userMessage,
+} from '@/acp/message-shape';
+import { ensureRuntime, getAuthPromise, getModelUpdatePromise, getSession } from '@/acp/runtime';
+import type { AcpAction, StreamingState } from '@/acp/streaming-reducer';
+import { withBuiltinTag } from '@/lib/builtin-format';
 import { getErrorMessage } from '@/lib/utils';
 
 export interface UseAcpStreamingResult {
@@ -31,41 +40,56 @@ export function useAcpStreaming({
   setError,
 }: {
   state: StreamingState;
-  dispatch: Dispatch<StreamingAction>;
+  dispatch: Dispatch<AcpAction>;
   ensureSession: () => Promise<string>;
   refreshSessions: () => Promise<void>;
   dispatchAction: (action: AnyBodhiBuiltinAction, messages: AgentMessage[]) => Promise<void>;
+  /** Used only for the "no model selected" gate; the agent reads `SessionState.currentModelId`. */
   selectedModel: string;
   setError: (msg: string | null) => void;
 }): UseAcpStreamingResult {
-  // Refs that mirror reducer state for closure-safe reads inside
-  // `sendMessage`. The reducer's reduce-then-effect ordering means
-  // these are guaranteed fresh by the time the next user-driven
-  // turn fires.
-  const streamingMessageRef = useRef<AgentMessage | undefined>(undefined);
+  // Mirror reactive deps into refs so the extNotification listener below
+  // doesn't need to resubscribe on every render.
   const messagesRef = useRef<AgentMessage[]>([]);
-  useEffect(() => {
-    streamingMessageRef.current = state.streamingMessage;
-  }, [state.streamingMessage]);
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
-  // Route session/update notifications into the reducer.
+  const dispatchActionRef = useRef(dispatchAction);
+  useEffect(() => {
+    dispatchActionRef.current = dispatchAction;
+  }, [dispatchAction]);
+
+  // Single subscribe/unsubscribe pair for `session/update` + the `_bodhi/*`
+  // extNotification side-channel — avoids double-subscribe on dispatch identity churn.
   useEffect(() => {
     const runtime = ensureRuntime();
-    const unsub = runtime.client.onSessionUpdate(notification => {
+    const unsubSession = runtime.client.onSessionUpdate(notification => {
       dispatch({ type: 'session-update', notif: notification });
     });
-    return unsub;
+    const unsubExt = runtime.client.onExtNotification((method, params) => {
+      if (method === BODHI_MCP_STATE_NOTIFICATION_METHOD) {
+        const meta = parseMcpStateParams(params);
+        if (meta) dispatch({ type: 'mcp-state', meta });
+        return;
+      }
+      if (method === BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD) {
+        const action = parseBuiltinActionParams(params);
+        if (action) void dispatchActionRef.current(action, messagesRef.current);
+        return;
+      }
+      console.warn('[acp/streaming] unhandled extNotification:', method);
+    });
+    return () => {
+      unsubSession();
+      unsubExt();
+    };
   }, [dispatch]);
 
   const sendMessage = useCallback(
     async (prompt: string) => {
       const builtinTag = detectBuiltinTag(prompt);
-      // Built-ins (M4 phase B) bypass the LLM entirely on the worker
-      // side, so the "no model selected" gate doesn't apply to them —
-      // /help, /version, /session, /copy must work without a model.
+      // Built-ins (/help, /version, /session, /copy) bypass the LLM on the worker, so the model-selected gate doesn't apply.
       if (!builtinTag && !selectedModel) {
         setError('Please select a model first');
         return;
@@ -73,7 +97,6 @@ export function useAcpStreaming({
       const runtime = ensureRuntime();
       setError(null);
 
-      // Wait for auth to land before sending the first prompt.
       const authPromise = getAuthPromise();
       if (authPromise) {
         try {
@@ -87,28 +110,27 @@ export function useAcpStreaming({
       const localUserMsg = builtinTag
         ? withBuiltinTag(userMessage(prompt), builtinTag)
         : userMessage(prompt);
-      dispatch({ type: 'turn-start', userMessage: localUserMsg });
 
       try {
         const sessionId = await ensureSession();
-        const response = await runtime.client.prompt(sessionId, prompt, selectedModel);
-        const finalMsg = streamingMessageRef.current;
+        // Await any in-flight `unstable_setSessionModel` BEFORE rendering the user bubble,
+        // so a model-update failure surfaces as an inline error instead of an orphan user message.
+        const modelUpdate = getModelUpdatePromise();
+        if (modelUpdate) {
+          try {
+            await modelUpdate;
+          } catch (err) {
+            setError(getErrorMessage(err, 'Failed to set model'));
+            return;
+          }
+        }
+        dispatch({ type: 'turn-start', userMessage: localUserMsg });
+        const response = await runtime.client.prompt(sessionId, prompt);
+        // Reducer folds `streamingMessage` into `messages` synchronously on `turn-end`; don't read it from a ref here.
         dispatch({
           type: 'turn-end',
           stopReason: response.stopReason ?? 'end_turn',
-          finalMessage: finalMsg,
         });
-        if (finalMsg && response.stopReason !== 'cancelled') {
-          // M4 phase B: dispatch any client-side action attached to a
-          // built-in's reply. Snapshot `messagesRef.current` here (one
-          // tick before the appended built-in pair lands) and let the
-          // markdown renderer drop built-in entries — that gives /copy
-          // the LLM-only conversation.
-          const replyTag = getBuiltinTag(finalMsg);
-          if (replyTag?.action) {
-            void dispatchAction(replyTag.action, messagesRef.current);
-          }
-        }
         void refreshSessions();
       } catch (err) {
         console.error('session/prompt failed:', err);
@@ -116,7 +138,7 @@ export function useAcpStreaming({
         dispatch({ type: 'turn-end', stopReason: 'error' });
       }
     },
-    [selectedModel, ensureSession, refreshSessions, dispatchAction, setError, dispatch]
+    [selectedModel, ensureSession, refreshSessions, setError, dispatch]
   );
 
   const stop = useCallback(() => {

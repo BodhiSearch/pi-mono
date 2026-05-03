@@ -42,38 +42,26 @@ metadata in IndexedDB on every reply, also bump the schema version
 or write a migration so historical `/session` reply rows continue
 to render with the muted-builtin badge.
 
-## MCP per-server toggle off→on after `/mcp add` re-auth doesn't disconnect the pool
+## ~~MCP per-server toggle off→on after `/mcp add` re-auth doesn't disconnect the pool~~ — fixed (Phase 7, reviews-2)
 
-**What.** When the user adds an MCP server via the `/mcp add <url>`
-chat command (which triggers OAuth re-auth), the `/mcp add` flow
-leaves multiple ACP sessions referencing the same worker MCP pool
-entry — at minimum the session that handled the `/mcp` and `/mcp add`
-built-ins, plus any session auto-created by the
-`currentSessionId == null` useEffect during re-auth. Toggling the
-server **off** in the active session issues `session/load` with
-`mcpServers=[]` for *that one session*, but the worker pool's
-refcount is still ≥1 from the other sessions, so the row stays in
-the `connected` state.
+Resolved by the explicit-release path in
+[`packages/web-acp-agent/src/acp/engine/ext-methods/mcp-toggles-set.ts`](../web-acp-agent/src/acp/engine/ext-methods/mcp-toggles-set.ts):
+when a server-level toggle flips to `false`, the handler now calls
+`McpConnectionPool.evictBySlug(serverSlug, deriveSlugFromUrl)`,
+which drops every pool entry whose URL slugifies to that slug
+regardless of refcount. Forgotten sessions from the `/mcp add`
+re-auth lineage no longer keep the connection alive.
 
-**Where.** Worker pool refcounting around `setMcpToggle` →
-`session/load`. Test surface that surfaces the issue: previously
-covered by `mcp-toggles.spec.ts`, removed in the e2e Phase 2
-consolidation. The new `mcp.spec.ts` documents the gap and skips
-the toggle-cycle assertion.
+**Trade-off (documented).** Other live sessions sharing the same
+pool entry will lose their connection until they issue a fresh
+`acquire` (typically the next `session/load`). This is acceptable
+for the same reason the original review-2 plan recommends option
+(a) over option (b): lower invasiveness and no session-lineage
+rewrite, at the cost of cross-session connection coupling on
+toggle-off. If/when sessions need true per-session pool isolation,
+revisit.
 
-**Why it matters.** A user who adds an MCP via the chat command
-and then tries to disable it for a single session can't — the toggle
-appears to do nothing. The old `mcp-toggles.spec.ts` only worked
-because `installRequestedMcps` seeded the requested-MCPs IDB list
-*before* login, so the test session was the sole reference holder.
-
-**Fix sketch.** Either (a) make `setMcpToggle(server, false)` issue
-an explicit pool-release on the worker side independent of session
-refcount, or (b) make the `/mcp add` re-auth path land on a single
-canonical session instead of fragmenting across the pre-re-auth
-session + auto-create + the in-flight built-in.
-
-## MCP per-tool toggle does not round-trip across reload after `/mcp add`
+## MCP per-tool toggle does not round-trip across reload after `/mcp add` (deferred — Phase 7 split)
 
 **What.** Setting a per-tool toggle (e.g. `get-sum` off, `echo` on)
 on a session whose MCP server was added via `/mcp add` and then
@@ -94,7 +82,167 @@ survive reload through the `/mcp add` flow, the affordance is
 unreliable for any user who configured MCPs via the chat command
 rather than via pre-seeded environment.
 
+**Phase 7 status.** Per the reviews-2 plan stop-condition
+("If Phase 7 cannot be fixed cleanly within reasonable diff, ship
+the explicit-release path only and split the per-tool round-trip
+into a follow-up branch"), the per-tool round-trip is deferred. The
+Dexie store *does* persist the per-tool patch on every
+`_bodhi/mcp/toggles/set` (verified in
+`mcp-toggle-store.ts:setTool` — `db.mcpToggles.put(next)` with the
+new tool map). The remaining bug is on the load side: the reloaded
+session row whose lineage came from `/mcp add` does not surface
+those toggles back to the host. Reproducing it requires the live
+OAuth re-auth flow, which the e2e suite covers via
+`tools-and-volumes.spec.ts` for the bash toggle but not for MCP
+per-tool toggles.
+
 **Fix sketch.** Audit `getSession`/`loadSession` snapshot serialisation
 on the worker side for the `/mcp add` lineage of sessions; specifically
-verify the `mcpToggles` field in the snapshot is being persisted at
-the moment of `_bodhi/mcp/toggles/set` (not just held in memory).
+verify the `mcpToggles` field on the LOADED session matches what the
+store returns, and that the host's `setMcpToggles(toggles)` call in
+`useAcpSession.loadSession` actually sees the per-tool patch (not
+just the server-level patch).
+
+## `Agent.listSessions` returns the full list (no pagination)
+
+**What.** `agent-client-protocol` `session-list.mdx` documents the
+standard `listSessions` method as supporting `cursor` + `nextCursor`
+pagination. Today our agent's `listSessions` ignores `cursor` from
+the request and returns the full set in a single response; the
+host's `client.listSessions` doesn't pass a cursor either. The
+agent advertises `sessionCapabilities.list = {}` (a plain capability
+object — no field that asserts pagination) so an external ACP
+client SHOULD treat us as "supports list, returns full set in one
+shot". This is option (b) from agent-review **A6**.
+
+**Where.**
+- `packages/web-acp-agent/src/acp/agent-adapter.ts` — `listSessions`
+  ignores `params.cursor` / does not return `nextCursor`.
+- `packages/web-acp-agent/src/acp/agent-adapter.ts` — `initialize`
+  sets `agentCapabilities.sessionCapabilities.list = {}` (no
+  pagination flag is added to that object).
+- `packages/web-acp/src/acp/client.ts` — `listSessions` calls
+  `this.#conn.listSessions({})` without a cursor.
+
+**Why it matters.** Today the host shows every persisted session in
+one picker; the per-tab Dexie row count is small enough that
+unpaginated transit is fine. If a future product wants to page the
+picker (or if an external ACP client expects pagination semantics
+because the spec advertises them), we'll need to plumb opaque
+cursors through `SessionStore.listSummaries` and
+`agent-adapter.listSessions`.
+
+**Fix sketch.** When pagination is required, extend
+`SessionStore.listSummaries(opts?: { cursor?: string; limit?: number })`,
+have the agent decode the cursor (offset or last-id token) and
+return `nextCursor` when there are more rows. Host's
+`AcpClient.listSessions` grows a `cursor?` parameter and
+`SessionInfoView` consumers either page or accumulate.
+
+## M5 deferred: `bodhi/getSession` round-trip not yet collapsed
+
+**What.** The plan at
+`ai-docs/plans/reviewed-the-acp-compliance-report-peaceful-journal.md`
+called for M5 to drop the pre-`session/load` `bodhi/getSession`
+round-trip and have the host reducer fold messages from the
+notification re-emit stream during `loadSession`. M5 was deferred
+after analysis showed the proposed approach is incomplete.
+
+**Where.**
+- `packages/web-acp-agent/src/acp/agent-adapter.ts:loadSession` —
+  re-emits only `kind === 'notification'` entries via
+  `sendRawNotification`. `'turn'` and `'builtin'` entries are not
+  re-emitted; they are consulted only for inline-runtime restore.
+- `packages/web-acp-agent/src/acp/engine/ext-methods/get-session.ts`
+  — still serves `bodhi/getSession`, which builds the rendered
+  transcript from `'turn'` (cumulative `finalMessages`) and
+  `'builtin'` (synthesised user+assistant pair) entries.
+- `packages/web-acp/src/hooks/useAcpSession.ts:loadSession` —
+  still issues a pre-load `runtime.client.getSession(sessionId)`
+  to fetch messages, then dispatches `'load-end'` with that array.
+- `packages/web-acp/src/acp/streaming-reducer.ts` — the
+  `state.isReplaying` guard still suppresses chunks during
+  replay; the assumption is that the snapshot is the source of
+  truth for the rendered transcript.
+
+**Why it matters.** The notification stream alone cannot
+reconstruct the rendered transcript: user message text rides on
+the agent-side `prompt` request body (not a notification) and is
+only persisted in the `'turn'` entry, while built-in slash
+commands persist as `'builtin'` entries with no corresponding
+notification. A reducer that folded only `'notification'` payloads
+during replay would render assistant chunks + tool calls but
+silently drop user messages and built-in pairs. The cleaner
+alternative is to ride the rendered messages on
+`LoadSessionResponse._meta.bodhi.messages` (alongside the
+already-present `title` and `mcpToggles`), which collapses the
+round-trip in one envelope without inventing replay-mode reducer
+state. Either path is fine — neither is shipped.
+
+**Fix sketch.** Two viable shapes:
+
+1. **Envelope ride (simplest).** Add `messages?: unknown[]` to
+   `BodhiLoadSessionMeta` in
+   `packages/web-acp-agent/src/wire/index.ts:213`. In the agent's
+   `loadSession`, build the same `messages[]` that `getSession`
+   builds today and stamp it on `_meta.bodhi.messages`. In the
+   host's `useAcpSession.loadSession`, read that field instead of
+   issuing `client.getSession(...)`. Drop `BODHI_GET_SESSION_METHOD`
+   + the `get-session.ts` ext-method handler + `client.getSession`.
+   Reducer untouched.
+
+2. **Replay-folding reducer (closer to original plan).** Have the
+   agent's replay re-emit synthetic `user_message_chunk`
+   notifications for every `'turn'` entry (one chunk per user
+   message text) and for every `'builtin'` entry (user + assistant
+   pair). The reducer learns a `replayBuffer` slice that
+   accumulates folded chunks during replay and flushes into
+   `state.messages` on `'load-end'`. More invasive and risks
+   ordering bugs, but keeps the reducer's "single source of
+   truth = notifications" property.
+
+## model-fallback when `lastModelId` disappears — no e2e harness
+
+**What.** The agent's `loadSession` calls
+`#resolveSeededModelId(models, row.lastModelId)` and falls back to
+`models[0].id` when the stored `lastModelId` is no longer in the
+catalog (e.g. upstream renamed or removed the model). The host then
+runs `hydrateFromSessionResponse(...)` and the picker reflects the
+fallback. Reachable in production but not exercised by any e2e.
+
+**Where.**
+- `packages/web-acp-agent/src/acp/agent-adapter.ts` — `loadSession`
+  call site + the `#resolveSeededModelId` helper.
+- `packages/web-acp/src/hooks/useAcpModels.ts` —
+  `hydrateFromSessionResponse`.
+- `packages/web-acp/src/hooks/useAcpSession.ts:loadSession` — call
+  site that funnels the agent response into the host hook.
+
+**Why it matters.** Real production scenario when an upstream
+provider renames or removes a model the user's last session was
+bound to. A regression that drops the fallback would surface as
+"no model selected" errors on every load of the affected session.
+Agent-side unit coverage of `#resolveSeededModelId` exists; the
+gap is purely the host-rendering side.
+
+**Why no e2e today.** Two harness-shaped paths, neither cheap:
+
+1. **IDB seed.** Pre-populate Dexie with a session whose
+   `lastModelId` is not in the live catalog. Requires
+   `page.evaluate` writes which violates the suite's blackbox
+   guardrail (no internal-state pokes from the test runner).
+2. **Catalog-mutation harness.** Stand up a route stub or
+   env-driven `LlmProvider` mock that omits a model the agent
+   previously persisted. Several days of fixture work to extend
+   `tests/global-setup.ts` for catalog mutation between two
+   navigations of the same browser context.
+
+**Manual recipe (regression trap).** DevTools → Application →
+IndexedDB → `bodhi-acp-sessions` → edit a row's `lastModelId` to
+a string the catalog doesn't contain → reload → click the row →
+verify the picker shows the catalog's first model and a follow-up
+prompt succeeds.
+
+**Fix sketch.** Pick path (2) above when there is appetite for a
+catalog-mutation harness. Until then, the manual recipe + the
+agent-side unit test are the safety net.

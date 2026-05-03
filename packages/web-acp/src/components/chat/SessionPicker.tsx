@@ -1,21 +1,20 @@
 import { MessageSquare, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { BodhiSessionSummary } from '@/acp/index';
+import type { SessionInfoView } from '@/acp/index';
 
 interface SessionPickerProps {
-  sessions: BodhiSessionSummary[];
+  sessions: SessionInfoView[];
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
 }
 
 /**
- * Left-rail picker over past ACP sessions surfaced by
- * `bodhi/listSessions`. Each row carries a hover-revealed delete
- * affordance that flows through `_bodhi/sessions/delete` (no
- * confirmation by design — see the M3 follow-up plan). Selecting a
- * row is the parent's `onSelect`; deleting stops propagation so the
- * row click doesn't fire alongside.
+ * Left-rail picker over past ACP sessions surfaced by `Agent.listSessions`.
+ * Each row carries a hover-revealed delete affordance that flows
+ * through `_bodhi/sessions/delete` (no confirmation by design).
+ * Selecting a row is the parent's `onSelect`; deleting stops
+ * propagation so the row click doesn't fire alongside.
  */
 export default function SessionPicker({
   sessions,

@@ -1,18 +1,8 @@
-import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
-import type {
-  BodhiMcpInstanceDescriptor,
-  BodhiModelDescriptor,
-  BodhiSessionMeta,
-} from '@/acp/index';
-import type { BodhiModelInfo } from '@/lib/bodhi-models';
+import type { BodhiMcpInstanceDescriptor, BodhiSessionMeta } from '@/acp/index';
 import type { McpInstanceView } from '@/mcp/types';
 
 export function authKeyOf(token: string, baseUrl: string): string {
   return `${baseUrl}::${token}`;
-}
-
-export function toBodhiModelInfo(model: BodhiModelDescriptor): BodhiModelInfo {
-  return { id: model.id, apiFormat: model.apiFormat as ApiFormat };
 }
 
 /**

@@ -41,7 +41,7 @@ export const BODHI_SERVER_PORT = 51135;
 export const BODHI_DEFAULT_PORT = 1135;
 export const BODHI_SERVER_URL = `http://localhost:${BODHI_SERVER_PORT}`;
 export const API_MODEL_PREFIX = 'oai/';
-export const API_MODEL_NAME = 'gpt-4.1-nano';
+export const API_MODEL_NAME = 'gpt-5.4-mini';
 export const FULL_MODEL_ID = `${API_MODEL_PREFIX}${API_MODEL_NAME}`;
 
 export const ANTHROPIC_API_MODEL_PREFIX = 'anthropic/';

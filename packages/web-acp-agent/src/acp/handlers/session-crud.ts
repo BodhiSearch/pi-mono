@@ -1,0 +1,233 @@
+import type {
+  CancelNotification,
+  CloseSessionRequest,
+  CloseSessionResponse,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
+  NewSessionRequest,
+  NewSessionResponse,
+  SessionInfo,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
+  SetSessionModelRequest,
+  SetSessionModelResponse,
+} from '@agentclientprotocol/sdk';
+import type { AgentMessage } from '@mariozechner/pi-agent-core';
+import { walkEntries } from '../engine/replay';
+import { type BodhiLoadSessionMeta, type BodhiSessionInfoMeta } from '../../wire';
+import { buildFeatureConfigOptions, configIdToFeatureKey } from '../feature-config';
+import { extractSessionMeta, filterHttpServers, toWireMcpToggles } from '../wire-utils';
+import {
+  type AcpAdapterContext,
+  buildModelState,
+  resolveSeededModelId,
+  tryEnsureModels,
+} from './adapter-context';
+
+export async function handleNewSession(
+  ctx: AcpAdapterContext,
+  params: NewSessionRequest
+): Promise<NewSessionResponse> {
+  const sessionId = `bodhi-${crypto.randomUUID()}`;
+  const mcpServers = filterHttpServers(params.mcpServers ?? []);
+  const sessionMeta = extractSessionMeta(params._meta);
+  ctx.runtime.setSession(sessionId, {
+    id: sessionId,
+    mcpServers,
+    requestedMcpUrls: sessionMeta.requestedMcpUrls ?? [],
+    mcpInstances: sessionMeta.mcpInstances ?? [],
+    currentModelId: null,
+  });
+  if (ctx.services.store) {
+    await ctx.services.store.createSession(sessionId);
+  }
+  ctx.services.inline.clearMessages();
+  ctx.runtime.setActiveInlineSessionId(sessionId);
+  await ctx.runtime.acquireMcpConnections(sessionId, mcpServers);
+  await ctx.runtime.refreshAvailableCommands(sessionId);
+
+  const models = await tryEnsureModels(ctx);
+  const defaultModelId = models[0]?.id ?? null;
+  ctx.runtime.setSessionModel(sessionId, defaultModelId);
+
+  const response: NewSessionResponse = { sessionId };
+  const modelState = buildModelState(models, defaultModelId);
+  if (modelState) response.models = modelState;
+  const featureSnapshot = await ctx.runtime.readFeatures(sessionId);
+  response.configOptions = buildFeatureConfigOptions(featureSnapshot, ctx.isDev);
+  return response;
+}
+
+export async function handleLoadSession(
+  ctx: AcpAdapterContext,
+  params: LoadSessionRequest
+): Promise<LoadSessionResponse> {
+  const store = ctx.services.store;
+  if (!store) {
+    throw new Error('session/load: server has no session store configured');
+  }
+  const row = await store.getSession(params.sessionId);
+  if (!row) {
+    throw new Error(`session/load: unknown session '${params.sessionId}'`);
+  }
+  const mcpServers = filterHttpServers(params.mcpServers ?? []);
+  const sessionMeta = extractSessionMeta(params._meta);
+  const existing = ctx.runtime.getSession(params.sessionId);
+  if (existing) {
+    // Release exactly the previously-held configs so the pool can re-key under new headers
+    // without dropping servers the caller wants to keep.
+    await ctx.runtime.releaseMcpConnections(params.sessionId, existing.mcpServers);
+  }
+  ctx.runtime.setSession(params.sessionId, {
+    id: params.sessionId,
+    mcpServers,
+    requestedMcpUrls: sessionMeta.requestedMcpUrls ?? [],
+    mcpInstances: sessionMeta.mcpInstances ?? [],
+    currentModelId: row.lastModelId,
+  });
+
+  const entries = await store.readEntries(params.sessionId);
+  let lastTurnMessages: AgentMessage[] | undefined;
+  // TODO(web-acp TECHDEBT): `walkEntries` replays notifications + turns only;
+  // built-in rows are merged client-side from `bodhi/getSession`. Fold that
+  // transcript into loadSession replay (or walk `builtin` entries here) to
+  // drop the extra round-trip — see packages/web-acp/TECHDEBT.md.
+  await walkEntries(entries, {
+    notification: async payload => {
+      // sendRawNotification bypasses persistence — store already has this row.
+      await ctx.runtime.sendRawNotification(payload);
+    },
+    turn: payload => {
+      if (Array.isArray(payload.finalMessages)) {
+        lastTurnMessages = payload.finalMessages;
+      }
+    },
+  });
+  if (lastTurnMessages) {
+    ctx.services.inline.restoreMessages(lastTurnMessages);
+  } else {
+    ctx.services.inline.clearMessages();
+  }
+  ctx.runtime.setActiveInlineSessionId(params.sessionId);
+  await ctx.runtime.acquireMcpConnections(params.sessionId, mcpServers);
+  await ctx.runtime.refreshAvailableCommands(params.sessionId);
+
+  const models = await tryEnsureModels(ctx);
+  const seededModelId = resolveSeededModelId(models, row.lastModelId);
+  ctx.runtime.setSessionModel(params.sessionId, seededModelId);
+
+  const response: LoadSessionResponse = {};
+  const modelState = buildModelState(models, seededModelId);
+  if (modelState) response.models = modelState;
+  const featureSnapshot = await ctx.runtime.readFeatures(params.sessionId);
+  response.configOptions = buildFeatureConfigOptions(featureSnapshot, ctx.isDev);
+  const toggles = await ctx.runtime.readMcpToggles(params.sessionId);
+  const meta: BodhiLoadSessionMeta = {
+    title: row.title,
+    mcpToggles: toWireMcpToggles(toggles),
+  };
+  response._meta = { bodhi: meta };
+  return response;
+}
+
+export async function handleListSessions(
+  ctx: AcpAdapterContext,
+  _params: ListSessionsRequest
+): Promise<ListSessionsResponse> {
+  const store = ctx.services.store;
+  if (!store) {
+    throw new Error('session/list: server has no session store configured');
+  }
+  // Unpaginated — `sessionCapabilities.list = {}` does not advertise cursor support.
+  const summaries = await store.listSummaries();
+  const sessions: SessionInfo[] = summaries.map(row => {
+    const meta: BodhiSessionInfoMeta = {
+      turnCount: row.turnCount,
+      lastModelId: row.lastModelId,
+      createdAt: row.createdAt,
+    };
+    return {
+      sessionId: row.id,
+      cwd: '/',
+      title: row.title,
+      updatedAt: new Date(row.updatedAt).toISOString(),
+      _meta: { bodhi: meta },
+    };
+  });
+  return { sessions };
+}
+
+export async function handleCloseSession(
+  ctx: AcpAdapterContext,
+  params: CloseSessionRequest
+): Promise<CloseSessionResponse> {
+  // Driver is shared across sessions; abort only when active turn matches this sessionId.
+  await ctx.runtime.tearDownSession(params.sessionId, {
+    persistRow: true,
+    abortPromptIfActive: id => ctx.driver.abortIfActive(id),
+  });
+  return {};
+}
+
+export async function handleSetSessionModel(
+  ctx: AcpAdapterContext,
+  params: SetSessionModelRequest
+): Promise<SetSessionModelResponse> {
+  const session = ctx.runtime.getSession(params.sessionId);
+  if (!session) {
+    throw new Error(`unstable_setSessionModel: unknown session '${params.sessionId}'`);
+  }
+  const models = await tryEnsureModels(ctx);
+  const match = models.find(m => m.id === params.modelId);
+  if (!match) {
+    throw new Error(`unstable_setSessionModel: unknown model id '${params.modelId}'`);
+  }
+  ctx.runtime.setSessionModel(params.sessionId, params.modelId);
+  return {};
+}
+
+export async function handleSetSessionConfigOption(
+  ctx: AcpAdapterContext,
+  params: SetSessionConfigOptionRequest
+): Promise<SetSessionConfigOptionResponse> {
+  const featureKey = configIdToFeatureKey(params.configId);
+  if (!featureKey) {
+    throw new Error(`setSessionConfigOption: unknown configId '${params.configId}'`);
+  }
+  if (featureKey === 'forceToolCall' && !ctx.isDev) {
+    const err = new Error('forceToolCall is DEV-only');
+    (err as unknown as { code: number }).code = -32004;
+    throw err;
+  }
+  if (!ctx.services.features) {
+    throw new Error('setSessionConfigOption: feature store unavailable');
+  }
+  // Accept stable-schema 'on'/'off' and legacy boolean from older clients.
+  const value = params.value;
+  let nextBool: boolean;
+  if (typeof value === 'boolean') {
+    nextBool = value;
+  } else if (value === 'on') {
+    nextBool = true;
+  } else if (value === 'off') {
+    nextBool = false;
+  } else {
+    throw new Error(
+      `setSessionConfigOption: configId '${params.configId}' value must be 'on' | 'off' (or legacy boolean)`
+    );
+  }
+  const next = await ctx.services.features.set(params.sessionId, featureKey, nextBool);
+  const options = buildFeatureConfigOptions(next, ctx.isDev);
+  await ctx.runtime.emitConfigOptionUpdate(params.sessionId, options);
+  return { configOptions: options };
+}
+
+export async function handleCancel(
+  ctx: AcpAdapterContext,
+  params: CancelNotification
+): Promise<void> {
+  // Driver is single-instance for the worker; abort only when active turn matches.
+  ctx.driver.abortIfActive(params.sessionId);
+}

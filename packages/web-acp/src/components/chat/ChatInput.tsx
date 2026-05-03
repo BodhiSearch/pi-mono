@@ -1,14 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { useBodhi } from '@bodhiapp/bodhi-js-react';
-import { Plus, RefreshCw, ArrowUp, Square } from 'lucide-react';
+import { Plus, ArrowUp, Square } from 'lucide-react';
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ModelCombobox from './ModelCombobox';
 import CommandPicker from './CommandPicker';
 import type { BodhiModelInfo } from '@/lib/bodhi-models';
-import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => Promise<void>;
@@ -16,10 +15,9 @@ interface ChatInputProps {
   onStop: () => void;
   isStreaming: boolean;
   selectedModel: string;
-  setSelectedModel: (id: string, fmt: ApiFormat) => void;
+  setSelectedModel: (id: string) => void;
   models: BodhiModelInfo[];
-  isLoadingModels: boolean;
-  onRefreshModels: () => void;
+  error: string | null;
   availableCommands: readonly AvailableCommand[];
 }
 
@@ -31,8 +29,7 @@ export default function ChatInput({
   selectedModel,
   setSelectedModel,
   models,
-  isLoadingModels,
-  onRefreshModels,
+  error,
   availableCommands,
 }: ChatInputProps) {
   const { isReady, isAuthenticated } = useBodhi();
@@ -138,18 +135,8 @@ export default function ChatInput({
                 selected={selectedModel}
                 onSelect={setSelectedModel}
                 disabled={isDisabled}
+                error={error}
               />
-
-              <Button
-                data-testid="btn-refresh-models"
-                onClick={onRefreshModels}
-                variant="ghost"
-                size="icon"
-                title="Refresh models"
-                disabled={isLoadingModels}
-              >
-                <RefreshCw className={isLoadingModels ? 'animate-spin' : ''} size={18} />
-              </Button>
             </div>
 
             {isStreaming ? (

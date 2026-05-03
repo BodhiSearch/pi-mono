@@ -13,11 +13,6 @@ export default function MessageBubble({ message, turn }: MessageBubbleProps) {
   const builtinTag = getBuiltinTag(message);
   const isBuiltin = Boolean(builtinTag);
 
-  // M4 phase B: built-in turns (`/help`, `/version`, …) render
-  // muted with a "not sent to LLM" badge so the user can tell them
-  // apart from real LLM-driven turns. The marker survives the
-  // `bodhi/getSession` reload path so the distinction holds across
-  // refreshes.
   const teststate = isBuiltin ? 'builtin' : hasToolCalls ? 'has-tool-calls' : undefined;
   const userClass = isBuiltin
     ? 'bg-blue-100 text-blue-900 border border-blue-200'

@@ -1,6 +1,9 @@
-import type { ApiFormat } from '@bodhiapp/bodhi-js-react/api';
-
+/**
+ * Lightweight host-side model descriptor. Sourced from
+ * `SessionModelState.availableModels` on `NewSessionResponse` /
+ * `LoadSessionResponse`. Display-only — the agent resolves the
+ * concrete model + provider from `currentModelId` at prompt time.
+ */
 export interface BodhiModelInfo {
   id: string;
-  apiFormat: ApiFormat;
 }

@@ -3,7 +3,7 @@ import type { MutableRefObject } from 'react';
 import { toast } from 'sonner';
 import { LoginOptionsBuilder, useBodhi } from '@bodhiapp/bodhi-js-react';
 import type { McpServerHttp } from '@agentclientprotocol/sdk';
-import type { AnyBodhiBuiltinAction } from '@/acp/index';
+import { EMPTY_MCP_TOGGLES, type AnyBodhiBuiltinAction } from '@/acp/index';
 import { dispatchBuiltinAction } from '@/acp/builtin-dispatch';
 import { ensureRuntime, getSession } from '@/acp/runtime';
 import { composeSessionMeta } from '@/acp/session-meta';
@@ -13,11 +13,6 @@ import { getServerUrlOrThrow } from '@/lib/agent-model';
 import { composeMcpServers, type McpToggleSnapshot } from '@/mcp/compose-mcp-servers';
 import { loadRequestedMcps } from '@/mcp/requested-mcps-store';
 import type { McpInstanceView } from '@/mcp/types';
-
-const EMPTY_MCP_TOGGLES: McpToggleSnapshot = Object.freeze({
-  servers: Object.freeze({}) as Record<string, boolean>,
-  tools: Object.freeze({}) as Record<string, Record<string, boolean>>,
-}) as McpToggleSnapshot;
 
 export interface UseAcpMcpResult {
   mcpToggles: McpToggleSnapshot;

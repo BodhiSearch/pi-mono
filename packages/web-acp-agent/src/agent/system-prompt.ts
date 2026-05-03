@@ -7,16 +7,16 @@
  * to hallucinate a `/mnt` filesystem for the LLM when the user hasn't
  * given us one.
  */
-import type { VolumeSnapshot } from "./volume-registry";
+import type { VolumeSnapshot } from './volume-registry';
 
 export function composeSystemPrompt(volumes: VolumeSnapshot[]): string {
-	if (volumes.length === 0) return "";
-	const lines: string[] = [];
-	lines.push("You have access to the following volumes:");
-	for (const volume of volumes) {
-		const path = `/mnt/${volume.mountName}`;
-		lines.push(volume.description ? `- ${path} — ${volume.description}` : `- ${path}`);
-	}
-	lines.push("Use the bash tool to explore them.");
-	return lines.join("\n");
+  if (volumes.length === 0) return '';
+  const lines: string[] = [];
+  lines.push('You have access to the following volumes:');
+  for (const volume of volumes) {
+    const path = `/mnt/${volume.mountName}`;
+    lines.push(volume.description ? `- ${path} — ${volume.description}` : `- ${path}`);
+  }
+  lines.push('Use the bash tool to explore them.');
+  return lines.join('\n');
 }

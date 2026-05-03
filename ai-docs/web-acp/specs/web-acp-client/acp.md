@@ -2,6 +2,31 @@
 
 **Source of truth:** `packages/web-acp/src/acp/`.
 
+> **ACP 0.21 migration delta (M1–M7).**
+> - `AcpClient.listSessions()` calls SDK's `listSessions({})` (M2);
+>   `setSessionConfigOption(sessionId, configId, value)` calls SDK's
+>   stable method with `type: 'boolean'` (M3);
+>   `setSessionModel(sessionId, modelId)` wraps unstable
+>   `unstable_setSessionModel` (M4); `prompt(sessionId, text)` no
+>   longer takes a `modelId` arg (M4); deleted methods:
+>   `listModels`, `listFeatures`, `setFeature`.
+> - `AcpClient` gained `onExtNotification`/`dispatchExtNotification`
+>   listener registry (M6). The `Client` impl in `acp/runtime.ts`
+>   now exposes `extNotification(method, params)` that forwards to
+>   the registry. Subscribed handlers: `_bodhi/mcp/state` →
+>   reducer's `'mcp-state'` action; `_bodhi/builtin/action` →
+>   existing `dispatchAction` path.
+> - The reducer (`acp/streaming-reducer.ts`) gained `configOptions`
+>   slice + `'config-options-init'` action (M3) + `'mcp-state'`
+>   action (M6), plus explicit no-op cases for the 6
+>   currently-non-rendered SessionUpdate kinds + a default warning
+>   for unknowns (M7). `extractMcpMeta` early-return removed (MCP
+>   meta no longer rides on `agent_message_chunk`).
+> - `acp/runtime.ts` adds `_modelUpdatePromise` accessor so
+>   `useAcpStreaming.sendMessage` awaits the in-flight
+>   `unstable_setSessionModel` before issuing `prompt` (avoids a
+>   wire-ordering race between the two requests).
+
 ## Purpose
 
 The browser host's half of the ACP boundary: a `ClientSideConnection`

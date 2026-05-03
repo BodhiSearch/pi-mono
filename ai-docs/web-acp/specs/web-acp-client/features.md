@@ -3,6 +3,21 @@
 **Source of truth:** `packages/web-acp/src/hooks/useAcpFeatures.ts`,
 `packages/web-acp/src/components/features/FeaturePanel.tsx`.
 
+> **ACP 0.21 migration delta (M3).** The host no longer issues
+> `_bodhi/features/list` or `_bodhi/features/set`. `useAcpFeatures`
+> is a memoised selector over `state.configOptions` (a frozen-empty
+> default slice on the streaming reducer, hydrated by
+> `'config-options-init'` from `NewSessionResponse.configOptions` /
+> `LoadSessionResponse.configOptions`, refreshed by
+> `case 'config_option_update'` on the reducer's session-update arm).
+> `setFeature(key, value)` calls
+> `client.setSessionConfigOption(sessionId, '_bodhi/features/'+key,
+> value)` against the SDK's `Agent.setSessionConfigOption`.
+> `FeaturePanel` is simplified to a single `features: FeatureBag`
+> prop (the legacy `defaults` prop and "default" badge column are
+> gone). `forceToolCall` is still DEV-gated — the agent throws
+> `-32004` when a non-DEV host tries to enable it.
+
 ## Purpose
 
 Browser-host-side surface for the per-session feature

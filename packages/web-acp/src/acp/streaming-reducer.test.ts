@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { initialStreamingState, streamingReducer, type StreamingState } from './streaming-reducer';
@@ -103,7 +103,7 @@ describe('streamingReducer', () => {
     expect(tag).toEqual({ command: 'help' });
   });
 
-  it('replay guard suppresses live chunks but lets MCP and command updates through', () => {
+  it('replay guard suppresses live chunks', () => {
     const replaying = streamingReducer(initialStreamingState, { type: 'load-start' });
     expect(replaying.isReplaying).toBe(true);
 
@@ -112,24 +112,6 @@ describe('streamingReducer', () => {
       notif: chunk('should not render', { messageId: 'm-1' }),
     });
     expect(blocked.streamingMessage).toBeUndefined();
-
-    const cmdNotif = {
-      sessionId: 'sess-1',
-      update: {
-        sessionUpdate: 'available_commands_update',
-        availableCommands: [{ name: 'help', description: '/help' }],
-      },
-    } as unknown as SessionNotification;
-    const withCmds = streamingReducer(replaying, { type: 'session-update', notif: cmdNotif });
-    expect(withCmds.availableCommands).toHaveLength(1);
-
-    const mcpNotif = {
-      sessionId: 'sess-1',
-      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '' } },
-      _meta: { bodhi: { mcp: { server: 'srv-1', state: 'connected' } } },
-    } as unknown as SessionNotification;
-    const withMcp = streamingReducer(replaying, { type: 'session-update', notif: mcpNotif });
-    expect(withMcp.mcpStates['srv-1']).toEqual({ server: 'srv-1', state: 'connected' });
   });
 
   it('appends tool_call view and merges tool_call_update', () => {
@@ -157,37 +139,55 @@ describe('streamingReducer', () => {
     expect(s.toolCalls.size).toBe(0);
   });
 
-  it('appends finalMessage on turn-end and bumps turnIndex', () => {
+  it('appends streamingMessage on turn-end and bumps turnIndex', () => {
     const userMessage = makeMsg('user', 'hi');
-    const finalMessage = makeMsg('assistant', 'hello');
     let s: StreamingState = streamingReducer(initialStreamingState, {
       type: 'turn-start',
       userMessage,
     });
     s = streamingReducer(s, {
-      type: 'turn-end',
-      stopReason: 'end_turn',
-      finalMessage,
+      type: 'session-update',
+      notif: chunk('hel', { messageId: 'm-1' }),
     });
-    expect(s.messages).toEqual([userMessage, finalMessage]);
+    s = streamingReducer(s, {
+      type: 'session-update',
+      notif: chunk('lo', { messageId: 'm-1' }),
+    });
+    s = streamingReducer(s, { type: 'turn-end', stopReason: 'end_turn' });
+    expect(s.messages).toHaveLength(2);
+    expect(s.messages[0]).toEqual(userMessage);
+    const reply = s.messages[1] as unknown as { content: Array<{ text: string }> };
+    expect(reply.content[0].text).toBe('hello');
     expect(s.streamingMessage).toBeUndefined();
     expect(s.isStreaming).toBe(false);
     expect(s.turnIndex).toBe(1);
   });
 
-  it('drops finalMessage on turn-end when stopReason is cancelled', () => {
+  it('drops the streaming bubble on turn-end when stopReason is cancelled', () => {
     const userMessage = makeMsg('user', 'hi');
-    const finalMessage = makeMsg('assistant', 'partial');
     let s: StreamingState = streamingReducer(initialStreamingState, {
       type: 'turn-start',
       userMessage,
     });
     s = streamingReducer(s, {
-      type: 'turn-end',
-      stopReason: 'cancelled',
-      finalMessage,
+      type: 'session-update',
+      notif: chunk('partial', { messageId: 'm-1' }),
     });
+    s = streamingReducer(s, { type: 'turn-end', stopReason: 'cancelled' });
     expect(s.messages).toEqual([userMessage]);
+    expect(s.streamingMessage).toBeUndefined();
+    expect(s.turnIndex).toBe(1);
+  });
+
+  it('turn-end without any streamingMessage leaves messages unchanged', () => {
+    const userMessage = makeMsg('user', 'hi');
+    let s: StreamingState = streamingReducer(initialStreamingState, {
+      type: 'turn-start',
+      userMessage,
+    });
+    s = streamingReducer(s, { type: 'turn-end', stopReason: 'end_turn' });
+    expect(s.messages).toEqual([userMessage]);
+    expect(s.streamingMessage).toBeUndefined();
     expect(s.turnIndex).toBe(1);
   });
 
@@ -227,5 +227,116 @@ describe('streamingReducer', () => {
     expect(s.isStreaming).toBe(false);
     expect(s.turnIndex).toBe(0);
     expect(s.toolCalls.size).toBe(0);
+  });
+
+  it.each([
+    'user_message_chunk',
+    'agent_thought_chunk',
+    'plan',
+    'current_mode_update',
+    'session_info_update',
+    'usage_update',
+  ])('%s is a no-op (explicit case, no warn)', kind => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const notif = { sessionId: 'sess-1', update: { sessionUpdate: kind } } as SessionNotification;
+    const s = streamingReducer(initialStreamingState, { type: 'session-update', notif });
+    expect(s).toBe(initialStreamingState);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('panel-only session-update kinds are no-ops on the streaming reducer', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const cmdNotif = {
+      sessionId: 'sess-1',
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands: [{ name: 'help', description: '/help' }],
+      },
+    } as unknown as SessionNotification;
+    const optNotif = {
+      sessionId: 'sess-1',
+      update: { sessionUpdate: 'config_option_update', configOptions: [] },
+    } as unknown as SessionNotification;
+    const s1 = streamingReducer(initialStreamingState, { type: 'session-update', notif: cmdNotif });
+    const s2 = streamingReducer(initialStreamingState, { type: 'session-update', notif: optNotif });
+    expect(s1).toBe(initialStreamingState);
+    expect(s2).toBe(initialStreamingState);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it.each([
+    {
+      action: { type: 'config-options-init', configOptions: [] } as const,
+      label: 'config-options-init',
+    },
+    {
+      action: {
+        type: 'mcp-state',
+        meta: { server: 'srv-1', state: 'connected' },
+      } as const,
+      label: 'mcp-state',
+    },
+  ])('panel-only action $label is a no-op on the streaming reducer', ({ action }) => {
+    const s = streamingReducer(initialStreamingState, action);
+    expect(s).toBe(initialStreamingState);
+  });
+
+  it('accepts pending → in_progress → completed tool-call lifecycle', () => {
+    let s: StreamingState = streamingReducer(initialStreamingState, {
+      type: 'session-update',
+      notif: {
+        sessionId: 'sess-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-1',
+          title: 'bash',
+          status: 'pending',
+        },
+      } as unknown as SessionNotification,
+    });
+    expect(s.toolCalls.get('tc-1')?.status).toBe('pending');
+
+    s = streamingReducer(s, {
+      type: 'session-update',
+      notif: {
+        sessionId: 'sess-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-1',
+          status: 'in_progress',
+        },
+      } as unknown as SessionNotification,
+    });
+    expect(s.toolCalls.get('tc-1')?.status).toBe('in_progress');
+
+    s = streamingReducer(s, {
+      type: 'session-update',
+      notif: {
+        sessionId: 'sess-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-1',
+          status: 'completed',
+        },
+      } as unknown as SessionNotification,
+    });
+    expect(s.toolCalls.get('tc-1')?.status).toBe('completed');
+  });
+
+  it('unknown SessionUpdate kind logs a warning and returns state', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const notif = {
+      sessionId: 'sess-1',
+      update: { sessionUpdate: 'totally_made_up_kind' },
+    } as unknown as SessionNotification;
+    const s = streamingReducer(initialStreamingState, { type: 'session-update', notif });
+    expect(s).toBe(initialStreamingState);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[streaming-reducer] unhandled SessionUpdate kind:',
+      'totally_made_up_kind'
+    );
+    warnSpy.mockRestore();
   });
 });

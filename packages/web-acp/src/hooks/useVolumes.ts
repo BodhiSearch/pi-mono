@@ -55,7 +55,7 @@ export interface UseVolumesArgs {
  * returns an array — the helper shape on the window accepts either a
  * single seed or a list for multi-volume tests.
  */
-export function readDevSeeds(): VolumeSeed[] {
+function readDevSeeds(): VolumeSeed[] {
   if (typeof window === 'undefined') return [];
   const raw = (window as unknown as DevSeedGlobal).__zenfsSeed;
   if (!raw) return [];

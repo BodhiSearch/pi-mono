@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { ensureRuntime, type AcpRuntime } from '@/acp/runtime';
 import type { HostVolumeInit } from '@/runtime/volumes-fsa';
 import { useVolumes, type UseVolumesResult } from '@/hooks/useVolumes';
@@ -15,11 +15,7 @@ export interface UseAcpRuntimeResult {
  * `useAcp*` hooks; `useVolumes` resolves the worker's `init` payload.
  */
 export function useAcpRuntime(): UseAcpRuntimeResult {
-  // Worker + client stay alive across re-renders; initialize once.
-  useEffect(() => {
-    ensureRuntime();
-  }, []);
-
+  // ensureRuntime is a per-tab module singleton + idempotent — no effect needed.
   const runtime = useMemo(() => ensureRuntime(), []);
   const volumeControl = runtime.volumeControl;
 

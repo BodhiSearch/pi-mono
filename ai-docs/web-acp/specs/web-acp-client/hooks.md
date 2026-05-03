@@ -2,6 +2,36 @@
 
 **Source of truth:** `packages/web-acp/src/hooks/`.
 
+> **ACP 0.21 migration delta (M1–M7).**
+> - `useAcpModels` rewritten as a thin slice. `setSelectedModel(id)`
+>   now pushes the user pick to the agent via
+>   `client.setSessionModel(sessionId, id)` and publishes the
+>   in-flight promise to `acp/runtime.ts:setModelUpdatePromise` so
+>   `useAcpStreaming.sendMessage` can await it before `prompt()`.
+>   Removed: `loadModels`, `loadingModelsRef`, `isLoadingModels`,
+>   `selectedApiFormat`, `apiFormat` plumbing.
+> - `useAcpAuth` no longer fetches the model catalog. Removed
+>   `setModels`, `setIsLoadingModels`, `ensureDefaultModel`,
+>   `loadingModelsRef` deps. The auth effect just authenticates +
+>   handles token rotation.
+> - `useAcpFeatures` rewritten as a memo selector over
+>   `state.configOptions`. `setFeature(key, value)` calls
+>   `client.setSessionConfigOption(sessionId, '_bodhi/features/'+key,
+>   value)`. Removed `featureDefaults`, `clearFeatures`,
+>   `refreshFeatures`.
+> - `useAcpSession.ensureSession` and `loadSession` populate the
+>   model picker from `NewSessionResponse.models` /
+>   `LoadSessionResponse.models` (`SessionModelState`) via a pure
+>   `applyModelState` helper, and dispatch `'config-options-init'`
+>   from `response.configOptions`. `loadSession` still fetches
+>   `bodhi/getSession` for the message snapshot (M5 deferred).
+> - `useAcpStreaming` gained an extNotification subscription that
+>   routes `_bodhi/mcp/state` to the reducer and
+>   `_bodhi/builtin/action` to the action dispatcher (M6). The
+>   in-band action dispatch from `streamingMessage._builtin.action`
+>   was removed; `sendMessage` awaits `getModelUpdatePromise()`
+>   before `client.prompt()` to avoid the model-update race.
+
 ## Purpose
 
 `useAcp()` is the single entry point the React layer

@@ -1,7 +1,21 @@
 # Features — `FeatureStore` interface + ACP wire surface
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/storage/feature-store.ts`,
-`packages/web-acp-agent/src/acp/engine/ext-methods/features-{list,set}.ts`.
+`packages/web-acp-agent/src/acp/agent-adapter.ts:setSessionConfigOption`.
+
+> **ACP 0.21 migration delta (M3).** The `_bodhi/features/list` and
+> `_bodhi/features/set` extension methods have been **deleted**.
+> Per-session feature toggles now ride the standard
+> `Agent.setSessionConfigOption({sessionId, configId, type:
+> 'boolean', value})` flow. The agent emits the freshly-rebuilt list
+> as `SessionConfigOption[]` on `NewSessionResponse.configOptions`,
+> `LoadSessionResponse.configOptions`, and as a
+> `config_option_update` notification after every mutation.
+> Config IDs: `_bodhi/features/bashEnabled`,
+> `_bodhi/features/forceToolCall` (DEV-only). Category:
+> `_bodhi/feature` (per `SessionConfigOptionCategory` extensibility
+> rules). The `FeatureStore` interface and the underlying Dexie row
+> shape are unchanged — only the wire path changed.
 
 ## Purpose
 

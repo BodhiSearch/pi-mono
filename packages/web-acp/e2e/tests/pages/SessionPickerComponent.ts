@@ -2,11 +2,9 @@ import { expect, type Page, type Locator } from '@playwright/test';
 
 export class SessionPickerComponent {
   readonly picker: Locator;
-  readonly emptyState: Locator;
 
   constructor(private page: Page) {
     this.picker = page.locator('[data-testid="session-picker"]');
-    this.emptyState = page.locator('[data-testid="session-picker-empty"]');
   }
 
   row(id: string): Locator {

@@ -1,5 +1,5 @@
+import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import type {
-  Client,
   ClientSideConnection,
   InitializeResponse,
   LoadSessionResponse,
@@ -11,39 +11,33 @@ import type {
 } from '@agentclientprotocol/sdk';
 import {
   BODHI_AUTH_METHOD_ID,
-  BODHI_FEATURES_LIST_METHOD,
-  BODHI_FEATURES_SET_METHOD,
   BODHI_GET_SESSION_METHOD,
-  BODHI_LIST_MODELS_METHOD,
-  BODHI_LIST_SESSIONS_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
-  type BodhiFeaturesListResponse,
-  type BodhiFeaturesSetResponse,
   type BodhiGetSessionResponse,
-  type BodhiListModelsResponse,
-  type BodhiListSessionsResponse,
   type BodhiMcpTogglesSetResponse,
-  type BodhiModelDescriptor,
+  type BodhiSessionInfoMeta,
   type BodhiSessionMeta,
   type BodhiSessionsDeleteResponse,
-  type BodhiSessionSummary,
   type BodhiVolumeDescriptor,
   type BodhiVolumesListResponse,
+  type SessionInfoView,
 } from './index';
 
 export type SessionUpdateListener = (notification: SessionNotification) => void;
+export type ExtNotificationListener = (method: string, params: Record<string, unknown>) => void;
 
 /**
- * Tiny wrapper over `ClientSideConnection` exposing just the calls
- * `useAcp` needs. Transport framing (ports, ndJSON) lives one layer up.
- * Phase C provides the skeleton; phase D wires it into the hook.
+ * Thin facade over `ClientSideConnection` with the subset of ACP/Bodhi
+ * calls the host hooks need. NDJSON framing and the MessageChannel live
+ * in `acp/runtime.ts`.
  */
 export class AcpClient {
   readonly #conn: ClientSideConnection;
   readonly #listeners = new Set<SessionUpdateListener>();
+  readonly #extListeners = new Set<ExtNotificationListener>();
 
   constructor(conn: ClientSideConnection) {
     this.#conn = conn;
@@ -58,15 +52,22 @@ export class AcpClient {
   }
 
   async initialize(): Promise<InitializeResponse> {
-    return this.#conn.initialize({
-      protocolVersion: 1,
+    const response = await this.#conn.initialize({
+      protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {
-        // M2.3: advertise `fs/*` as an IDE-integration seam. Built-in
-        // `bash` never calls these — external ACP agents do (see
-        // `specs/web-acp-client/volumes.md`).
+        // Advertise fs/* for external ACP agents / IDE integrations.
+        // Built-in bash does not use these entry points (see volumes.md).
         fs: { readTextFile: true, writeTextFile: true },
       },
     });
+    if (response.protocolVersion !== PROTOCOL_VERSION) {
+      console.warn(
+        '[acp/client] agent advertises protocolVersion=%s; client expected %s',
+        response.protocolVersion,
+        PROTOCOL_VERSION
+      );
+    }
+    return response;
   }
 
   async authenticate(args: BodhiAuthenticateMeta): Promise<void> {
@@ -76,16 +77,25 @@ export class AcpClient {
     });
   }
 
-  async listModels(): Promise<BodhiModelDescriptor[]> {
-    const raw = await this.#conn.extMethod(BODHI_LIST_MODELS_METHOD, {});
-    const payload = raw as BodhiListModelsResponse;
-    return payload.models ?? [];
+  async setSessionModel(sessionId: string, modelId: string): Promise<void> {
+    await this.#conn.unstable_setSessionModel({ sessionId, modelId });
   }
 
-  async listSessions(): Promise<BodhiSessionSummary[]> {
-    const raw = await this.#conn.extMethod(BODHI_LIST_SESSIONS_METHOD, {});
-    const payload = raw as BodhiListSessionsResponse;
-    return payload.sessions ?? [];
+  /** Flattens `SessionInfo._meta.bodhi` extras into a numeric-timestamp view. */
+  async listSessions(): Promise<SessionInfoView[]> {
+    const response = await this.#conn.listSessions({});
+    return (response.sessions ?? []).map(info => {
+      const meta = (info._meta?.bodhi ?? {}) as Partial<BodhiSessionInfoMeta>;
+      const updatedAtMs = info.updatedAt ? Date.parse(info.updatedAt) : NaN;
+      return {
+        id: info.sessionId,
+        title: info.title ?? null,
+        createdAt: typeof meta.createdAt === 'number' ? meta.createdAt : 0,
+        updatedAt: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
+        turnCount: typeof meta.turnCount === 'number' ? meta.turnCount : 0,
+        lastModelId: typeof meta.lastModelId === 'string' ? meta.lastModelId : null,
+      };
+    });
   }
 
   async newSession(
@@ -97,6 +107,11 @@ export class AcpClient {
       mcpServers: toMcpServers(mcpServers),
       ...(sessionMeta ? { _meta: { bodhi: sessionMeta } } : {}),
     });
+  }
+
+  /** Releases in-memory resources; the persisted row remains for `loadSession`. */
+  async closeSession(sessionId: string): Promise<void> {
+    await this.#conn.closeSession({ sessionId });
   }
 
   async loadSession(
@@ -136,18 +151,8 @@ export class AcpClient {
     return payload.volumes ?? [];
   }
 
-  async listFeatures(sessionId: string): Promise<BodhiFeaturesListResponse> {
-    const raw = await this.#conn.extMethod(BODHI_FEATURES_LIST_METHOD, { sessionId });
-    return raw as BodhiFeaturesListResponse;
-  }
-
-  async setFeature(
-    sessionId: string,
-    key: string,
-    value: boolean
-  ): Promise<BodhiFeaturesSetResponse> {
-    const raw = await this.#conn.extMethod(BODHI_FEATURES_SET_METHOD, { sessionId, key, value });
-    return raw as BodhiFeaturesSetResponse;
+  async setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void> {
+    await this.#conn.setSessionConfigOption({ sessionId, configId, value });
   }
 
   /**
@@ -171,11 +176,10 @@ export class AcpClient {
     return raw as BodhiMcpTogglesSetResponse;
   }
 
-  async prompt(sessionId: string, text: string, modelId: string): Promise<PromptResponse> {
+  async prompt(sessionId: string, text: string): Promise<PromptResponse> {
     return this.#conn.prompt({
       sessionId,
       prompt: [{ type: 'text', text }],
-      _meta: { bodhi: { modelId } },
     });
   }
 
@@ -201,6 +205,21 @@ export class AcpClient {
       }
     }
   }
+
+  onExtNotification(listener: ExtNotificationListener): () => void {
+    this.#extListeners.add(listener);
+    return () => this.#extListeners.delete(listener);
+  }
+
+  dispatchExtNotification(method: string, params: Record<string, unknown>): void {
+    for (const l of this.#extListeners) {
+      try {
+        l(method, params);
+      } catch (err) {
+        console.error('AcpClient ext listener threw:', err);
+      }
+    }
+  }
 }
 
 /**
@@ -209,12 +228,4 @@ export class AcpClient {
  */
 function toMcpServers(servers: McpServerHttp[]): McpServer[] {
   return servers.map(server => ({ ...server, type: 'http' as const }));
-}
-
-export function buildClientHandler(client: AcpClient): Client {
-  return {
-    async sessionUpdate(params) {
-      client.dispatchSessionUpdate(params);
-    },
-  };
 }

@@ -1,107 +1,51 @@
 export type {
-	Agent,
-	AuthenticateRequest,
-	AuthenticateResponse,
-	AvailableCommand,
-	AvailableCommandInput,
-	AvailableCommandsUpdate,
-	CancelNotification,
-	Client,
-	InitializeRequest,
-	InitializeResponse,
-	LoadSessionRequest,
-	LoadSessionResponse,
-	NewSessionRequest,
-	NewSessionResponse,
-	PromptRequest,
-	PromptResponse,
-	SessionNotification,
-	StopReason,
-	UnstructuredCommandInput,
-} from "@agentclientprotocol/sdk";
-export { AgentSideConnection, ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+  Agent,
+  AuthenticateRequest,
+  AuthenticateResponse,
+  AvailableCommand,
+  AvailableCommandInput,
+  AvailableCommandsUpdate,
+  CancelNotification,
+  Client,
+  InitializeRequest,
+  InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
+  NewSessionRequest,
+  NewSessionResponse,
+  PromptRequest,
+  PromptResponse,
+  SessionNotification,
+  StopReason,
+  UnstructuredCommandInput,
+} from '@agentclientprotocol/sdk';
+export { AgentSideConnection, ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 
-export const BODHI_AUTH_METHOD_ID = "bodhi-token";
-export const BODHI_LIST_MODELS_METHOD = "bodhi/listModels";
-export const BODHI_LIST_SESSIONS_METHOD = "bodhi/listSessions";
-export const BODHI_GET_SESSION_METHOD = "bodhi/getSession";
+export const BODHI_AUTH_METHOD_ID = 'bodhi-token';
+export const BODHI_GET_SESSION_METHOD = '_bodhi/session/get';
+/** Deprecated synonym for `_bodhi/session/get`; accepted for one release window. */
+export const BODHI_GET_SESSION_METHOD_LEGACY = 'bodhi/getSession';
 
-// M2 extension methods use the spec-blessed `_`-prefix; the older
-// `bodhi/*` constants above stay unchanged to preserve M1 client-side
-// contracts (a rename is tracked as a deferred cleanup item).
-export const BODHI_VOLUMES_LIST_METHOD = "_bodhi/volumes/list";
-export const BODHI_FEATURES_LIST_METHOD = "_bodhi/features/list";
-export const BODHI_FEATURES_SET_METHOD = "_bodhi/features/set";
+export const BODHI_VOLUMES_LIST_METHOD = '_bodhi/volumes/list';
 
-// M3 phase B: per-session MCP server / tool toggles. Defaults are all
-// "on"; only explicit overrides travel on the wire. See
-// `specs/web-acp-agent/mcp.md` for the snapshot contract returned via
-// `bodhi/getSession` and the mutation handler below.
-export const BODHI_MCP_TOGGLES_SET_METHOD = "_bodhi/mcp/toggles/set";
+export const BODHI_MCP_TOGGLES_SET_METHOD = '_bodhi/mcp/toggles/set';
 
-// Persistent removal of a session and its associated entries / features /
-// MCP toggles. ACP has no stable `session/delete`; `session/close` in the
-// unstable schema means "free in-memory resources", not "remove from
-// disk", so we ride a `_bodhi/*` extension per principle § 15.
-export const BODHI_SESSIONS_DELETE_METHOD = "_bodhi/sessions/delete";
+// `Agent.closeSession` frees in-memory resources only; this extension
+// drops the persisted row for the user-visible "delete" gesture.
+export const BODHI_SESSIONS_DELETE_METHOD = '_bodhi/sessions/delete';
 
 export interface BodhiVolumeDescriptor {
-	mountName: string;
-	description?: string;
+  mountName: string;
+  description?: string;
 }
 
 export interface BodhiVolumesListResponse extends Record<string, unknown> {
-	volumes: BodhiVolumeDescriptor[];
-}
-
-export type BodhiFeatureBag = Record<string, boolean>;
-
-export interface BodhiFeaturesListResponse extends Record<string, unknown> {
-	features: BodhiFeatureBag;
-	defaults: BodhiFeatureBag;
-}
-
-export interface BodhiFeaturesSetRequest extends Record<string, unknown> {
-	sessionId: string;
-	key: string;
-	value: boolean;
-}
-
-export interface BodhiFeaturesSetResponse extends Record<string, unknown> {
-	features: BodhiFeatureBag;
+  volumes: BodhiVolumeDescriptor[];
 }
 
 export interface BodhiAuthenticateMeta {
-	token: string;
-	baseUrl: string;
-}
-
-export interface BodhiModelDescriptor {
-	id: string;
-	apiFormat: string;
-}
-
-export interface BodhiListModelsResponse extends Record<string, unknown> {
-	models: BodhiModelDescriptor[];
-}
-
-/**
- * Session summary surfaced to the client for the picker. Mirrors
- * `SessionSummary` in `storage/session-store` but is the wire contract —
- * kept independent so the worker can evolve store internals without
- * breaking clients.
- */
-export interface BodhiSessionSummary {
-	id: string;
-	title: string | null;
-	createdAt: number;
-	updatedAt: number;
-	turnCount: number;
-	lastModelId: string | null;
-}
-
-export interface BodhiListSessionsResponse extends Record<string, unknown> {
-	sessions: BodhiSessionSummary[];
+  token: string;
+  baseUrl: string;
 }
 
 /**
@@ -112,25 +56,25 @@ export interface BodhiListSessionsResponse extends Record<string, unknown> {
  * store (which records the full conversation after each turn).
  */
 export interface BodhiGetSessionRequest extends Record<string, unknown> {
-	sessionId: string;
+  sessionId: string;
 }
 
 export interface BodhiGetSessionResponse extends Record<string, unknown> {
-	sessionId: string;
-	messages: unknown[];
-	lastModelId: string | null;
-	title: string | null;
-	mcpToggles: BodhiMcpToggleSnapshot;
+  sessionId: string;
+  messages: unknown[];
+  lastModelId: string | null;
+  title: string | null;
+  mcpToggles: BodhiMcpToggleSnapshot;
 }
 
 /**
  * Per-session MCP toggle snapshot surfaced on `bodhi/getSession`.
  * Absence of a key means "default on" — the worker never materialises
- * a `true` entry just to mirror the default. Added in M3 phase B.
+ * a `true` entry just to mirror the default.
  */
 export interface BodhiMcpToggleSnapshot extends Record<string, unknown> {
-	servers: Record<string, boolean>;
-	tools: Record<string, Record<string, boolean>>;
+  servers: Record<string, boolean>;
+  tools: Record<string, Record<string, boolean>>;
 }
 
 /**
@@ -140,18 +84,18 @@ export interface BodhiMcpToggleSnapshot extends Record<string, unknown> {
  * provided. `value` is the new desired on/off state.
  */
 export interface BodhiMcpTogglesSetRequest extends Record<string, unknown> {
-	sessionId: string;
-	serverSlug: string;
-	toolName?: string;
-	value: boolean;
+  sessionId: string;
+  serverSlug: string;
+  toolName?: string;
+  value: boolean;
 }
 
 export interface BodhiMcpTogglesSetResponse extends Record<string, unknown> {
-	toggles: BodhiMcpToggleSnapshot;
+  toggles: BodhiMcpToggleSnapshot;
 }
 
 export interface BodhiSessionsDeleteRequest extends Record<string, unknown> {
-	sessionId: string;
+  sessionId: string;
 }
 
 /**
@@ -161,46 +105,36 @@ export interface BodhiSessionsDeleteRequest extends Record<string, unknown> {
  * spurious failure.
  */
 export interface BodhiSessionsDeleteResponse extends Record<string, unknown> {
-	deleted: boolean;
+  deleted: boolean;
 }
 
 /**
  * Generic descriptor for a client-side action a built-in delegates to,
- * carried on `_meta.bodhi.builtin.action` of `session/update`
- * notifications (M4 phase B). The conditional `params` field is
- * present iff `P` is non-void — `/copy` carries no params, `/mcp add`
- * carries `{ url }`, future kinds plug in by adding a new alias and
- * extending {@link AnyBodhiBuiltinAction}.
- *
- * Use the per-kind aliases (`BodhiBuiltinCopyAction`,
- * `BodhiBuiltinMcpAddAction`, …) when constructing values so the
- * compiler enforces the correct payload; use
- * {@link AnyBodhiBuiltinAction} on dispatch sites that switch on
- * `kind` for narrowing.
+ * carried on the `_bodhi/builtin/action` extNotification. `params` is
+ * present iff `P` is non-void. Use per-kind aliases when constructing
+ * and {@link AnyBodhiBuiltinAction} when narrowing on `kind`.
  */
 export type BodhiBuiltinAction<K extends string = string, P = void> = [P] extends [void]
-	? { kind: K }
-	: { kind: K; params: P };
+  ? { kind: K }
+  : { kind: K; params: P };
 
 export interface BodhiMcpUrlParams {
-	url: string;
+  url: string;
 }
 
-export type BodhiBuiltinCopyAction = BodhiBuiltinAction<"copy">;
-export type BodhiBuiltinMcpAddAction = BodhiBuiltinAction<"mcp-add", BodhiMcpUrlParams>;
-export type BodhiBuiltinMcpRemoveAction = BodhiBuiltinAction<"mcp-remove", BodhiMcpUrlParams>;
+export type BodhiBuiltinCopyAction = BodhiBuiltinAction<'copy'>;
+export type BodhiBuiltinMcpAddAction = BodhiBuiltinAction<'mcp-add', BodhiMcpUrlParams>;
+export type BodhiBuiltinMcpRemoveAction = BodhiBuiltinAction<'mcp-remove', BodhiMcpUrlParams>;
 
 /**
  * Discriminated union of every concrete built-in action kind. Switch
  * on `action.kind` to narrow to the per-kind shape. New built-in
  * actions land here as a new member.
  */
-export type AnyBodhiBuiltinAction = BodhiBuiltinCopyAction | BodhiBuiltinMcpAddAction | BodhiBuiltinMcpRemoveAction;
-
-export interface BodhiBuiltinMeta {
-	command: string;
-	action?: AnyBodhiBuiltinAction;
-}
+export type AnyBodhiBuiltinAction =
+  | BodhiBuiltinCopyAction
+  | BodhiBuiltinMcpAddAction
+  | BodhiBuiltinMcpRemoveAction;
 
 /**
  * Marker stamped onto the in-memory `AgentMessage` shape on the
@@ -210,8 +144,8 @@ export interface BodhiBuiltinMeta {
  * this marker when reconstructing the snapshot.
  */
 export interface BodhiBuiltinTag {
-	command: string;
-	action?: AnyBodhiBuiltinAction;
+  command: string;
+  action?: AnyBodhiBuiltinAction;
 }
 
 /**
@@ -221,10 +155,10 @@ export interface BodhiBuiltinTag {
  * `slug` alone misses Bodhi-side renames).
  */
 export interface BodhiMcpInstanceDescriptor {
-	slug: string;
-	name: string;
-	/** Bodhi-internal proxy path, e.g. `/bodhi/v1/apps/mcps/{id}/mcp`. */
-	path: string;
+  slug: string;
+  name: string;
+  /** Bodhi-internal proxy path, e.g. `/bodhi/v1/apps/mcps/{id}/mcp`. */
+  path: string;
 }
 
 /**
@@ -235,6 +169,41 @@ export interface BodhiMcpInstanceDescriptor {
  * idempotency feedback. Source of truth lives on the main thread.
  */
 export interface BodhiSessionMeta {
-	requestedMcpUrls?: string[];
-	mcpInstances?: BodhiMcpInstanceDescriptor[];
+  requestedMcpUrls?: string[];
+  mcpInstances?: BodhiMcpInstanceDescriptor[];
 }
+
+/** Extras stamped on `_meta.bodhi` of `SessionInfo` from `Agent.listSessions`. */
+export interface BodhiSessionInfoMeta {
+  turnCount: number;
+  lastModelId: string | null;
+  createdAt: number;
+}
+
+/** Extras stamped on `_meta.bodhi` of `LoadSessionResponse` (ACP carries neither natively). */
+export interface BodhiLoadSessionMeta {
+  title?: string | null;
+  mcpToggles?: BodhiMcpToggleSnapshot;
+}
+
+export const BODHI_MCP_STATE_NOTIFICATION_METHOD = '_bodhi/mcp/state';
+export const BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD = '_bodhi/builtin/action';
+
+export interface BodhiMcpStateNotificationParams extends Record<string, unknown> {
+  sessionId: string;
+  server: string;
+  state: string;
+  error?: string;
+  tools?: string[];
+}
+
+export interface BodhiBuiltinActionNotificationParams extends Record<string, unknown> {
+  sessionId: string;
+  command: string;
+  action: AnyBodhiBuiltinAction;
+}
+
+/** Per-session feature toggle config-option ids surfaced via `Agent.setSessionConfigOption`. */
+export const BODHI_FEATURE_BASH_ENABLED_CONFIG_ID = '_bodhi/features/bashEnabled';
+export const BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID = '_bodhi/features/forceToolCall';
+export const BODHI_FEATURE_CONFIG_CATEGORY = '_bodhi/feature';

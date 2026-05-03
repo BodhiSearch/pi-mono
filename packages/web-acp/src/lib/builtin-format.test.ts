@@ -21,11 +21,11 @@ describe('extractBuiltinMeta', () => {
     expect(tag).toEqual({ command: 'help' });
   });
 
-  it('preserves the action discriminator', () => {
+  it('ignores `action` on the chunk meta — actions ride extNotification', () => {
     const tag = extractBuiltinMeta({
       bodhi: { builtin: { command: 'copy', action: { kind: 'copy' } } },
     });
-    expect(tag).toEqual({ command: 'copy', action: { kind: 'copy' } });
+    expect(tag).toEqual({ command: 'copy' });
   });
 
   it('returns undefined for unrelated _meta', () => {

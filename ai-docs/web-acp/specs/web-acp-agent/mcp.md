@@ -5,6 +5,17 @@
 `packages/web-acp-agent/src/storage/mcp-toggle-store.ts`,
 `packages/web-acp-agent/src/mcp/url-canonical.ts`.
 
+> **ACP 0.21 migration delta (M6).** MCP lifecycle no longer rides
+> on empty `agent_message_chunk` notifications carrying
+> `_meta.bodhi.mcp`. `AcpSessionRuntime.broadcastMcpPoolEvent` now
+> emits `extNotification("_bodhi/mcp/state", { sessionId, server,
+> state, error?, tools? })` against the connection. The constant
+> `BODHI_MCP_STATE_NOTIFICATION_METHOD` and the
+> `BodhiMcpStateNotificationParams` shape live in
+> [`wire/index.ts`](../../../../packages/web-acp-agent/src/wire/index.ts).
+> Per-server / per-tool toggle persistence (`McpToggleStore`,
+> `_bodhi/mcp/toggles/set`) is unchanged.
+
 ## Purpose
 
 The agent runs as an MCP **client** — it connects to one or

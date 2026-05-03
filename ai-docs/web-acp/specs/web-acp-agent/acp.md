@@ -2,14 +2,26 @@
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/acp/`.
 
+> **ACP 0.21 migration delta.** The adapter additionally implements
+> `Agent.listSessions`, `Agent.closeSession`,
+> `Agent.unstable_setSessionModel`, and `Agent.setSessionConfigOption`
+> (M1). `bodhi/listModels` (M4), `bodhi/listSessions` (M2), and the
+> `_bodhi/features/*` ext-method pair (M3) have been removed.
+> `bodhi/getSession` remains live (M5 deferred). MCP lifecycle and
+> builtin actions emit via `extNotification` (`_bodhi/mcp/state`,
+> `_bodhi/builtin/action`) per M6 instead of riding empty
+> `agent_message_chunk` envelopes. See
+> [`index.md`](./index.md) header note for the full delta.
+
 ## Purpose
 
 The agent package implements ACP's `Agent` interface in
 `acp/agent-adapter.ts:AcpAgentAdapter`. The adapter is a thin
 dispatch shim with **no business logic**: every ACP method
 (`initialize`, `authenticate`, `newSession`, `loadSession`,
-`prompt`, `cancel`, `extMethod`) routes into the engine layer
-under `acp/engine/`. Mirrors coding-agent's
+`listSessions`, `closeSession`, `unstable_setSessionModel`,
+`setSessionConfigOption`, `prompt`, `cancel`, `extMethod`) routes
+into the engine layer under `acp/engine/`. Mirrors coding-agent's
 `modes/rpc/rpc-mode.ts` posture.
 
 The `bootstrap.ts:startAcpAgent(transport, services, options)`

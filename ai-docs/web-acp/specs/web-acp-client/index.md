@@ -9,6 +9,49 @@ phase B as the **reference application** for
 that mounts the agent inside a worker, renders the chat UI,
 and persists per-tab state to IndexedDB / FSA.
 
+> **ACP 0.21 migration delta (M1–M7).** Wire surface and host
+> reducer/hook shape changed as part of the migration tracked at
+> [`../../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md`](../../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md):
+>
+> - **`AcpClient`** (`acp/client.ts`) — added
+>   `setSessionModel(sessionId, modelId)` (calls
+>   `unstable_setSessionModel`),
+>   `setSessionConfigOption(sessionId, configId, value)`
+>   (`type: 'boolean'` discriminator),
+>   `onExtNotification`/`dispatchExtNotification` registry.
+>   Removed `listModels()`, `listFeatures()`, `setFeature()`.
+>   `prompt(sessionId, text)` no longer takes `modelId`.
+>   `listSessions()` now wraps SDK's `Agent.listSessions`.
+> - **Reducer** (`acp/streaming-reducer.ts`) — gained
+>   `state.configOptions` slice, `'config-options-init'` and
+>   `'mcp-state'` actions, `case 'config_option_update'` arm,
+>   explicit no-op cases for the 6 currently-non-rendered
+>   `SessionUpdate` kinds, default `console.warn` for unknown.
+>   Dropped `extractMcpMeta` early-return (MCP arrives via
+>   extNotification).
+> - **Hooks** — `useAcpModels` rewritten as a thin slice that
+>   pushes user picks via `setSessionModel`. `useAcpFeatures`
+>   rewritten as a memo selector over `state.configOptions`.
+>   `useAcpAuth` no longer fetches the model catalog. Models
+>   populate from `NewSessionResponse.models` /
+>   `LoadSessionResponse.models` (`SessionModelState`) via
+>   `useAcpSession`. New `_modelUpdatePromise` accessor on
+>   `acp/runtime.ts` so `useAcpStreaming.sendMessage` awaits the
+>   in-flight `setSessionModel` before issuing `prompt`.
+>   `useAcpStreaming` registers an `onExtNotification` listener
+>   that routes `_bodhi/mcp/state` → reducer's `'mcp-state'`,
+>   `_bodhi/builtin/action` → existing builtin action dispatcher.
+> - **UI** (`components/chat/{ChatInput,ChatDemo,ModelCombobox}`,
+>   `lib/bodhi-models.ts`) — dropped `apiFormat` plumbing
+>   entirely (display-only field, no consumer). Dropped the
+>   refresh-models button. `ModelCombobox` exposes
+>   `data-test-state="loaded|empty|error"`.
+> - **`bodhi/getSession` round-trip** — still live; M5 deferred
+>   (see `packages/web-acp/TECHDEBT.md`).
+>
+> Per-topic prose may not yet reflect every change above; trust
+> the source tree where prose conflicts.
+
 The package is the future extraction target for a host-runtime
 library (working name `@bodhiapp/bodhi-web-acp` — settled at
 M8). M0–M4 ships as the reference app.

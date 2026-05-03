@@ -9,6 +9,50 @@ consumed by the browser-host worker (`packages/web-acp/`), the
 Node TTY CLI (`packages/cli-acp-client/`), and a future
 HTTP/SSE backend host.
 
+> **ACP 0.21 migration delta (M1–M7).** The wire surface changed
+> as part of the migration tracked at
+> [`../../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md`](../../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md):
+>
+> - **Removed** wire constants: `BODHI_LIST_MODELS_METHOD`,
+>   `BODHI_LIST_SESSIONS_METHOD`, `BODHI_FEATURES_LIST_METHOD`,
+>   `BODHI_FEATURES_SET_METHOD`. Removed types:
+>   `BodhiModelDescriptor`, `BodhiListModelsResponse`,
+>   `BodhiSessionSummary`, `BodhiListSessionsResponse`,
+>   `BodhiFeatureBag`, `BodhiFeaturesListResponse`,
+>   `BodhiFeaturesSetRequest`, `BodhiFeaturesSetResponse`. Deleted
+>   handlers: `ext-methods/{list-models,list-sessions,features-list,features-set}.ts`.
+> - **Added** wire constants: `BODHI_MCP_STATE_NOTIFICATION_METHOD`
+>   (`_bodhi/mcp/state`),
+>   `BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD`
+>   (`_bodhi/builtin/action`),
+>   `BODHI_FEATURE_BASH_ENABLED_CONFIG_ID`,
+>   `BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID`,
+>   `BODHI_FEATURE_CONFIG_CATEGORY`. Added types:
+>   `BodhiMcpStateNotificationParams`,
+>   `BodhiBuiltinActionNotificationParams`,
+>   `BodhiSessionInfoMeta`, `BodhiLoadSessionMeta`.
+> - **Standard ACP methods now handled** (M1):
+>   `Agent.listSessions`, `Agent.closeSession`,
+>   `Agent.unstable_setSessionModel`,
+>   `Agent.setSessionConfigOption` (boolean discriminator).
+>   `InitializeResponse.agentInfo` stamped.
+> - **Per-session model**: agent reads `currentModelId` from
+>   `SessionState`. `_meta.bodhi.modelId` no longer consulted.
+> - **MCP lifecycle**: `broadcastMcpPoolEvent` emits
+>   `extNotification("_bodhi/mcp/state", ...)` instead of empty
+>   `agent_message_chunk` with `_meta.bodhi.mcp`.
+> - **Builtin actions**: `command` tag stays on
+>   `agent_message_chunk._meta.bodhi.builtin`; the optional
+>   `action` rides
+>   `extNotification("_bodhi/builtin/action", ...)`.
+> - **`bodhi/getSession` deferred (M5)** — still live in this
+>   spec; collapse blocked by the agent's replay path only
+>   re-emitting `'notification'` entries. See
+>   `packages/web-acp/TECHDEBT.md` § "M5 deferred".
+>
+> Per-topic prose may not yet reflect every change above; trust the
+> source tree where prose conflicts.
+
 ## Purpose
 
 `@bodhiapp/web-acp-agent` is the runtime half of an

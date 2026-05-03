@@ -1,389 +1,362 @@
 import type {
-	AgentSideConnection,
-	AvailableCommand,
-	McpServerHttp,
-	SessionNotification,
-} from "@agentclientprotocol/sdk";
-import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
-import type { Api, Model } from "@mariozechner/pi-ai";
-import type { TSchema } from "@sinclair/typebox";
-import { type CommandDef, loadCommandsFromVolumes, loadPromptsFromVolumes } from "../../agent/commands";
-import { builtinAvailableCommands } from "../../agent/commands/builtins";
-import { createMcpAgentTool, type McpPoolEvent, type McpToolDetails } from "../../agent/mcp";
-import { FEATURE_DEFAULTS, type FeatureSnapshot } from "../../storage/feature-store";
-import { isToolEnabled, type McpToggleSnapshot } from "../../storage/mcp-toggle-store";
-import { toAvailableCommand } from "../wire-utils";
-import type { AcpAdapterServices } from "./services";
-import type { SessionState } from "./types";
+  AgentSideConnection,
+  AvailableCommand,
+  McpServerHttp,
+  SessionConfigOption,
+  SessionNotification,
+} from '@agentclientprotocol/sdk';
+import type { AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
+import type { Api, Model } from '@mariozechner/pi-ai';
+import type { TSchema } from '@sinclair/typebox';
+import {
+  type CommandDef,
+  loadCommandsFromVolumes,
+  loadPromptsFromVolumes,
+} from '../../agent/commands';
+import { builtinAvailableCommands } from '../../agent/commands/builtins';
+import { createMcpAgentTool, type McpPoolEvent, type McpToolDetails } from '../../agent/mcp';
+import { FEATURE_DEFAULTS, type FeatureSnapshot } from '../../storage/feature-store';
+import { isToolEnabled, type McpToggleSnapshot } from '../../storage/mcp-toggle-store';
+import {
+  BODHI_MCP_STATE_NOTIFICATION_METHOD,
+  type BodhiMcpStateNotificationParams,
+} from '../../wire';
+import { toAvailableCommand } from '../wire-utils';
+import { walkEntries } from './replay';
+import type { AcpAdapterServices } from './services';
+import type { SessionState } from './types';
 
 /**
- * Lifecycle orchestrator for ACP sessions. Owns:
- *
- * - the per-session in-memory map (`#sessions`),
- * - which session's history is currently loaded into the inline
- *   pi-agent-core runtime (`#activeInlineSessionId`),
- * - the cached vault command list shared across sessions,
- * - the LLM model catalog cache,
- * - MCP pool acquire / release / tool-listing / lifecycle broadcast,
- * - feature / toggle store reads (with safe-default fallbacks),
- * - the rehydrate-from-store path used when a `prompt` arrives for a
- *   session whose history isn't in the inline runtime.
- *
- * Mirrors coding-agent's `agent-session-runtime.ts` — different state
- * (ACP doesn't carry a state machine like steering / compaction yet),
- * same role: orchestrate session lifecycle and own per-session state
- * the wire shim doesn't.
+ * Lifecycle orchestrator for ACP sessions. Owns the per-session map,
+ * the active-inline-session pointer, the model + command caches, the
+ * MCP pool subscription, and the rehydrate-from-store path.
  */
 export class AcpSessionRuntime {
-	readonly #conn: AgentSideConnection;
-	readonly #services: AcpAdapterServices;
-	readonly #mcpSubscription: () => void;
-	readonly #sessions = new Map<string, SessionState>();
-	#availableCommands: CommandDef[] = [];
-	#models: Model<Api>[] = [];
-	/**
-	 * The `InlineAgent` holds a single `pi-agent-core` runtime that carries
-	 * one message history at a time. We must remember which session's
-	 * history is currently loaded into it so that `prompt` calls coming
-	 * in for a different session don't accidentally splice contexts
-	 * together (which would poison the next `recordTurn`'s
-	 * `finalMessages`).
-	 */
-	#activeInlineSessionId: string | null = null;
+  readonly #conn: AgentSideConnection;
+  readonly #services: AcpAdapterServices;
+  readonly #mcpSubscription: () => void;
+  readonly #sessions = new Map<string, SessionState>();
+  #availableCommands: CommandDef[] = [];
+  #models: Model<Api>[] = [];
+  // The shared inline runtime carries one history at a time; track
+  // which session owns it so cross-session prompts can't splice
+  // contexts (which would poison `finalMessages` on `recordTurn`).
+  #activeInlineSessionId: string | null = null;
 
-	constructor(conn: AgentSideConnection, services: AcpAdapterServices) {
-		this.#conn = conn;
-		this.#services = services;
-		this.#mcpSubscription = this.#services.mcpPool.subscribe((event) => {
-			void this.broadcastMcpPoolEvent(event);
-		});
-	}
+  constructor(conn: AgentSideConnection, services: AcpAdapterServices) {
+    this.#conn = conn;
+    this.#services = services;
+    this.#mcpSubscription = this.#services.mcpPool.subscribe(event => {
+      void this.broadcastMcpPoolEvent(event);
+    });
+  }
 
-	// ----- session map accessors -----
+  getSession(id: string): SessionState | undefined {
+    return this.#sessions.get(id);
+  }
 
-	getSession(id: string): SessionState | undefined {
-		return this.#sessions.get(id);
-	}
+  setSession(id: string, state: SessionState): void {
+    this.#sessions.set(id, state);
+  }
 
-	setSession(id: string, state: SessionState): void {
-		this.#sessions.set(id, state);
-	}
+  deleteSessionEntry(id: string): void {
+    this.#sessions.delete(id);
+  }
 
-	deleteSessionEntry(id: string): void {
-		this.#sessions.delete(id);
-	}
+  get sessions(): Map<string, SessionState> {
+    return this.#sessions;
+  }
 
-	/** Read-only view of the whole session map. */
-	get sessions(): Map<string, SessionState> {
-		return this.#sessions;
-	}
+  getActiveInlineSessionId(): string | null {
+    return this.#activeInlineSessionId;
+  }
 
-	// ----- inline-history-attach bookkeeping -----
+  setActiveInlineSessionId(id: string | null): void {
+    this.#activeInlineSessionId = id;
+  }
 
-	getActiveInlineSessionId(): string | null {
-		return this.#activeInlineSessionId;
-	}
+  getModels(): Model<Api>[] {
+    return this.#models;
+  }
 
-	setActiveInlineSessionId(id: string | null): void {
-		this.#activeInlineSessionId = id;
-	}
+  setModels(models: Model<Api>[]): void {
+    this.#models = models;
+  }
 
-	// ----- model catalog cache -----
+  // Lazy + cached. Cleared by `authenticate` so a fresh token
+  // re-fetches under the new credential.
+  async ensureModelsLoaded(): Promise<Model<Api>[]> {
+    if (this.#models.length > 0) return this.#models;
+    const fetched = await this.#services.bodhi.getAvailableModels();
+    this.#models = fetched;
+    return this.#models;
+  }
 
-	getModels(): Model<Api>[] {
-		return this.#models;
-	}
+  setSessionModel(sessionId: string, modelId: string | null): void {
+    const state = this.#sessions.get(sessionId);
+    if (!state) return;
+    state.currentModelId = modelId;
+  }
 
-	setModels(models: Model<Api>[]): void {
-		this.#models = models;
-	}
+  /**
+   * Unified teardown for `closeSession` + `_bodhi/sessions/delete`:
+   * abort matching in-flight turn, release MCP refcounts, drop
+   * in-memory state, detach inline runtime if active, optionally
+   * delete the persisted row. Idempotent.
+   */
+  async tearDownSession(
+    sessionId: string,
+    opts: {
+      persistRow?: boolean;
+      abortPromptIfActive?: (sessionId: string) => void;
+    } = {}
+  ): Promise<void> {
+    const { persistRow = true, abortPromptIfActive } = opts;
+    abortPromptIfActive?.(sessionId);
+    await this.#services.mcpPool.releaseAll(sessionId);
+    this.#sessions.delete(sessionId);
+    if (this.#activeInlineSessionId === sessionId) {
+      this.#activeInlineSessionId = null;
+      this.#services.inline.clearMessages();
+    }
+    if (!persistRow && this.#services.store) {
+      await this.#services.store.deleteSession(sessionId);
+    }
+  }
 
-	// ----- vault commands cache -----
+  getAvailableCommands(): CommandDef[] {
+    return this.#availableCommands;
+  }
 
-	getAvailableCommands(): CommandDef[] {
-		return this.#availableCommands;
-	}
+  async readFeatures(sessionId: string): Promise<FeatureSnapshot> {
+    if (!this.#services.features) {
+      return { ...FEATURE_DEFAULTS };
+    }
+    try {
+      return await this.#services.features.get(sessionId);
+    } catch (err) {
+      console.error('[acp-session-runtime] failed to load features:', err);
+      return { ...FEATURE_DEFAULTS };
+    }
+  }
 
-	// ----- store reads with safe-default fallbacks -----
+  async readMcpToggles(sessionId: string): Promise<McpToggleSnapshot> {
+    if (!this.#services.mcpToggles) return { servers: {}, tools: {} };
+    try {
+      return await this.#services.mcpToggles.get(sessionId);
+    } catch (err) {
+      console.error('[acp-session-runtime] failed to load mcp toggles:', err);
+      return { servers: {}, tools: {} };
+    }
+  }
 
-	async readFeatures(sessionId: string): Promise<FeatureSnapshot> {
-		if (!this.#services.features) {
-			return { ...FEATURE_DEFAULTS };
-		}
-		try {
-			return await this.#services.features.get(sessionId);
-		} catch (err) {
-			console.error("[acp-session-runtime] failed to load features:", err);
-			return { ...FEATURE_DEFAULTS };
-		}
-	}
+  // Errors swallowed: pool emits its own `error` events, and a
+  // session should remain usable when one MCP server fails.
+  async acquireMcpConnections(sessionId: string, servers: McpServerHttp[]): Promise<void> {
+    await Promise.all(
+      servers.map(async cfg => {
+        try {
+          await this.#services.mcpPool.acquire(sessionId, cfg);
+        } catch (err) {
+          console.error(`[acp-session-runtime] MCP acquire failed for ${cfg.name}:`, err);
+        }
+      })
+    );
+  }
 
-	async readMcpToggles(sessionId: string): Promise<McpToggleSnapshot> {
-		if (!this.#services.mcpToggles) return { servers: {}, tools: {} };
-		try {
-			return await this.#services.mcpToggles.get(sessionId);
-		} catch (err) {
-			console.error("[acp-session-runtime] failed to load mcp toggles:", err);
-			return { servers: {}, tools: {} };
-		}
-	}
+  async releaseMcpConnections(sessionId: string, servers: McpServerHttp[]): Promise<void> {
+    await Promise.all(servers.map(cfg => this.#services.mcpPool.release(sessionId, cfg)));
+  }
 
-	// ----- MCP lifecycle -----
+  // Server-level toggles are filtered upstream in `composeMcpServers`;
+  // here we apply per-tool toggles and skip un-connected servers.
+  mcpToolsForSession(
+    session: SessionState,
+    toggles: McpToggleSnapshot
+  ): AgentTool<TSchema, McpToolDetails>[] {
+    const out: AgentTool<TSchema, McpToolDetails>[] = [];
+    for (const cfg of session.mcpServers) {
+      const client = this.#services.mcpPool.getClient(cfg);
+      if (!client) continue;
+      const tools = this.#services.mcpPool.getTools(cfg);
+      for (const tool of tools) {
+        if (!isToolEnabled(toggles, cfg.name, tool.name)) continue;
+        out.push(createMcpAgentTool({ client, serverName: cfg.name, tool }));
+      }
+    }
+    return out;
+  }
 
-	/**
-	 * Acquire each MCP server for the given session. Errors from the
-	 * pool are swallowed here — the pool already emits `error` events
-	 * that travel through `broadcastMcpPoolEvent`, and the session
-	 * itself should still be usable even if a single MCP server fails
-	 * to connect (the tool simply won't be registered).
-	 */
-	async acquireMcpConnections(sessionId: string, servers: McpServerHttp[]): Promise<void> {
-		await Promise.all(
-			servers.map(async (cfg) => {
-				try {
-					await this.#services.mcpPool.acquire(sessionId, cfg);
-				} catch (err) {
-					console.error(`[acp-session-runtime] MCP acquire failed for ${cfg.name}:`, err);
-				}
-			}),
-		);
-	}
+  // Transient — never persisted; replay rebuilds from the live pool.
+  async broadcastMcpPoolEvent(event: McpPoolEvent): Promise<void> {
+    const affected = new Set<string>();
+    for (const [sessionId, state] of this.#sessions) {
+      if (state.mcpServers.some(cfg => cfg.name === event.server && cfg.url === event.url)) {
+        affected.add(sessionId);
+      }
+    }
+    if (affected.size === 0) return;
+    await Promise.all(
+      [...affected].map(sessionId => {
+        const params: BodhiMcpStateNotificationParams = {
+          sessionId,
+          server: event.server,
+          state: event.type,
+          ...(event.error ? { error: event.error } : {}),
+          ...(event.tools ? { tools: event.tools } : {}),
+        };
+        return this.#conn.extNotification(
+          BODHI_MCP_STATE_NOTIFICATION_METHOD,
+          params as unknown as Record<string, unknown>
+        );
+      })
+    );
+  }
 
-	async releaseMcpConnections(sessionId: string, servers: McpServerHttp[]): Promise<void> {
-		await Promise.all(servers.map((cfg) => this.#services.mcpPool.release(sessionId, cfg)));
-	}
+  async rehydrateInlineFromStore(sessionId: string): Promise<void> {
+    const inline = this.#services.inline;
+    if (!this.#services.store) {
+      inline.clearMessages();
+      this.#activeInlineSessionId = sessionId;
+      return;
+    }
+    const entries = await this.#services.store.readEntries(sessionId);
+    let lastTurnMessages: AgentMessage[] | undefined;
+    await walkEntries(entries, {
+      turn: payload => {
+        if (Array.isArray(payload.finalMessages)) {
+          lastTurnMessages = payload.finalMessages;
+        }
+      },
+    });
+    if (lastTurnMessages) {
+      inline.restoreMessages(lastTurnMessages);
+    } else {
+      inline.clearMessages();
+    }
+    this.#activeInlineSessionId = sessionId;
+  }
 
-	/**
-	 * Build the per-turn MCP tool list for the session by reading the
-	 * cached `tools/list` catalog from the pool and adapting every tool
-	 * into an `AgentTool`. Tools from servers that failed to connect
-	 * are silently omitted. Per-tool toggles filter further here
-	 * (server-level toggles are already applied upstream in
-	 * `composeMcpServers`, so the worker never sees those servers).
-	 */
-	mcpToolsForSession(session: SessionState, toggles: McpToggleSnapshot): AgentTool<TSchema, McpToolDetails>[] {
-		const out: AgentTool<TSchema, McpToolDetails>[] = [];
-		for (const cfg of session.mcpServers) {
-			const client = this.#services.mcpPool.getClient(cfg);
-			if (!client) continue;
-			const tools = this.#services.mcpPool.getTools(cfg);
-			for (const tool of tools) {
-				if (!isToolEnabled(toggles, cfg.name, tool.name)) continue;
-				out.push(createMcpAgentTool({ client, serverName: cfg.name, tool }));
-			}
-		}
-		return out;
-	}
+  // Refresh cached vault commands + prompts, merge with built-ins,
+  // emit `available_commands_update`. Commands win on canonical-name
+  // collisions with prompts; the dropped prompt logs a warning.
+  async refreshAvailableCommands(sessionId: string): Promise<void> {
+    const mounts = this.#services.registry?.list() ?? [];
+    let cmdDefs: CommandDef[] = [];
+    let promptDefs: CommandDef[] = [];
+    if (mounts.length > 0) {
+      try {
+        cmdDefs = await loadCommandsFromVolumes({
+          mounts,
+          fs: this.#services.commandsFs,
+        });
+      } catch (err) {
+        console.error('[acp-session-runtime] command load failed:', err);
+        cmdDefs = [];
+      }
+      try {
+        promptDefs = await loadPromptsFromVolumes({
+          mounts,
+          fs: this.#services.commandsFs,
+        });
+      } catch (err) {
+        console.error('[acp-session-runtime] prompt load failed:', err);
+        promptDefs = [];
+      }
+    }
+    const merged: CommandDef[] = [...cmdDefs];
+    const seenNames = new Set(cmdDefs.map(d => d.name));
+    for (const def of promptDefs) {
+      if (seenNames.has(def.name)) {
+        const existing = cmdDefs.find(d => d.name === def.name);
+        const existingPath = existing
+          ? `/mnt/${existing.source.mountName}/${existing.source.relPath}`
+          : '(unknown command)';
+        console.warn(
+          `[prompts] '${def.name}' from /mnt/${def.source.mountName}/${def.source.relPath} ` +
+            `ignored (command with the same name already registered from ${existingPath})`
+        );
+        continue;
+      }
+      merged.push(def);
+      seenNames.add(def.name);
+    }
+    this.#availableCommands = merged;
+    const availableCommands: AvailableCommand[] = [
+      ...builtinAvailableCommands(),
+      ...merged.map(toAvailableCommand),
+    ];
+    await this.emit({
+      sessionId,
+      update: {
+        sessionUpdate: 'available_commands_update',
+        availableCommands,
+      },
+    });
+  }
 
-	/**
-	 * Forward MCP pool lifecycle events to every known session as a
-	 * `session/update` notification carrying `_meta.bodhi.mcp`. ACP
-	 * doesn't define a first-class transport-level verb, so we ride on
-	 * an empty `agent_message_chunk` — the main thread's hook filters
-	 * by `_meta.bodhi.mcp` before touching the message stream.
-	 *
-	 * These events are **transient**: they describe the live state of
-	 * the worker's pool, which is rebuilt from scratch on every
-	 * `session/load`. We send them to the client directly but do NOT
-	 * persist them via `recordNotification`, because otherwise a
-	 * subsequent `loadSession` would replay stale `connecting` /
-	 * `connected` events after the pool has already emitted a fresh
-	 * `disconnected` (e.g. following a per-server toggle flip).
-	 */
-	async broadcastMcpPoolEvent(event: McpPoolEvent): Promise<void> {
-		const affected = new Set<string>();
-		for (const [sessionId, state] of this.#sessions) {
-			if (state.mcpServers.some((cfg) => cfg.name === event.server && cfg.url === event.url)) {
-				affected.add(sessionId);
-			}
-		}
-		if (affected.size === 0) return;
-		const meta = {
-			bodhi: {
-				mcp: {
-					server: event.server,
-					state: event.type,
-					...(event.error ? { error: event.error } : {}),
-					...(event.tools ? { tools: event.tools } : {}),
-				},
-			},
-		};
-		await Promise.all(
-			[...affected].map((sessionId) =>
-				this.#conn.sessionUpdate({
-					sessionId,
-					update: {
-						sessionUpdate: "agent_message_chunk",
-						content: { type: "text", text: "" },
-					},
-					_meta: meta,
-				} as SessionNotification),
-			),
-		);
-	}
+  async sessionStatsFor(sessionId: string): Promise<{ turnCount: number; messageCount: number }> {
+    const messageCount = this.#services.inline.getMessages().length;
+    if (!this.#services.store) return { turnCount: 0, messageCount };
+    try {
+      const row = await this.#services.store.getSession(sessionId);
+      return { turnCount: row?.turnCount ?? 0, messageCount };
+    } catch {
+      return { turnCount: 0, messageCount };
+    }
+  }
 
-	// ----- inline rehydrate -----
+  mcpConnectedFor(sessionId: string): string[] {
+    const session = this.#sessions.get(sessionId);
+    if (!session) return [];
+    const out: string[] = [];
+    for (const cfg of session.mcpServers) {
+      if (this.#services.mcpPool.getClient(cfg)) out.push(cfg.name);
+    }
+    return out;
+  }
 
-	async rehydrateInlineFromStore(sessionId: string): Promise<void> {
-		const inline = this.#services.inline;
-		if (!this.#services.store) {
-			inline.clearMessages();
-			this.#activeInlineSessionId = sessionId;
-			return;
-		}
-		const entries = await this.#services.store.readEntries(sessionId);
-		let lastTurnMessages: AgentMessage[] | undefined;
-		for (const entry of entries) {
-			if (entry.kind === "turn") {
-				const payload = entry.payload as { finalMessages?: AgentMessage[] };
-				if (Array.isArray(payload.finalMessages)) {
-					lastTurnMessages = payload.finalMessages;
-				}
-			}
-		}
-		if (lastTurnMessages) {
-			inline.restoreMessages(lastTurnMessages);
-		} else {
-			inline.clearMessages();
-		}
-		this.#activeInlineSessionId = sessionId;
-	}
+  // Single exit for persisted session/update notifications. Use for
+  // events that must survive reload; transient events go via
+  // `#conn.extNotification` instead.
+  async emit(notification: SessionNotification): Promise<void> {
+    await this.#conn.sessionUpdate(notification);
+    if (this.#services.store) {
+      try {
+        await this.#services.store.recordNotification(notification.sessionId, notification);
+      } catch (err) {
+        console.error('[acp-session-runtime] failed to persist notification:', err);
+      }
+    }
+  }
 
-	// ----- vault command refresh -----
+  // Send without persisting. Used by built-in replies (persisted as
+  // `'builtin'` instead) and `loadSession` replay (already in store).
+  async sendRawNotification(notification: SessionNotification): Promise<void> {
+    await this.#conn.sessionUpdate(notification);
+  }
 
-	/**
-	 * Refresh the cached vault command list and emit the matching
-	 * `available_commands_update` notification for the given session.
-	 * Called once at the end of `newSession` and `loadSession`. The
-	 * cached `CommandDef[]` is shared across sessions because the vault
-	 * is per-worker, but each notification carries its own `sessionId`
-	 * so the persisted-replay path stays accurate.
-	 *
-	 * M4 phase B: agent-handled built-ins (`/help`, `/version`, …) ride
-	 * the same wire — merged into the advertised list so the picker
-	 * stays a black-box consumer of `AvailableCommand[]`.
-	 *
-	 * M4.2: vault-sourced prompt templates from `<mount>/.pi/prompts/`
-	 * register alongside commands. Both surface as `AvailableCommand`
-	 * (no kind discriminator on the wire); commands win on canonical-
-	 * name collisions and the prompt is dropped with a warning.
-	 */
-	async refreshAvailableCommands(sessionId: string): Promise<void> {
-		const mounts = this.#services.registry?.list() ?? [];
-		let cmdDefs: CommandDef[] = [];
-		let promptDefs: CommandDef[] = [];
-		if (mounts.length > 0) {
-			try {
-				cmdDefs = await loadCommandsFromVolumes({
-					mounts,
-					fs: this.#services.commandsFs,
-				});
-			} catch (err) {
-				console.error("[acp-session-runtime] command load failed:", err);
-				cmdDefs = [];
-			}
-			try {
-				promptDefs = await loadPromptsFromVolumes({
-					mounts,
-					fs: this.#services.commandsFs,
-				});
-			} catch (err) {
-				console.error("[acp-session-runtime] prompt load failed:", err);
-				promptDefs = [];
-			}
-		}
-		const merged: CommandDef[] = [...cmdDefs];
-		const seenNames = new Set(cmdDefs.map((d) => d.name));
-		for (const def of promptDefs) {
-			if (seenNames.has(def.name)) {
-				const existing = cmdDefs.find((d) => d.name === def.name);
-				const existingPath = existing
-					? `/mnt/${existing.source.mountName}/${existing.source.relPath}`
-					: "(unknown command)";
-				console.warn(
-					`[prompts] '${def.name}' from /mnt/${def.source.mountName}/${def.source.relPath} ` +
-						`ignored (command with the same name already registered from ${existingPath})`,
-				);
-				continue;
-			}
-			merged.push(def);
-			seenNames.add(def.name);
-		}
-		this.#availableCommands = merged;
-		const availableCommands: AvailableCommand[] = [...builtinAvailableCommands(), ...merged.map(toAvailableCommand)];
-		await this.emit({
-			sessionId,
-			update: {
-				sessionUpdate: "available_commands_update",
-				availableCommands,
-			},
-		});
-	}
+  // Transient — feature state is reconstructed from the persisted
+  // feature row on every `loadSession`, so no need to persist this.
+  async emitConfigOptionUpdate(
+    sessionId: string,
+    configOptions: SessionConfigOption[]
+  ): Promise<void> {
+    await this.#conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'config_option_update',
+        configOptions,
+      },
+    });
+  }
 
-	// ----- builtin context helpers -----
-
-	async sessionStatsFor(sessionId: string): Promise<{ turnCount: number; messageCount: number }> {
-		const messageCount = this.#services.inline.getMessages().length;
-		if (!this.#services.store) return { turnCount: 0, messageCount };
-		try {
-			const row = await this.#services.store.getSession(sessionId);
-			return { turnCount: row?.turnCount ?? 0, messageCount };
-		} catch {
-			return { turnCount: 0, messageCount };
-		}
-	}
-
-	mcpConnectedFor(sessionId: string): string[] {
-		const session = this.#sessions.get(sessionId);
-		if (!session) return [];
-		const out: string[] = [];
-		for (const cfg of session.mcpServers) {
-			if (this.#services.mcpPool.getClient(cfg)) out.push(cfg.name);
-		}
-		return out;
-	}
-
-	// ----- wire helper -----
-
-	/**
-	 * Single exit point for every persisted `session/update`
-	 * notification. Emits to the client AND persists the notification
-	 * in the session store so `session/load` can re-emit the exact
-	 * same bytes later.
-	 *
-	 * Use this for events that should survive reload. For transient
-	 * events (MCP pool lifecycle), call `#conn.sessionUpdate` directly
-	 * via `broadcastMcpPoolEvent`.
-	 */
-	async emit(notification: SessionNotification): Promise<void> {
-		await this.#conn.sessionUpdate(notification);
-		if (this.#services.store) {
-			try {
-				await this.#services.store.recordNotification(notification.sessionId, notification);
-			} catch (err) {
-				console.error("[acp-session-runtime] failed to persist notification:", err);
-			}
-		}
-	}
-
-	// ----- direct conn passthrough for non-persisted updates -----
-
-	/**
-	 * Send a `session/update` directly to the client without
-	 * persisting. Used by built-in command replies (which persist as
-	 * `'builtin'` entries instead) and `loadSession` replay (where the
-	 * store already has the row).
-	 */
-	async sendRawNotification(notification: SessionNotification): Promise<void> {
-		await this.#conn.sessionUpdate(notification);
-	}
-
-	// ----- teardown -----
-
-	async dispose(): Promise<void> {
-		this.#mcpSubscription();
-		const sessionIds = [...this.#sessions.keys()];
-		await Promise.all(sessionIds.map((id) => this.#services.mcpPool.releaseAll(id)));
-		this.#sessions.clear();
-	}
+  // Unsubscribe MCP events, release every refcount, clear sessions.
+  // Does NOT stop in-flight turns (driver-owned) or touch the store.
+  async dispose(): Promise<void> {
+    this.#mcpSubscription();
+    const sessionIds = [...this.#sessions.keys()];
+    await Promise.all(sessionIds.map(id => this.#services.mcpPool.releaseAll(id)));
+    this.#sessions.clear();
+  }
 }

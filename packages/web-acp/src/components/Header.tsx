@@ -1,9 +1,12 @@
 import { useBodhi, LoginOptionsBuilder, BodhiBadge } from '@bodhiapp/bodhi-js-react';
+import type { InitializeResponse } from '@agentclientprotocol/sdk';
 import { Settings } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import StatusIndicator from './StatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { ensureRuntime, getInitResponse } from '@/acp/runtime';
 import { loadRequestedMcps } from '@/mcp/requested-mcps-store';
 
 export default function Header() {
@@ -22,11 +25,9 @@ export default function Header() {
   } = useBodhi();
 
   /**
-   * Build the login options from the persisted requested-MCPs IDB
-   * list. A brand-new user has an empty list → first login requests
-   * zero MCP scopes; further `addMcpServer` calls happen via the
-   * `/mcp add` built-in (M4 phase B), which mutates the IDB list and
-   * re-triggers `auth.login` with the updated set.
+   * Build login options from the persisted requested-MCP URL list. First
+   * login uses whatever is already in IDB; `/mcp add` mutates that list and
+   * should trigger a fresh `auth.login` with the expanded scope set.
    */
   const handleLogin = async () => {
     const builder = new LoginOptionsBuilder().setFlowType('redirect').setRole('scope_user_user');
@@ -42,6 +43,22 @@ export default function Header() {
   };
 
   const isSettingsLoading = isInitializing || setupState !== 'ready';
+
+  const [initResponse, setInitResponse] = useState<InitializeResponse | null>(getInitResponse());
+  useEffect(() => {
+    let cancelled = false;
+    void ensureRuntime()
+      .initialize.then(() => {
+        if (!cancelled) setInitResponse(getInitResponse());
+      })
+      .catch(() => {
+        // failure surfaces elsewhere; agent label stays absent.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const agentLabel = initResponse?.agentInfo?.title ?? initResponse?.agentInfo?.name ?? null;
 
   return (
     <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
@@ -67,6 +84,15 @@ export default function Header() {
           <span className="text-xs text-gray-600" title="Connection mode">
             mode={clientState.mode || 'unknown'}
           </span>
+          {agentLabel ? (
+            <span
+              data-testid="span-agent-label"
+              className="text-xs text-gray-500"
+              title="Connected ACP agent"
+            >
+              agent={agentLabel}
+            </span>
+          ) : null}
         </div>
 
         <Button
