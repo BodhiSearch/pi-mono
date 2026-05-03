@@ -3,7 +3,7 @@ import { appReady, appReloadReady } from './tests/flows';
 import { FULL_MODEL_ID } from './tests/global-setup';
 
 test.describe('built-ins', () => {
-  test('picker advertisement, /copy no-op + success, /help, /version, /session, /mcp list, reload tagging', async ({
+  test('picker advertisement, /copy no-op + success, /help, /version, /info, /mcp list, reload tagging', async ({
     page,
     context,
     setup,
@@ -25,7 +25,7 @@ test.describe('built-ins', () => {
       await picker.expectOpen();
       await expect.soft(picker.item('help')).toBeVisible();
       await expect.soft(picker.item('version')).toBeVisible();
-      await expect.soft(picker.item('session')).toBeVisible();
+      await expect.soft(picker.item('info')).toBeVisible();
       await expect.soft(picker.item('copy')).toBeVisible();
       await expect.soft(picker.item('mcp')).toBeVisible();
       await chat.fillRaw('');
@@ -50,7 +50,7 @@ test.describe('built-ins', () => {
       await messages.expectBuiltinBadge(1);
       await expect.soft(reply).toContainText('/help');
       await expect.soft(reply).toContainText('/version');
-      await expect.soft(reply).toContainText('/session');
+      await expect.soft(reply).toContainText('/info');
       await expect.soft(reply).toContainText('/copy');
       await expect.soft(reply).toContainText('/mcp');
     });
@@ -63,8 +63,8 @@ test.describe('built-ins', () => {
       await expect(reply).toContainText(/web-acp:/);
     });
 
-    await test.step('/session reply describes the active session', async () => {
-      await chat.send('/session');
+    await test.step('/info reply describes the active session', async () => {
+      await chat.send('/info');
       const reply = messages.bubble(3, 'assistant');
       await reply.waitFor();
       await messages.expectBuiltin(3, 'assistant');
