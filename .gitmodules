@@ -1,3 +1,6 @@
 [submodule "agent-client-protocol"]
 	path = agent-client-protocol
 	url = git@github.com:agentclientprotocol/agent-client-protocol.git
+[submodule "typescript-sdk"]
+	path = typescript-sdk
+	url = git@github.com:agentclientprotocol/typescript-sdk.git
