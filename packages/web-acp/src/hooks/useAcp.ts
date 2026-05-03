@@ -44,7 +44,7 @@ export type { UseVolumesResult };
  * EMPTY_*` gating in one place so consumers see empty fields the
  * instant auth flips rather than stale state from a previous login.
  *
- * See `ai-docs/web-acp/specs/web-acp/` for the engine-split
+ * See `ai-docs/web-acp/specs/web-acp-client/` for the engine-split
  * architecture; the wire surface is byte-identical to the pre-split
  * implementation.
  */

@@ -3,8 +3,8 @@
 **Status:** shipped (commits from `web-acp_m0_phased_rework_eb57e580.plan.md`,
 phases A–D).
 
-**Canonical specs:** [`../specs/web-acp/`](../specs/web-acp/) —
-especially [`startup-sequence.md`](../specs/web-acp/startup-sequence.md)
+**Canonical specs:** [`../specs/web-acp-agent/`](../specs/web-acp-agent/) —
+especially [`startup-sequence.md`](../specs/web-acp-agent/startup-sequence.md)
 for end-to-end "what happens when" across boot, auth, catalog,
 and first prompt.
 
@@ -147,7 +147,7 @@ specs above.
 - **Transport interface shape.** Resolved at Phase C/D: the
   SDK's `{readable, writable}` byte-stream pair via
   `ndJsonStream`. See
-  [`../specs/web-acp/transport.md`](../specs/web-acp/transport.md).
+  [`../specs/web-acp-client/transport.md`](../specs/web-acp-client/transport.md).
 - **Permission policy defaults.** Deferred to M2 — M0 has no
   destructive tools to gate. `requestPermission` throws in the
   main-thread `Client` handler today.

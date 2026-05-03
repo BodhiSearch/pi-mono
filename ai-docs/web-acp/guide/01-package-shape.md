@@ -235,20 +235,34 @@ TCP socket, or two arrays.
 
 ## 1.6 Concrete bootstraps (cheat sheet)
 
+Both hosts import everything below the transport boundary from
+`@bodhiapp/web-acp-agent` — `BodhiProvider`, `createInlineAgent`,
+`createStreamFn`, `assembleServices`, `ZenfsVolumeRegistry`,
+`startAcpAgent`. The host-specific code is the services-bag wiring
+plus the transport adapter, nothing else.
+
 ### Browser — `web-acp` worker
 
-`web-acp/src/agent/agent-worker.ts:startAgent` builds:
+`web-acp/src/agent/agent-worker.ts:startAgent` (the entire
+`web-acp/src/agent/` folder is now this **one file**) builds:
 
 - `BodhiProvider` (the `LlmProvider`)
 - `InlineAgent` over `createStreamFn(provider, consumeOverrides)`
-- Dexie-backed `SessionStore`, `FeatureStore`, `McpToggleStore`
+- Dexie-backed `SessionStore`, `FeatureStore`, `McpToggleStore` from
+  `web-acp/src/runtime/storage-dexie/`
 - `ZenfsVolumeRegistry` + an FSA-handle volume-control side-channel
-- `MessagePort` ↔ stream pair via `createMessagePortStream`
+  (`web-acp/src/runtime/volumes-fsa/`). Volumes arrive as
+  `HostVolumeInit` (FSA handle | dev seed) and are converted to the
+  agent's transport-agnostic `VolumeInit` (constructed `FileSystem`)
+  via `toAgentVolumeInit` before mounting.
+- `MessagePort` ↔ stream pair via
+  `web-acp/src/runtime/transport/worker-stream.ts:createMessagePortStream`
 
-…then assembles via `assembleServices` and constructs
-`AcpAgentAdapter` directly. (The browser worker has not yet been
-migrated to call `startAcpAgent`; both paths produce the same wire
-behaviour. Migration is mechanical when scheduled.)
+…then `assembleServices(...)` and `startAcpAgent(transport, services,
+{ isDev, buildVersion, acpSdkVersion })`. The build constants come
+from Vite `define` globals on the host side and are forwarded across
+the package boundary as plain options — the agent package never sees
+Vite.
 
 ### Node TTY — `cli-acp-client`
 
@@ -260,13 +274,12 @@ behaviour. Migration is mechanical when scheduled.)
   `$cwd` (mounted at `/mnt/cwd`)
 - `createInMemoryDuplex()` returning two `TransformStream` pairs
 
-…then calls `startAcpAgent(duplex.agent, services, options)`. The
-client half of the duplex is wrapped by a `ClientSideConnection` inside
-the same Node process — same bytes on both ends.
+…then `startAcpAgent(duplex.agent, services, options)`. The client
+half of the duplex is wrapped by a `ClientSideConnection` inside the
+same Node process — same bytes on both ends.
 
 The diff between the two hosts is about 200 LoC of services-bag wiring
-plus the transport adapter. Everything else is shared via the agent
-package.
+plus the transport adapter.
 
 ## 1.7 Reading order from here
 
@@ -283,11 +296,24 @@ package.
 
 ### Notes / questions surfaced while drafting
 
-- The web-acp browser worker still imports its own local copy of
-  `acp/agent-adapter.ts` and `engine/services.ts` rather than the
-  published package's. Functionally identical files — extraction is
-  partially complete on the host side. cli-acp-client is the only
-  consumer today that uses the published `startAcpAgent` boot path.
+- **Extraction is now complete on both hosts** (commit `f6fd1859`,
+  "clean up/decoupling of web-acp agent/client"). The browser worker's
+  duplicate copies of `acp/{agent-adapter,engine/*,wire-utils}`,
+  `agent/{bodhi-provider,inline-agent,stream-fn,system-prompt,
+  session-store,commands,mcp,tools,volume-mount,volume-channel}`, plus
+  `features/`, `mcp/toggle-store`, `transport/{worker-stream,
+  volume-control}` are deleted. Everything below the transport now
+  lives only in `@bodhiapp/web-acp-agent`. `web-acp/src/agent/`
+  contains exactly one file — `agent-worker.ts` — and it calls
+  `startAcpAgent(...)` directly, same as `cli-acp-client`.
+- The volume seam in the browser host has a small **two-layer twist**:
+  `web-acp/src/runtime/volumes-fsa/` defines `HostVolumeInit` (FSA
+  handle | dev seed) that travels across the worker `init` postMessage
+  in cloneable form; the worker's `agent-worker.ts:startAgent` then
+  maps each via `toAgentVolumeInit` into the agent package's
+  `VolumeInit` (which carries a fully-constructed ZenFS `FileSystem`).
+  This keeps `@zenfs/dom` out of the agent package — the host
+  constructs the `FileSystem`, the agent only mounts it.
 - `LlmProvider` is the only seam **without** an "interface in the agent
   package, impl in the host" split — the concrete `BodhiProvider`
   ships inside the agent package itself. That's because the catalog-

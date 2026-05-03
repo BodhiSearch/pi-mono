@@ -164,7 +164,7 @@ Deliverables:
   name.
 - Handle-array transfer to the worker via the worker `init`
   payload (structured-cloned; see
-  [`../specs/web-acp/agent.md § agent-worker.ts`](../specs/web-acp/agent.md#agent-workerts)).
+  [`../specs/web-acp-agent/agent.md § agent-worker.ts`](../specs/web-acp-agent/agent.md#agent-workerts)).
 - ZenFS `WebAccess` backend mounted at `/mnt/<name>` **inside
   the worker**, one mount per `VolumeInit`.
 - In-memory dev seed: `window.__zenfsSeed: VolumeSeed[] =
@@ -311,7 +311,7 @@ Deliverables:
   `clientCapabilities.fs`.
 - Documented as "future IDE-integration seam, not used by the
   default bash tool" in the
-  [`../specs/web-acp/vault.md`](../specs/web-acp/vault.md)
+  [`../specs/web-acp-client/volumes.md`](../specs/web-acp-client/volumes.md)
   spec.
 
 **Depends on:** M2.1 (mounts must exist). Independent of
@@ -345,7 +345,7 @@ Deliverables:
   packages/web-acp/src/` returns empty.
 - Milestone status finalised; next prompt
   (`004-m3-mcp-and-native-tools.md`) drafted.
-- Spec index ([`../specs/web-acp/index.md`](../specs/web-acp/index.md))
+- Spec index ([`../specs/web-acp-agent/index.md`](../specs/web-acp-agent/index.md))
   lists every new spec (`vault.md`, `tools.md`,
   `features.md`); no dangling links.
 

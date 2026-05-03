@@ -9,7 +9,8 @@ where) view in one file.
 
 | Spec folder | Package | Role | Source of truth |
 | --- | --- | --- | --- |
-| [`./web-acp/`](./web-acp/index.md) | `packages/web-acp-agent/` (engine) + `packages/web-acp/` (browser host) | Agent runtime + the React/IndexedDB host that ships it as a Web Worker | `packages/web-acp-agent/src/` (agent) and `packages/web-acp/src/` (host) |
+| [`./web-acp-agent/`](./web-acp-agent/index.md) | `packages/web-acp-agent/` | Transport-agnostic ACP agent runtime — engine, providers, MCP, tools, commands, storage interfaces. Consumed by every host. | `packages/web-acp-agent/src/` |
+| [`./web-acp-client/`](./web-acp-client/index.md) | `packages/web-acp/` | Browser host runtime — Vite + React + Web Worker + Dexie + FSA. Consumes the agent package. | `packages/web-acp/src/` |
 | [`./cli-acp-client/`](./cli-acp-client/index.md) | `packages/cli-acp-client/` | Node TTY host that embeds the same agent in-process over an in-memory duplex | `packages/cli-acp-client/src/` |
 
 The split exists to validate the M8 library-extract assertion: the

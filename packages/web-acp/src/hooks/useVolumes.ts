@@ -9,7 +9,7 @@
  *   3. Send mount requests to the worker via `volumeControl`.
  * The hook is intentionally oblivious to ACP — volume mount/unmount is
  * a bootstrap/control concern and sits outside the agent ↔ session
- * wire (documented in `specs/web-acp/vault.md`).
+ * wire (documented in `specs/web-acp-client/volumes.md`).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {

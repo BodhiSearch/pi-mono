@@ -200,8 +200,12 @@ do. Previews are deliberately non-committal — they capture
   phases A–D and for the "M0 hardening follow-up" items
   (second transport, worker-boundary e2e assertion) that were
   cut from the M0 diff. **For current code-level reference,
-  read [`../specs/web-acp/`](../specs/web-acp/) — especially
-  [`startup-sequence.md`](../specs/web-acp/startup-sequence.md).**
+  read the per-package specs at
+  [`../specs/web-acp-agent/`](../specs/web-acp-agent/) (agent runtime)
+  and [`../specs/web-acp-client/`](../specs/web-acp-client/) (browser
+  host) — especially the two startup-sequence narratives at
+  [`../specs/web-acp-agent/startup-sequence.md`](../specs/web-acp-agent/startup-sequence.md)
+  and [`../specs/web-acp-client/startup-sequence.md`](../specs/web-acp-client/startup-sequence.md).**
 - **[m1-sessions.md](m1-sessions.md)** — **shipped.** Load for
   historical reference on the worker-owned Dexie store,
   `session/load` replay, and the `bodhi/getSession` snapshot
@@ -212,9 +216,11 @@ do. Previews are deliberately non-committal — they capture
   the `fs/*` client handlers that live on the main thread as an
   IDE-integration seam (not used by the built-in bash). For
   current code-level reference, read
-  [`../specs/web-acp/vault.md`](../specs/web-acp/vault.md),
-  [`../specs/web-acp/tools.md`](../specs/web-acp/tools.md), and
-  [`../specs/web-acp/features.md`](../specs/web-acp/features.md).
+  [`../specs/web-acp-agent/volumes.md`](../specs/web-acp-agent/volumes.md)
+  + [`../specs/web-acp-client/volumes.md`](../specs/web-acp-client/volumes.md),
+  [`../specs/web-acp-agent/tools.md`](../specs/web-acp-agent/tools.md),
+  and [`../specs/web-acp-agent/features.md`](../specs/web-acp-agent/features.md)
+  + [`../specs/web-acp-client/features.md`](../specs/web-acp-client/features.md).
   The permission bridge that used to live as M2.3 is **deferred**
   to post-M2 — see [deferred.md](deferred.md).
 - **[deferred.md](deferred.md)** — load whenever a deferral
@@ -232,7 +238,8 @@ do. Previews are deliberately non-committal — they capture
   (Dexie v3 + `_bodhi/mcp/toggles/set`), and the `_meta.bodhi.mcp`
   lifecycle notification contract. For current code-level
   reference, read
-  [`../specs/web-acp/mcp.md`](../specs/web-acp/mcp.md).
+  [`../specs/web-acp-agent/mcp.md`](../specs/web-acp-agent/mcp.md)
+  + [`../specs/web-acp-client/mcp.md`](../specs/web-acp-client/mcp.md).
   Provider-native tools were carved out of M3 — see
   [deferred.md](deferred.md).
 - **[m3.5-followups.md](m3.5-followups.md)** — **shipped.** Load
@@ -264,8 +271,9 @@ do. Previews are deliberately non-committal — they capture
   `AvailableCommand` wire shape carries no kind discriminator —
   the picker stays a black-box consumer. For current code-level
   reference, read
-  [`../specs/web-acp/commands.md`](../specs/web-acp/commands.md)
-  and [`../specs/web-acp/sessions.md`](../specs/web-acp/sessions.md)
+  [`../specs/web-acp-agent/commands.md`](../specs/web-acp-agent/commands.md)
+  + [`../specs/web-acp-client/commands.md`](../specs/web-acp-client/commands.md)
+  and [`../specs/web-acp-agent/sessions.md`](../specs/web-acp-agent/sessions.md)
   (the `'builtin'` entry kind doc). Pending sub-milestones:
   M4.2-form (parameter form for templates with named
   parameters); M4.3 skills (`<mount>/.pi/skills/<name>/SKILL.md`,
@@ -312,9 +320,12 @@ answer them speculatively in milestone previews.
 
 ## Cross-cutting references
 
-- **`ai-docs/web-acp/specs/web-acp/`** — living specs for what
-  M0 shipped. Start with
-  [`startup-sequence.md`](../specs/web-acp/startup-sequence.md).
+- **`ai-docs/web-acp/specs/web-acp-agent/`** — agent-runtime
+  living specs. Start with
+  [`startup-sequence.md`](../specs/web-acp-agent/startup-sequence.md).
+- **`ai-docs/web-acp/specs/web-acp-client/`** — browser host
+  living specs. Start with
+  [`startup-sequence.md`](../specs/web-acp-client/startup-sequence.md).
 - **`ai-docs/web-acp/steering/00-vision.md`** — north star.
 - **`ai-docs/web-acp/steering/01-goals.md`** — capability checklist
   with test seams.

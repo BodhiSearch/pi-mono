@@ -240,7 +240,7 @@ point a Node-hosted agent can legitimately spawn stdio servers).
 
 ## Cross-references
 
-- Spec: [`../specs/web-acp/mcp.md`](../specs/web-acp/mcp.md) —
+- Spec: [`../specs/web-acp-agent/mcp.md`](../specs/web-acp-agent/mcp.md) —
   current living reference for `src/mcp/` + `src/agent/mcp/`.
 - Parent index: [`./index.md`](./index.md).
 - Deferred items: [`./deferred.md`](./deferred.md) — provider-

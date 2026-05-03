@@ -26,7 +26,8 @@ Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `p
 - @ai-docs/web-acp/steering/02-architecture.md — layer cake, transport boundary, ZenFS + ACP fs/* mapping
 - @ai-docs/web-acp/steering/04-principles.md
 - @ai-docs/web-acp/milestones/index.md — status board with load-when hooks
-- @ai-docs/web-acp/specs/web-acp/index.md — agent + browser-host living spec
+- @ai-docs/web-acp/specs/web-acp-agent/index.md — transport-agnostic agent runtime spec
+- @ai-docs/web-acp/specs/web-acp-client/index.md — browser host runtime spec
 - @ai-docs/web-acp/specs/cli-acp-client/index.md — Node CLI host living spec
 
 ### Reference (web-agent archive)

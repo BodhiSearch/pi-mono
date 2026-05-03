@@ -63,7 +63,7 @@ export class AcpClient {
       clientCapabilities: {
         // M2.3: advertise `fs/*` as an IDE-integration seam. Built-in
         // `bash` never calls these — external ACP agents do (see
-        // `specs/web-acp/vault.md`).
+        // `specs/web-acp-client/volumes.md`).
         fs: { readTextFile: true, writeTextFile: true },
       },
     });

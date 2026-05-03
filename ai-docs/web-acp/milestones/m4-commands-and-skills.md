@@ -16,9 +16,9 @@
   from its own `messages` state (filter non-conversational, render
   `**You:**`/`**Assistant:**` blocks) so wire and storage stay
   minimal. Spec at
-  [`../specs/web-acp/commands.md`](../specs/web-acp/commands.md);
+  [`../specs/web-acp-agent/commands.md`](../specs/web-acp-agent/commands.md);
   the new entry kind is documented in
-  [`../specs/web-acp/sessions.md`](../specs/web-acp/sessions.md).
+  [`../specs/web-acp-agent/sessions.md`](../specs/web-acp-agent/sessions.md).
 - **M4.2 — prompt templates (first slice).** Shipped.
   `<mount>/.pi/prompts/**/*.md` discovery via the same
   `loadFromVolumes` helper as commands; merged into

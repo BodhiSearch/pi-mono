@@ -112,5 +112,6 @@ benefits:
 ## See also
 
 - [Living spec](../../web-acp/specs/cli-acp-client/index.md)
-- [Web-acp counterpart](../../web-acp/specs/web-acp/index.md)
+- [Web-acp browser host counterpart](../../web-acp/specs/web-acp-client/index.md)
+- [Shared agent runtime](../../web-acp/specs/web-acp-agent/index.md)
 - Agent runtime spec: [`packages/web-acp-agent/`](../../../packages/web-acp-agent/)

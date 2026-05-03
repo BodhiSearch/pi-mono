@@ -8,7 +8,7 @@
  * agent worker can hand a ready-to-use `StreamableHTTPClientTransport`
  * to the MCP SDK without ever touching the token. When the token
  * rotates the CLI host re-issues `session/load` to rebuild the pool
- * with a fresh header — see `specs/web-acp/mcp.md`.
+ * with a fresh header — see `specs/web-acp-agent/mcp.md`.
  */
 
 import type { McpServerHttp } from '@agentclientprotocol/sdk';

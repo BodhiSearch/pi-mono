@@ -42,8 +42,11 @@ runtime that has WHATWG streams + `crypto.randomUUID()` + `fetch`.
 
 ## Architecture pointer
 
-See [`ai-docs/web-acp/specs/web-acp/index.md`](../../ai-docs/web-acp/specs/web-acp/index.md)
-for the layering and per-module specs. Anything that lived under
+See [`ai-docs/web-acp/specs/web-acp-agent/index.md`](../../ai-docs/web-acp/specs/web-acp-agent/index.md)
+for the layering and per-module specs of this package. The browser host
+that consumes it is documented at
+[`ai-docs/web-acp/specs/web-acp-client/index.md`](../../ai-docs/web-acp/specs/web-acp-client/index.md).
+Anything that lived under
 `packages/web-acp/src/{acp,agent,features,mcp/toggle-store,mcp/url-canonical}`
 is now here.
 

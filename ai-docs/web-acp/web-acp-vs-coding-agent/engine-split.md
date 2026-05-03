@@ -83,5 +83,5 @@ difference.
 
 - Architecture diagram: `../steering/02-architecture.md`
 - Wire concerns vs engine concerns explained: `../web-acp-vs-standard-acp/engine-split.md`
-- Spec file map: `../specs/web-acp/index.md`
+- Spec file map: `../specs/web-acp-agent/index.md`
 - Refactor plan that drove this: `../../packages/coding-agent/src/ai-docs/plans/lets-plan-this-refactor-glowing-donut.md`

@@ -36,7 +36,7 @@ export const BODHI_FEATURES_SET_METHOD = '_bodhi/features/set';
 
 // M3 phase B: per-session MCP server / tool toggles. Defaults are all
 // "on"; only explicit overrides travel on the wire. See
-// `specs/web-acp/mcp.md` for the snapshot contract returned via
+// `specs/web-acp-agent/mcp.md` for the snapshot contract returned via
 // `bodhi/getSession` and the mutation handler below.
 export const BODHI_MCP_TOGGLES_SET_METHOD = '_bodhi/mcp/toggles/set';
 

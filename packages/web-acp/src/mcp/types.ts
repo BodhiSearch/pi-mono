@@ -38,7 +38,7 @@ export interface McpConnectionMeta {
  * carrier — ACP doesn't define a first-class verb for transport-level
  * events, but `_meta.bodhi.mcp` is the spec-sanctioned way to stamp
  * our own payload onto an otherwise well-formed update. See
- * `specs/web-acp/mcp.md` for the wire contract.
+ * `specs/web-acp-client/mcp.md` for the wire contract.
  */
 export interface BodhiMcpUpdateMeta {
   bodhi?: {

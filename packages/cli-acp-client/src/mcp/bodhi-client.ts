@@ -5,7 +5,7 @@
  * `bodhi-js-core`) to fetch the user's MCP instance catalog. The CLI
  * runs in plain Node with no React surface, so we drop a hand-rolled
  * `fetch` against the same endpoint instead of pulling the whole
- * SDK. The shape is documented in `specs/web-acp/mcp.md`.
+ * SDK. The shape is documented in `specs/web-acp-agent/mcp.md`.
  *
  * Auth: the caller passes the current Bodhi access token; we attach
  * it as `Authorization: Bearer <token>`. The CLI mirrors the

@@ -10,7 +10,7 @@
  * are structured-cloneable and the underlying storage is shared by
  * the OS, so both realms see the same bytes.
  *
- * Caveat (documented in `specs/web-acp/vault.md`): two backends behind
+ * Caveat (documented in `specs/web-acp-client/volumes.md`): two backends behind
  * the same handle don't coordinate writes. The built-in `bash` tool
  * never calls `fs/*`, so this is purely a seam for external ACP
  * agents; concurrent writes from inside and outside the worker are

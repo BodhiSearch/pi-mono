@@ -45,4 +45,5 @@ Delete the directory to reset.
 
 - Plan: `.cursor/plans/cli-acp-client_↔_web-acp_parity_bridge_*.plan.md`
 - Living spec: `ai-docs/web-acp/specs/cli-acp-client/index.md`
-- Sister host: `ai-docs/web-acp/specs/web-acp/index.md`
+- Sister host: `ai-docs/web-acp/specs/web-acp-client/index.md`
+- Shared agent runtime: `ai-docs/web-acp/specs/web-acp-agent/index.md`

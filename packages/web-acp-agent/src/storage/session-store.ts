@@ -99,7 +99,7 @@ export interface FeatureRow {
  * user's per-server on/off flags and, nested under each server slug,
  * per-tool on/off flags. Added in M3 phase B; see
  * `mcp-toggle-store.ts` for the wrapper contract and
- * `specs/web-acp/mcp.md` for the public wire shape returned by
+ * `specs/web-acp-agent/mcp.md` for the public wire shape returned by
  * `bodhi/getSession` + mutated via `_bodhi/mcp/toggles/set`.
  *
  * Semantics:

@@ -9,7 +9,7 @@ import type { McpInstanceView } from './types';
  * authoritative source is `bodhiClient.mcps.list()`, so every time auth
  * changes (login, logout, token rotation) or the hook remounts we
  * re-fetch. The live-only decision is documented in
- * `specs/web-acp/mcp.md`.
+ * `specs/web-acp-client/mcp.md`.
  */
 export interface UseMcpInstancesResult {
   instances: McpInstanceView[];
