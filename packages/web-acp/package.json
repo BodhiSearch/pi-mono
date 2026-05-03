@@ -23,7 +23,7 @@
     "ci:test:e2e": "cross-env CI=true playwright test"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.17.0",
+    "@agentclientprotocol/sdk": "0.21.0",
     "@bodhiapp/bodhi-js-react": "^0.0.37",
     "@bodhiapp/web-acp-agent": "*",
     "@mariozechner/pi-agent-core": "^0.67.3",

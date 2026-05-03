@@ -27,7 +27,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.17.0",
+    "@agentclientprotocol/sdk": "0.21.0",
     "@mariozechner/pi-agent-core": "^0.67.3",
     "@mariozechner/pi-ai": "^0.67.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
