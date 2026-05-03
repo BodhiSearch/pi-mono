@@ -182,7 +182,7 @@ On the first `init`:
     acpSdkVersion })`. The agent is now ready to receive ACP
     requests.
 
-The whole worker boot is ~75 lines (`agent/agent-worker.ts`).
+The whole worker boot is ~96 lines (`agent/agent-worker.ts`).
 Everything beyond this point is the host-neutral agent flow
 documented at
 [`../web-acp-agent/startup-sequence.md`](../web-acp-agent/startup-sequence.md).
@@ -240,10 +240,14 @@ the worker is authenticated.
 `useAcpStreaming.sendMessage(prompt)` is the user's first
 prompt action. Internally:
 
-1. `await ensureSession()` (from `useAcpSession`):
+1. `await getAuthPromise()` first — `useAcpStreaming.sendMessage`
+   waits on the Phase-5 auth slice to settle before issuing
+   any prompt-side work, so token rotation finishes before
+   the first request goes out.
+2. `await ensureSession()` (from `useAcpSession`):
    - If `getSession()` returns an id, return it.
    - Otherwise:
-     - `await getAuthPromise` (Phase 5 settles first).
+     - `await runtime.initialize` (Worker `init` settled).
      - `composedMcpServers = composeMcpServers(
        mcpInstances, jwt, baseUrl, mcpToggles)`.
      - `composedSessionMeta = composeSessionMeta(
@@ -252,25 +256,25 @@ prompt action. Internally:
        — Phase 5 in the agent's flow.
      - `setSession(response.sessionId)` and
        `refreshFeatures(sessionId)`.
-2. `streamingDispatch({ type: 'turn-start', userMessage })`
+3. `streamingDispatch({ type: 'turn-start', userMessage })`
    — appends the user message; clears streaming;
    `isStreaming: true`.
-3. Detect built-in invocation client-side via
+4. Detect built-in invocation client-side via
    `detectBuiltinTag` so the user bubble gets the muted
    styling pre-emptively.
-4. `client.prompt(sessionId, prompt, selectedModel)` — Phase
+5. `client.prompt(sessionId, prompt, selectedModel)` — Phase
    6 in the agent's flow. The reducer ingests every
    `session/update` notification while the prompt resolves.
-5. After resolve: `streamingDispatch({ type: 'turn-end',
+6. After resolve: `streamingDispatch({ type: 'turn-end',
    finalMessage: streamingMessageRef.current, stopReason
    })`.
-6. If the final message carries a `_builtin.action` (via
+7. If the final message carries a `_builtin.action` (via
    `getBuiltinTag(finalMsg)`): call `dispatchAction(action,
    messagesRef.current)` — host-side action dispatch, see
    [`commands.md`](./commands.md). `messagesRef.current` is
    snapshotted *before* the appended built-in pair, giving
    `/copy` the LLM-only conversation.
-7. `void refreshSessions()` so the picker reflects the new
+8. `void refreshSessions()` so the picker reflects the new
    `updatedAt` / `turnCount`.
 
 After step 6 the session is live; subsequent `sendMessage`

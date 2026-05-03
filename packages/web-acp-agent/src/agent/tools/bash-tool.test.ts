@@ -1,6 +1,6 @@
 import { umount } from "@zenfs/core/vfs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildSeedInit } from "../../test/seed-volume";
+import { buildSeedInit } from "../../test-utils/seed-volume";
 import { ZenfsVolumeRegistry } from "../volume-registry";
 import { BASH_OUTPUT_BYTE_LIMIT, createBashTool } from "./bash-tool";
 

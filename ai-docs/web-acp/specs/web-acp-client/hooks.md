@@ -24,7 +24,9 @@ order, threads cross-hook callbacks (e.g. `useAcpStreaming`
 calls `refreshSessions` from `useAcpSession`), and gates the
 returned values on `isAuthenticated`.
 
-Mount order (matches dataflow):
+Mount order (matches dataflow). Eight slice hooks plus one
+React primitive `useReducer` call interleaved between the
+auth and session slices:
 
 1. `useMcpInstances()` — Bodhi catalog watcher (live fetch).
 2. `useAcpModels(isAuthenticated, setError)` — model catalog state.
@@ -32,7 +34,7 @@ Mount order (matches dataflow):
 4. `useAcpRuntime()` — runtime singleton + volumes.
 5. `useAcpMcp({ setError, mcpInstances })` — toggle store + composer + dispatcher.
 6. `useAcpAuth({ ...mutators })` — observes Bodhi auth, drives `authenticate`+`listModels`.
-7. `useReducer(streamingReducer, initialStreamingState)` — streaming state.
+7. `useReducer(streamingReducer, initialStreamingState)` — primitive React call (not a slice hook), wires the streaming state machine.
 8. `useAcpSession({ ...mutators, streamingDispatch })` — `ensureSession`, `loadSession`, `clearMessages`, `deleteSession`.
 9. `useAcpStreaming({ state, dispatch, ... })` — `sendMessage`, `stop`, `session/update` subscription.
 
@@ -47,9 +49,16 @@ selectedModel, setSelectedModel, sendMessage, stop, error,
 clearError, sessions, currentSessionId, isLoadingSession,
 loadSession, clearMessages, deleteSession, isStreaming,
 toolCalls, isAuthenticated, refreshSessions, volumes,
-features, featureDefaults, setFeature, mcpInstances,
-mcpStates, mcpToggles, setMcpToggle, dispatchAction,
-availableCommands }`.
+features, featureDefaults, setFeature, clearFeatures,
+mcp, availableCommands }`. The MCP slice is grouped under a
+single nested key — `mcp: { instances, states, toggles,
+isLoading, error, refresh, setToggle }` — so consumers
+destructure `const { mcp } = useAcp()` and read
+`mcp.instances`, `mcp.toggles`, `mcp.setToggle`. The internal
+`dispatchAction` callback is **not** re-exported on the
+facade return; it's threaded as a `useAcpStreaming` dep
+inside the hook and stays internal. Consumer reference:
+`components/chat/ChatDemo.tsx:33`.
 
 ## Slice hooks
 
@@ -115,18 +124,21 @@ while `setFeature(key, value)` reads the active session from
 the runtime singleton.
 
 Returns `{ features, featureDefaults, refreshFeatures,
-setFeature, clearFeatures }`. The `featureDefaults` field
-mirrors the agent's `FEATURE_DEFAULTS` so the UI can render
-"is this at default?" badges without a separate fetch.
+setFeature, clearFeatures }`. `featureDefaults` is **state**,
+not a static mirror — it is populated by the worker's
+per-call response (`payload.defaults`) inside
+`refreshFeatures`. The agent today returns the agent-package
+`FEATURE_DEFAULTS` verbatim, but the UI must not assume that
+contract; treat `featureDefaults` as session-derived.
 
 ### `useAcpMcp` — `hooks/useAcpMcp.ts`
 
 The MCP composition + toggle slice. Owns:
 
 - `mcpToggles: McpToggleSnapshot` — current toggle state, reset on `clearFeatures` / `loadSession`.
-- `setMcpToggles(toggles)` — full snapshot replace (from `bodhi/getSession` rebuild).
+- `setMcpToggles(toggles)` — React setter exposed for `useAcpSession.ts` to call after `bodhi/getSession`'s snapshot rebuild (full toggle-snapshot replace).
 - `setMcpToggle(serverSlug, value, toolName?)` — single-key mutate via `client.setMcpToggle`. Server-level changes re-issue `client.loadSession` so the agent re-acquires under the new server set.
-- `composeCurrentMcpServers(token, baseUrl, mcpInstances?)` — joins instance catalog + JWT + server-level toggle filter into the `McpServerHttp[]` payload `loadSession` expects. Calls `compose-mcp-servers.ts:composeMcpServers`.
+- `composeCurrentMcpServers(toggles?: McpToggleSnapshot)` — joins instance catalog + JWT + server-level toggle filter into the `McpServerHttp[]` payload `loadSession` expects. The token + `baseUrl` are read from `useBodhi`'s `auth.accessToken` and `bodhiClient.getState()` **inside the closure** — they are not parameters. Calls `compose-mcp-servers.ts:composeMcpServers` after the lookup.
 - `dispatchAction(action, messages)` — proxies into `acp/builtin-dispatch.ts:dispatchBuiltinAction`, passing the live `triggerLogin` closure.
 - Refs (`mcpInstancesRef`, `mcpTogglesRef`, `requestedMcpUrlsRef`) — mutable views of the latest values, useful for `useAcpAuth`/`useAcpSession` callbacks that don't want a re-render dependency on a fast-changing object.
 
@@ -152,7 +164,16 @@ Session lifecycle slice. Owns:
 - `clearMessages()` — `streamingDispatch({ type: 'reset' })` + `clearFeatures()` + un-set the active session id.
 - `deleteSession(sessionId)` — `client.deleteSession`; if active, also `clearMessages`. Fires `refreshSessions` on success.
 
-Boot effect: when `isAuthenticated && mcpInstancesIsReady` flip true, calls `refreshSessions()`.
+Boot effects (two separate `useEffect`s, do not collapse them
+in your head):
+
+1. `refreshSessions()` runs unconditionally on mount and
+   whenever its deps flip — the function itself gates on
+   `isAuthenticated` internally and clears state on logout.
+2. The auto-`ensureSession` effect is gated on
+   `isAuthenticated && mcpInstancesIsReady` and lazily creates
+   a fresh session when the user is authenticated and the MCP
+   catalog is ready but no `currentSessionId` exists yet.
 
 ### `useAcpStreaming` — `hooks/useAcpStreaming.ts`
 
@@ -163,7 +184,7 @@ The prompt-turn loop + `session/update` listener.
     1. `await ensureSession()`.
     2. Build the user message, detect a built-in tag via `detectBuiltinTag`, dispatch `'turn-start'`.
     3. `client.prompt(sessionId, prompt, selectedModel)`.
-    4. After resolve: dispatch `'turn-end'` with `finalMessage` from the `streamingMessageRef` (which the reducer kept up to date).
+    4. After resolve: dispatch `'turn-end'` with `finalMessage` from the `streamingMessageRef`. The ref is **not** updated by the reducer (the reducer is pure) — it is synced via a side-effect `useEffect` listening on `state.streamingMessage` so the imperative `sendMessage` callback can read the latest assistant message at resolve time without a re-render dependency.
     5. If the final message carries a `_builtin.action`, call `dispatchAction(action, messagesRef.current)` — note `messagesRef.current` is snapshotted *before* the appended built-in pair, giving `/copy` the LLM-only conversation.
 - `stop()` — `client.cancel(sessionId)`.
 - `clearError()` — `setError(null)`.

@@ -148,10 +148,18 @@ UI surface for the MCP catalog. Renders:
   flip → `setMcpToggle(slug, value, toolName)` (no
   `loadSession` re-issue — the agent applies tool-level
   filtering per turn).
-- Add server affordance: textarea + button. On submit calls
-  the `mcp-add` built-in action via `dispatchAction`.
-- Remove affordance: per-row trash icon → `mcp-remove`
-  action.
+- The panel renders **status + toggles only**. There is no
+  in-panel add-server textarea and no per-row trash icon.
+  Mutation of the requested-MCP list flows through the
+  agent-side built-in slash commands `/mcp add <url>` and
+  `/mcp remove <url>` (see [commands.md](./commands.md)) —
+  the agent emits an `_meta.bodhi.builtin.action` payload of
+  kind `'mcp-add'` / `'mcp-remove'`, the streaming reducer
+  carries the tag onto the assistant message, and
+  `useAcpStreaming` forwards the action to
+  `acp/builtin-dispatch.ts:dispatchBuiltinAction` after the
+  turn resolves. The dispatcher writes to the IDB requested
+  list and re-issues Bodhi auth via `triggerLogin`.
 
 The panel is part of the host's reference UI (the components
 folder); when the host-runtime is extracted (M8) the panel

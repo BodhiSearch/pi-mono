@@ -59,8 +59,12 @@ interface PoolEntry {
 ```
 
 Keying: `keyOf(config) = config.url`. Auth fingerprint:
-`fingerprintOf(config) = JSON.stringify(headers...)` (canonical
-sort).
+`fingerprintOf(config)` returns the **`Authorization` header
+value only** — a case-insensitive name match over
+`config.headers`, the first match's value, or `''` when no
+`Authorization` is present. Header changes other than
+`Authorization` (e.g. `X-Custom-*`) do **not** evict the pool
+entry; the connection is reused.
 
 ### `acquire(sessionId, config)` — `:88`
 
@@ -68,8 +72,11 @@ sort).
 2. If present + same fingerprint → register `refs.add(sessionId)`,
    return `{ client, tools }`.
 3. If present but fingerprint changed (e.g. JWT rotated) →
-   evict via `#evict(key, existing)` (releases refs, closes
-   client, emits `disconnected`) before reconnecting.
+   evict via `#evict(key, existing)` (deletes the pool entry,
+   closes the client, emits `disconnected`) before reconnecting.
+   `#evict` does not iterate `entry.refs`; sessions tracked
+   under the old fingerprint are silently abandoned because the
+   entry is gone.
 4. Emit `connecting` lifecycle event.
 5. Call `createMcpClient(config)`. On failure: emit `error`
    event and rethrow.
@@ -87,8 +94,13 @@ removes the entry, calls `close()`, emits `disconnected`.
 ### `releaseAll(sessionId)`
 
 Iterates the pool and releases every entry the session holds.
-Called by the wire shim's `dispose()` and by `loadSession`
-when re-acquiring under different headers.
+Called by `runtime.dispose()` (per-session cleanup at
+`session-runtime.ts:386`) and by `sessions-delete.ts:22`
+(top-of-handler teardown). `loadSession` does **not** call
+`releaseAll`; it calls `releaseMcpConnections(sessionId,
+existing.mcpServers)` (the per-session, per-server release on
+the runtime) so only the previously-held servers are released
+before re-acquiring under the request's headers.
 
 ### `getClient(config)` / `getTools(config)`
 
@@ -116,7 +128,26 @@ unregister fn. The engine layer subscribes once at
 affected sessions via `_meta.bodhi.mcp` riding an empty
 `agent_message_chunk`. **Events are transient** — never
 persisted — see `acp/engine/session-runtime.ts:broadcastMcpPoolEvent`
-for the rationale.
+(`:201-209`) for the rationale.
+
+Wire-envelope shape (the meta object the host receives):
+```ts
+_meta: {
+  bodhi: {
+    mcp: {
+      state: McpPoolEventType;   // 'connecting' | 'connected'
+                                 // | 'error' | 'disconnected'
+      server: string;            // server slug
+      url: string;
+      tools?: string[];          // present on 'connected'
+      error?: string;            // present on 'error'
+    }
+  }
+}
+```
+The agent renames the pool's `type` field to `state` on the
+wire so the host's reducer key naming stays `state` — that is
+the only field rename across the boundary.
 
 ## Tool adapter — `agent/mcp/tool-adapter.ts:createMcpAgentTool`
 
@@ -138,7 +169,9 @@ toolName)`).
    || '<fullName> reported an error')`. The driver's
    `tool_execution_end` path with `isError: true` rides this through
    to `tool_call_update.status = 'failed'`.
-5. Otherwise return `{ content, details }`.
+5. Otherwise filter `content` to text-only blocks (image / audio
+   blocks drop from the LLM-visible array but are preserved on
+   `details`), then return `{ content, details }`.
 
 Schema handling: MCP descriptors carry raw JSON Schema; we
 wrap with `Type.Unsafe<Record<string, unknown>>(tool.inputSchema)
@@ -212,7 +245,8 @@ non-ASCII paths, preserves query + fragment.
 `deriveSlugFromUrl(input)` — best-effort match against
 `bodhiClient.mcps.list()` entries when the slug field doesn't
 match by exact URL. Walks the host labels (skipping the generic
-ones — `mcp`, `api`, `www`) and the path segments to find the
+ones — `mcp`, `api`, `www` and also any `localhost` host —
+see `url-canonical.ts:60`) and the path segments to find the
 most distinctive label.
 
 ## Engine integration

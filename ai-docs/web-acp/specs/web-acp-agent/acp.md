@@ -48,7 +48,7 @@ ACP method implementations:
 | `initialize` | `:73` | Returns `protocolVersion: 1`, advertises `agentCapabilities.loadSession = (services.store !== undefined)`, `mcpCapabilities.http = true / sse = false`, `promptCapabilities.{image,audio,embeddedContext} = false`, the single auth method `bodhi-token`. |
 | `authenticate` | `:98` | Validates `methodId === BODHI_AUTH_METHOD_ID`; reads `_meta` as `BodhiAuthenticateMeta { token, baseUrl }`; calls `services.bodhi.setAuthToken({ provider: 'bodhi', token, baseUrl })`. Resets the runtime model cache (`#runtime.setModels([])`) and the inline agent's history (`services.inline.clearMessages()`) so the next `listModels` re-fetches under the new token. |
 | `newSession` | `:117` | Mints `sessionId = bodhi-${crypto.randomUUID()}`, filters MCP servers via `wire-utils.ts:filterHttpServers`, extracts `requestedMcpUrls` + `mcpInstances` via `wire-utils.ts:extractSessionMeta`, populates `runtime.setSession`, calls `services.store?.createSession(sessionId)`, clears inline history, marks the inline session active, acquires MCP connections, and refreshes the available-commands cache. |
-| `loadSession` | `:150` | Replays a persisted session: validates the row exists, re-acquires MCP connections under the request's headers (releasing the old config first), reads every entry via `services.store.readEntries`, re-emits each `'notification'` entry verbatim through `runtime.sendRawNotification` (no double-persist), and reseeds the inline agent's history from the last `'turn'` entry's `finalMessages`. |
+| `loadSession` | `:150` | Replays a persisted session: validates the row exists, re-acquires MCP connections under the request's headers (when an existing session record exists, releases only its previously-held servers via `releaseMcpConnections(sessionId, existing.mcpServers)` before re-acquiring; on first load there is nothing to release), reads every entry via `services.store.readEntries`, re-emits each `'notification'` entry verbatim through `runtime.sendRawNotification` (no double-persist; `'turn'` and `'builtin'` entries skip the wire path), and reseeds the inline agent's history from the last `'turn'` entry's `finalMessages`. |
 | `prompt` | `:201` | Single-line passthrough to `#driver.run(params)`. |
 | `cancel` | `:205` | Calls `#driver.abort()`. |
 | `extMethod` | `:209` | Dispatches `_bodhi/*` and `bodhi/*` methods via `dispatchExtMethod(method, params, this.#extMethodHost())`. |
@@ -112,8 +112,11 @@ Lifecycle orchestrator. Owns:
   across sessions because the vault is per-worker.
 - **LLM model catalog** (`#models`) — populated by `listModels`
   and reset by `authenticate`.
-- **MCP pool subscription** — `subscribe(broadcastMcpPoolEvent)`
-  in the constructor, unsubscribed in `dispose`.
+- **MCP pool subscription** — the constructor calls
+  `services.mcpPool.subscribe((event) => { void
+  this.broadcastMcpPoolEvent(event); })` (a wrapper closure
+  that retains `this` binding); the unsubscribe handle is
+  released in `dispose`.
 
 Notable methods (cite when extending):
 
@@ -265,10 +268,12 @@ The reply rides `agent_message_chunk` with
 the discriminated `BodhiBuiltinAction<K, P>` union (see
 [commands.md](./commands.md)). Persistence rides through
 `store.recordBuiltin(sessionId, { command, userText, replyText,
-action? })`. Built-in replies use `runtime.sendRawNotification`
-internally — they do **not** double-persist as
-`'notification'` entries; the `'builtin'` entry is the source
-of truth for replay.
+action? })`. Built-in replies emit directly via
+`conn.sessionUpdate(...)` (the SDK call) inside
+`builtin-dispatch.ts` — they do **not** route through
+`runtime.sendRawNotification` and do **not** double-persist
+as `'notification'` entries; the `'builtin'` entry is the
+source of truth for replay.
 
 ### `acp/engine/ext-methods/`
 
@@ -285,9 +290,9 @@ to handlers and the public dispatcher
 | `get-session.ts:getSession` | `bodhi/getSession` | Validates the session row exists; returns the rebuilt snapshot (`messages`, `lastModelId`, `title`, `mcpToggles`) by interleaving stored `'turn'` and `'builtin'` entries. The `BodhiBuiltinTag` marker is stamped on the user/assistant pair so the host can render the muted-builtin badge. |
 | `volumes-list.ts:volumesList` | `_bodhi/volumes/list` | Returns `{ volumes: host.registry?.list() }` mapped to `BodhiVolumeDescriptor`. |
 | `features-list.ts:featuresList` | `_bodhi/features/list` | Validates `params.sessionId`; returns `{ features: host.readFeatures(sessionId), defaults: FEATURE_DEFAULTS }`. |
-| `features-set.ts:featuresSet` | `_bodhi/features/set` | Validates `{ sessionId, key, value }`; rejects unknown keys via `isFeatureKey`; rejects `forceToolCall` when `!host.isDev` (throws with `code: -32004`); persists via `host.features.setKey` + returns the updated bag. |
-| `mcp-toggles-set.ts:mcpTogglesSet` | `_bodhi/mcp/toggles/set` | Validates the params shape (server-only override OR `{serverSlug, toolName}`); persists via `host.mcpToggles.set`; returns the wire snapshot via `wire-utils.ts:toWireMcpToggles`. |
-| `sessions-delete.ts:sessionsDelete` | `_bodhi/sessions/delete` | Idempotent: returns `{ deleted: false }` when the row is unknown. Drops the in-memory session entry first via `host.sessions.delete`, then `store.deleteSession` for the row + entries + features + mcpToggles cleanup. |
+| `features-set.ts:featuresSet` | `_bodhi/features/set` | Validates `{ sessionId, key, value }`; rejects unknown keys via `isFeatureKey`; rejects `forceToolCall` when `!host.isDev` (throws with `code: -32004`); persists via `host.features.set(sessionId, key, value)` + returns the updated bag. |
+| `mcp-toggles-set.ts:mcpTogglesSet` | `_bodhi/mcp/toggles/set` | Validates the params shape (server-only override OR `{serverSlug, toolName}`); dispatches to `host.mcpToggles.setServer` or `host.mcpToggles.setTool` based on whether `toolName` is present (the `McpToggleStore` interface has no flat `set`); returns the wire snapshot via `wire-utils.ts:toWireMcpToggles`. |
+| `sessions-delete.ts:sessionsDelete` | `_bodhi/sessions/delete` | Idempotent: returns `{ deleted: false }` when the row is unknown. Order: `host.mcpPool.releaseAll(sessionId)` → `host.sessions.delete(sessionId)` → clear inline messages if this is the active inline session → `host.store.deleteSession` for the row + entries + features + mcpToggles cleanup. |
 
 When upstream ACP adds a stable verb for one of these
 (e.g. `session/list`, `session/delete`), the migration is the
@@ -297,13 +302,15 @@ two-step capability-gated swap documented in
 ## Permissions — `acp/permissions.ts`
 
 `permissions.ts:requestPermissionStub` is the deferred bridge
-for `session/request_permission`. Always returns
-`{ outcome: { allow: true } }`. The just-bash transform plugin
+for `session/request_permission`. **Throws** an `Error`
+(`requestPermission: not supported in web-acp M0`) — the
+M0 permission bridge is not implemented; the bash tool runs
+without invoking it. The just-bash transform plugin
 classifier + persistent allow-always semantics are tracked in
 `milestones/deferred.md` and re-enter at a post-M2 milestone
 kickoff. The stub is exported from the public barrel so hosts
-that want to wire their own permission UI can inject it
-directly into `ClientSideConnection`.
+that want to wire their own permission UI can replace it
+when handing the runtime to `ClientSideConnection`.
 
 ## Wire helpers — `acp/wire-utils.ts`
 

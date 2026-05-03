@@ -112,7 +112,10 @@ On `volumes/unmount`: `await registry.unmount(mountName)`,
 reply.
 
 Returns the unregister function (`scope.removeEventListener`).
-Called once per worker boot from `agent-worker.ts:startAgent`.
+Called once per worker boot from inside `agent-worker.ts`'s
+top-level `init`-message handler (the worker is a classic
+`self.addEventListener('message', ...)` — there is no
+exported `startAgent` entry point).
 
 ### Main side — `createVolumeControl(worker)` — `volume-control.ts:23`
 
@@ -181,10 +184,16 @@ because:
   storage is shared across realms, so two `WebAccess` backends
   behind the same handle see the same bytes.
 
-`MainZenfs.mount(init: HostVolumeInit)` is symmetric with the
-worker side — same `WebAccess.create` for handles, same
-`InMemory.create` + seed loop for seeds. Tracked separately
-in a `Map<string, MainMountSnapshot>` (`#mounted`).
+`MainZenfs.mount(init: HostVolumeInit)` produces the same
+end-state as the worker side (an FSA-backed mount or an
+InMemory-backed seed at the same `/mnt/<name>` path) but the
+*mechanism* differs: the agent worker seeds an InMemory
+volume via `VolumeInit.initialize?.()` (the host wires this
+up in `runtime/volumes-fsa/backends.ts:toAgentVolumeInit`),
+while `MainZenfs.mount` calls `mount(...)` first and then
+invokes `seedInMemoryBackend(mountPath, init.seed)` inline.
+Tracked separately in a `Map<string, MainMountSnapshot>`
+(`#mounted`).
 
 `list()` is what `acp/fs-handlers.ts:buildFsHandlers` reads
 to validate mount membership before serving a `fs/*` request.
@@ -230,17 +239,30 @@ Boot effect (runs once on mount):
    — the latter is the callback that drives
    `runtime.resolveInit` (see [`acp.md`](./acp.md) §
    `ensureRuntime`).
-6. Optimistically transition mounting → mounted entries.
-   Real state transitions land via volume-control replies.
+6. Optimistically transition `mounting` → `mounted` entries
+   in the same async tick (back-to-back `setEntries` calls
+   with no await between them). The hook does not read
+   volume-control replies. Real per-action state transitions
+   come from awaited `volumeControl.mount(...)` /
+   `volumeControl.unmount(...)` promises inside `addVolume`
+   and `restoreAccess`, which call `patch(name, { state:
+   'mounted' | 'error' })`. The boot effect's flip is
+   fire-and-hope — it assumes success and leaves error
+   handling to per-action callers.
 
 User actions:
 
 - `addVolume(description?)` — calls
   `window.showDirectoryPicker({ mode: 'readwrite' })`,
   derives a unique mount name, optimistically inserts the
-  entry, calls `volumeControl.mount({ handle, mountName,
-  description })`, persists via `saveHandles`. On failure,
-  flips the entry to `'error'`.
+  entry as `mounting`, then calls `volumeControl.mount({
+  handle, mountName, description })`. On the awaited
+  success, appends to `recordsRef.current` and calls
+  `saveHandles`. On failure, flips the entry to `'error'`
+  but does **not** mutate `recordsRef.current` and does
+  **not** call `saveHandles` — the failed entry is
+  in-memory only, so a tab reload sees no record of the
+  failed attempt.
 - `removeVolume(mountName)` — `volumeControl.unmount(mountName)`,
   drops the record + entry.
 - `setDescription(mountName, description)` — patches the

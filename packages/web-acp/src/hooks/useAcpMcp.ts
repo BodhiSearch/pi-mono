@@ -70,10 +70,14 @@ export function useAcpMcp(deps: UseAcpMcpDeps): UseAcpMcpResult {
 
   /**
    * Mirror of the persisted `web-acp:mcp-requested` IDB list. Hydrated
-   * once on hook mount, kept in sync by `applyRequestedMcpsUpdate`
-   * after `/mcp add` / `/mcp remove`. The ref is read by
-   * `composeSessionMeta` at every `session/new` / `session/load` so
-   * the worker always sees the freshest list.
+   * once on hook mount via `loadRequestedMcps()`, then updated whenever
+   * `triggerLoginWithRequested(urls)` is called by `dispatchAction`
+   * after `/mcp add` / `/mcp remove` (the dispatcher writes through
+   * `addRequestedMcp` / `removeRequestedMcp` and passes the resulting
+   * canonical list back here so the ref stays in sync without an
+   * extra IDB round-trip). The ref is read by `composeSessionMeta`
+   * at every `session/new` / `session/load` so the worker always
+   * sees the freshest list.
    */
   const requestedMcpUrlsRef = useRef<string[]>([]);
   const requestedMcpsHydratedRef = useRef(false);

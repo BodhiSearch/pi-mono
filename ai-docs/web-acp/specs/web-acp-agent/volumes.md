@@ -90,7 +90,7 @@ Method behaviour:
 | --- | --- | --- |
 | `mountAll(initial)` | `:60` | Sequential `mount(init)` per entry. Errors are caught and logged (`console.error`); the next mount still runs. The agent stays available even when one volume backend fails. |
 | `mount(init)` | `:70` | Throws on duplicate `mountName`. Otherwise `await #ensureZenfs()`, `mount('/mnt/' + mountName, init.fs)`, `await init.initialize?.()`, populate `#volumes`, fire listeners. |
-| `unmount(mountName)` | `:87` | No-op when unknown. Otherwise `umount('/mnt/' + mountName)` (catching + logging on failure), drop from `#volumes`, fire listeners. |
+| `unmount(mountName)` | `:87` | No-op when unknown. Otherwise `umount('/mnt/' + mountName)` (catching failures and logging via `console.warn` — note `mountAll` uses `console.error` for the parallel boot path; `unmount` warns because a failed unmount during teardown is recoverable), drop from `#volumes`, fire listeners. |
 | `list()` | `:98` | Snapshot copy via `[...#volumes.values()]`. |
 | `firstMountName()` | `:102` | Returns the first key in insertion order, or `undefined`. |
 | `onChange(listener)` | `:107` | Registers + returns an unregister function. |
@@ -133,6 +133,17 @@ turn picks it up automatically: `prompt-driver.ts:run` reads
 tool's `MountableFs`. Vault-sourced commands also reload from
 the new mount on the next `refreshAvailableCommands` call
 (typically tied to `session/load`).
+
+Hosts that need runtime mount/unmount drive `registry.mount(init)`
+/ `registry.unmount(name)` directly when they share a process
+with the agent (e.g. the CLI host in-process). The browser host
+runs the agent in a Web Worker and ferries mounts across via a
+dedicated `volumes/mount`/`volumes/unmount` raw-postMessage
+sidechannel that lives **outside** the ACP stream pair —
+the agent itself sees those calls as `registry.mount(...)` /
+`registry.unmount(...)` invocations on this same registry. See
+[`../web-acp-client/transport.md`](../web-acp-client/transport.md)
+§ "Volume-control sidechannel" for the host wire shape.
 
 ## Cross-references
 

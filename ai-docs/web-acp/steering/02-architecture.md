@@ -24,7 +24,7 @@
 │  │   • services.ts — AcpAdapterServices deps bag                 │
 │  │   • session-runtime.ts — lifecycle, MCP pool, vault commands  │
 │  │   • prompt-driver.ts — single prompt-turn loop                │
-│  │   • builtin-dispatch.ts — /help, /version, /copy, /session    │
+│  │   • builtin-dispatch.ts — /help, /version, /info, /copy, /mcp │
 │  │   • ext-methods/*.ts — _bodhi/* extension handlers (8 files)  │
 │  ├─ Tool execution — built-in bash tool over just-bash +         │
 │  │   agent-side MCP client + provider-native tool observation    │

@@ -60,7 +60,8 @@ Per-mount discovery flow (`loadFromVolumes`, `:71`):
 1. Recursively walk `/mnt/<mountName>/<dirRelpath>` collecting
    `*.md` files (skips dotfiles via the `entry.name.startsWith('.')`
    guard).
-2. Sort `files` lexicographically so output is stable.
+2. Sort `files` via `localeCompare` (locale-aware) so output is
+   stable.
 3. For each file: derive `name` via
    `canonicalCommandName({ mountName, pathBelowCommands: rel })`;
    skip with warning if invalid path.
@@ -72,8 +73,10 @@ Per-mount discovery flow (`loadFromVolumes`, `:71`):
 6. Build `CommandDef`:
    - `name` — canonical, fully-qualified.
    - `description` — `frontMatter.description ?? trim() ||
-     fallbackDescription(body)` (first non-empty body line,
-     truncated to 120 chars).
+     fallbackDescription(body)`. `fallbackDescription` returns
+     the first non-empty body line (truncated to 120 chars), or
+     the literal `'(no description)'` if the body has no
+     non-empty first line.
    - `argumentHint` — `frontMatter['argument-hint']`.
    - `template` — body (front-matter stripped).
    - `source` — `{ mountName, relPath: '<dirRelpath>/<rel>' }`.
@@ -114,8 +117,10 @@ Supports:
   some later line.
 - `key: value` lines (single-line strings only; no nested
   arrays / objects / multi-line scalars).
-- Comments are not supported (lines starting with `#` are
-  treated as keys and rejected).
+- Lines starting with `#` are skipped as comments
+  (`front-matter.ts:106` — `if (line.startsWith("#")) continue;`).
+  Inline `# trailing` comments after a value are not stripped —
+  they end up in the value string.
 
 Failures throw `FrontMatterError` (also exported); the loader
 catches and warns.
@@ -128,10 +133,11 @@ slash command must occupy the entire text block. Matching is
 exact-name only.
 
 Argument tokenization via `tokenizeBash(input)` (`:47`) —
-bash-style: single quotes verbatim, double quotes with `\\`
-and `\"` escapes (everything else literal), backslash escapes
-outside quotes, whitespace separates tokens. **Variable
-interpolation (`$VAR`) is intentionally skipped** so a
+bash-style: single quotes verbatim, double quotes unescape
+`\\`, `\"`, `\$`, and `` \` `` (everything else literal),
+backslash escapes outside quotes, whitespace separates
+tokens. **Variable interpolation (`$VAR`) is intentionally
+skipped** so a
 template can reference `$HOME` literally without surprise.
 
 Substitution (`substitute`, `:123`):
@@ -168,7 +174,7 @@ Five commands ship today:
 | --- | --- | --- |
 | `help` | `help.ts` | Lists every advertised command (built-ins + vault). |
 | `version` | `version.ts` | Reports `buildVersion` + `acpSdkVersion` from `BuiltinHandlerCtx`. |
-| `info` | `info.ts` | Reports current session: model, server URL, turn / message counts, connected MCP servers, mounted volumes. Renamed from `/session` in commit `ec152c1e` so it doesn't collide with the CLI host's session-management command. |
+| `info` | `info.ts` | Reports current session: `Id`, `Turns`, `Messages (LLM-visible)`, `Model`, `MCP servers`. Renamed from `/session` in commit `ec152c1e` so it doesn't collide with the CLI host's session-management command. |
 | `copy` | `copy.ts` | Returns `{ replyText: '…copied…', action: { kind: 'copy' } }`. The host dispatcher (`web-acp-client`'s `acp/builtin-dispatch.ts:dispatchBuiltinAction`) builds the markdown locally from `messages` state — the agent doesn't ship the payload across the wire. |
 | `mcp` | `mcp.ts` | `mcp list` / `mcp add <url>` / `mcp remove <url>` — emits `{ action: { kind: 'mcp-add' \| 'mcp-remove', params: { url } } }` for `add` / `remove`; `list` emits no action. |
 
@@ -187,9 +193,13 @@ interface BuiltinCommand {
 ### `BuiltinHandlerCtx` — `builtins/types.ts:34`
 
 The narrow snapshot every handler sees. Built by
-`acp/engine/builtin-dispatch.ts:tryHandleBuiltin` (line 40)
-from runtime accessors. Fields: `sessionId`, `modelId`,
-`serverUrl`, `sessionStats: { turnCount, messageCount }`,
+`acp/engine/builtin-dispatch.ts:tryHandleBuiltin` (line 40).
+`mcpInstances` and `requestedMcpUrls` are read from the
+**per-session** `SessionState` (`session?.mcpInstances` /
+`session?.requestedMcpUrls`); `sessionStats` and
+`mcpServersConnected` come through runtime accessors.
+Fields: `sessionId`, `modelId`, `serverUrl`,
+`sessionStats: { turnCount, messageCount }`,
 `mcpServersConnected: string[]`,
 `mcpInstances: BuiltinMcpInstance[]`,
 `requestedMcpUrls: string[]`,
@@ -275,11 +285,11 @@ notification with a tag stamped on `_meta`:
 }
 ```
 
-Hosts read the meta via
-`acp/wire-utils.ts:extractMcpMeta` siblings (and the host-side
-streaming reducer carries the tag onto the message bubble for
-the muted-built-in render). The action dispatch happens in
-the host's `dispatchBuiltinAction` —
+Hosts read the meta via the host-side `streamingReducer`'s
+`session/update` branch, which inspects
+`update.update._meta?.bodhi?.builtin` and stamps the tag onto
+the message bubble for the muted-built-in render. The action
+dispatch happens in the host's `dispatchBuiltinAction` —
 [`../web-acp-client/acp.md`](../web-acp-client/acp.md).
 
 ## `'builtin'` `SessionEntry` kind

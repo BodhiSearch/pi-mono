@@ -157,19 +157,27 @@ export { createMcpToggleStore } from './mcp-toggle-store';
 Consumed by:
 
 - `packages/web-acp/src/agent/agent-worker.ts` (boot shim) —
-  constructs all three stores once per worker boot.
+  constructs all three stores once per worker boot via
+  `createStoreFromDb(openSessionDb())` (the
+  `createSessionStore` factory exists for callers that want
+  to pass `options`; the worker uses the lower-level pair
+  directly so the shim has no `dbName` knob to thread).
 - Test utilities — the `runtime/storage-dexie/agent-adapter.test.ts`
   drives the agent's adapter against a fresh Dexie database
   per test.
 
 ## Test fixtures
 
-Tests use `fake-indexeddb/auto` (declared in
-`vitest.config.ts`'s `setup` script) so the Dexie database
-runs in an in-memory IndexedDB shim. Each test should
-construct a fresh DB with a unique name (e.g.
-`new SessionStoreDb('web-acp-test-' + crypto.randomUUID())`)
-to avoid bleed-through between tests.
+Tests use `fake-indexeddb/auto` so the Dexie database runs in
+an in-memory IndexedDB shim. The shim is **imported per-test**
+at the top of each `*.test.ts` file (`agent-adapter.test.ts`,
+`feature-store.test.ts`, `mcp-toggle-store.test.ts`,
+`session-store.test.ts`) — it is **not** declared globally in
+`vite.config.ts`'s `test.setupFiles` (`./src/test/setup.ts`
+intentionally does not import it). Each test should construct
+a fresh DB with a unique name (e.g. `new
+SessionStoreDb('web-acp-test-' + crypto.randomUUID())`) to
+avoid bleed-through between tests.
 
 The test files in this folder cover:
 

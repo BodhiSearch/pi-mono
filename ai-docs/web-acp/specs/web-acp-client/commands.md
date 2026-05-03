@@ -50,12 +50,14 @@ Behaviour:
   and is clickable; activating an item fires `onSelect(cmd)`.
 - Window-level keydown listener while open — `Escape` =
   dismiss, `ArrowUp` / `ArrowDown` = move highlight,
-  `Enter` = select highlighted, `Tab` = (same as Enter).
+  `Enter` = select highlighted. `Tab` is **not** wired
+  (key falls through to default browser focus behaviour).
 
 `filterCommands(commands, query)` does a case-insensitive
-substring match against `name`. The list is **black-box** —
-the picker doesn't differentiate built-ins from vault
-commands or prompt templates (no kind discriminator on
+**prefix** match against `name` (`startsWith`). Typing `/elp`
+will not match `/help`. The list is **black-box** — the
+picker doesn't differentiate built-ins from vault commands or
+prompt templates (no kind discriminator on
 `AvailableCommand`).
 
 The picker consumes `useAcp().availableCommands`, which is
@@ -85,14 +87,26 @@ Bridges between the AgentMessage in-memory shape (with
 `_builtin` marker) and the wire `_meta.bodhi.builtin`
 envelope. Pure functions; no React.
 
+**Exported** helpers:
+
 | Function | Purpose |
 | --- | --- |
 | `getBuiltinTag(msg)` (`:12`) | Reads `(msg as any)._builtin: BodhiBuiltinTag \| undefined`. |
-| `withBuiltinTag(msg, tag)` (`:16`) | Spreads `msg` + sets `_builtin: tag`. Returns the same `T` type so chained calls don't lose narrowing. |
+| `withBuiltinTag(msg, tag)` (`:16`) | Spreads `msg` and sets `_builtin: tag`. Body is `{ ...(msg as unknown as Record<string, unknown>), _builtin: tag } as unknown as T`. The double `unknown` cast exists because `AgentMessage` is a discriminated union and TypeScript's spread-on-union typing requires an explicit any-cast bridge — the cast is not about narrowing. |
 | `extractBuiltinMeta(meta)` (`:27`) | Reads `_meta.bodhi.builtin` from a `SessionNotification` and validates the shape. Returns `BodhiBuiltinTag` or `undefined`. |
-| `narrowBuiltinAction(input)` (`:46`) | Per-kind validator for the `action` payload. `'copy'` is parameterless, `'mcp-add' | 'mcp-remove'` require `params: { url: string }`. Unknown kinds / malformed payloads return `undefined` so only fully-narrowed values reach the dispatcher. |
 | `renderConversationMarkdown(messages)` | Renders the LLM-only conversation as markdown for `/copy`. Skips entries with `_builtin` set so the clipboard payload is the model conversation, not the built-in chrome. |
-| `extractText(msg)` (`:62`) | Joins all `text` content blocks of an `AgentMessage`. Used by `renderConversationMarkdown`. |
+
+**Module-private** helpers (used inside `lib/builtin-format.ts`
+only — not exported, do not import):
+
+- `narrowBuiltinAction(input)` (`:46`) — per-kind validator
+  for the `action` payload. `'copy'` is parameterless;
+  `'mcp-add' | 'mcp-remove'` require `params: { url: string }`.
+  Unknown kinds / malformed payloads return `undefined` so
+  only fully-narrowed values reach the dispatcher.
+- `extractText(msg)` (`:62`) — joins all `text` content
+  blocks of an `AgentMessage`. Used by
+  `renderConversationMarkdown`.
 
 The streaming reducer carries the `_builtin` tag through the
 chunk-accumulation path:
@@ -109,30 +123,12 @@ renders the muted style + "not sent to LLM" badge.
 
 ## Host-side action dispatch — `acp/builtin-dispatch.ts:dispatchBuiltinAction`
 
-Documented in detail at [`acp.md`](./acp.md) § builtin-dispatch.
-Brief recap:
-
-```ts
-async function dispatchBuiltinAction(
-    action: AnyBodhiBuiltinAction,
-    messages: AgentMessage[],
-    triggerLogin: LoginTrigger,
-): Promise<void>
-```
-
-Switches on `action.kind`:
-
-- `'copy'` → `dispatchCopyAction(messages)` — render markdown
-  via `renderConversationMarkdown` (skips builtin entries),
-  write to clipboard, toast.
-- `'mcp-add'` → `addRequestedMcp(url)` (IDB), then
-  `triggerLogin(list)` to re-issue Bodhi auth with the
-  updated list.
-- `'mcp-remove'` → symmetric `removeRequestedMcp(url)`.
-
-`triggerLogin` is closed over `useBodhi`'s `login` /
-`logout` pair inside `useAcpMcp` (see [`hooks.md`](./hooks.md))
-and injected so the dispatcher stays React-free + testable.
+Canonical reference: [`acp.md`](./acp.md) § builtin-dispatch
+(documents the full `(action, messages, triggerLogin)`
+signature, the per-kind switch, the `addRequestedMcp` /
+`removeRequestedMcp` IDB writes, the `triggerLogin` closure
+shape, and the toast paths). This file does not duplicate the
+table — read `acp.md` when you need the dispatch detail.
 
 Action is pulled off the streaming-message's `_builtin.action`
 slot in `useAcpStreaming.sendMessage` after the prompt
@@ -153,7 +149,8 @@ built-in pair, giving `/copy` the LLM-only conversation.
 `components/chat/MessageBubble.tsx` (the renderer) checks
 `getBuiltinTag(msg)` and applies:
 
-- Muted styling (`bg-gray-200`).
+- Muted styling — `bg-blue-100` for user built-in bubbles,
+  `bg-gray-100` for assistant built-in bubbles.
 - "not sent to LLM" badge.
 - A different `data-test-state` so e2e tests can target
   builtin bubbles specifically.

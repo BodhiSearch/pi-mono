@@ -52,7 +52,7 @@ Method behaviours:
 | `getErrorMessage()` | Returns `agent.state.errorMessage`. The driver throws when this is set after `prompt()` resolves. |
 | `prompt(text)` | Awaits `agent.prompt(text)`. Streaming events fire through the `subscribe` listener as side effects. |
 | `cancel()` | Calls `agent.abort()`. |
-| `clearMessages()` | Aborts in-flight + resets `agent.state.messages = []`. Called by `authenticate` (after token rotation), `newSession`, and `loadSession` (when no prior turn exists). |
+| `clearMessages()` | Aborts in-flight + resets `agent.state.messages = []`. Called by `authenticate` (after token rotation), `newSession`, `loadSession` (when no prior turn exists), `prompt-driver.ts:rehydrateInlineFromStore` (when no prior turn is present in the stored entries), and `sessions-delete.ts` (when deleting the active inline session). |
 | `restoreMessages(messages)` | Replaces `agent.state.messages` with `[...messages]` without firing events. Called by `loadSession` and `rehydrateInlineFromStore` (`acp/engine/session-runtime.ts:227`) to seed history from the last persisted `'turn'` entry. |
 
 Constants: `SENTINEL_API_KEY` (`'bodhiapp_sentinel_api_key_ignored'`)
@@ -110,11 +110,11 @@ Fetches `${baseUrl}/bodhi/v1/models?page_size=100` and flattens
 the response. The Bodhi catalog has two flavours of entries:
 
 - **API alias** (`api_format` + `models[]`) — flattened via
-  `flattenApiAlias` (`:104`) → `buildApiAliasModel` (`:122`).
+  `flattenApiAlias` (`:104`) → `buildApiAliasModel` (`:112`).
   One alias can produce multiple `Model<Api>` records (one per
   underlying model).
 - **Local alias** (`UserAliasResponse | ModelAliasResponse`) —
-  flattened via `buildLocalAliasModel` (`:145`) into a single
+  flattened via `buildLocalAliasModel` (`:130`) into a single
   OpenAI-completions-shaped `Model<Api>`.
 
 Per-format mapping helpers:
@@ -129,13 +129,13 @@ Per-format mapping helpers:
   `/v1beta`, or `/v1` depending on the format. The Bodhi
   proxy fronts each upstream API behind a per-format
   sub-path.
-- `apiFormatOfModel(model)` (`:246`) — inverse mapping for
+- `apiFormatOfModel(model)` (`:227`) — inverse mapping for
   the wire (`bodhi/listModels` returns
   `{ id, apiFormat: 'openai' | 'openai_responses' | 'anthropic' | 'gemini' }`).
 
-Per-model field extraction: `extractApiModelId` (`:171`) +
-`extractApiModelDisplayName` (`:183`) + `extractApiModelLimits`
-(`:194`). They route per provider (Gemini's `name: 'models/X'`
+Per-model field extraction: `extractApiModelId` (`:154`) +
+`extractApiModelDisplayName` (`:166`) + `extractApiModelLimits`
+(`:177`). They route per provider (Gemini's `name: 'models/X'`
 prefix gets stripped, Anthropic's `display_name` becomes the
 display label, OpenAI uses `id` directly).
 

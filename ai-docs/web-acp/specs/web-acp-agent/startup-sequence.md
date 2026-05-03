@@ -236,51 +236,16 @@ Client calls `prompt({ sessionId, prompt: [{ type: 'text',
 text }], _meta: { bodhi: { modelId } } })`.
 
 `AcpAgentAdapter.prompt` is a one-line passthrough to
-`#driver.run(params)`. The full driver flow is documented at
-[`acp.md`](./acp.md) § PromptTurnDriver. Summary:
-
-1. **Built-in early return.** `tryHandleBuiltin` checks
-   `findBuiltin(rawText)`. If matched: emit the muted reply
-   chunk + `recordBuiltin` + return `{ stopReason:
-   'end_turn' }` without touching the LLM.
-2. **Model resolution.** Read `_meta.bodhi.modelId`; look up
-   in `runtime.getModels()`. Throws `'No model selected: …'`
-   if absent. Hosts must run `bodhi/listModels` first.
-3. **Slash-command expansion.** The last text block is
-   matched against `runtime.getAvailableCommands()` via
-   `expandCommand`. If matched, the literal text is
-   replaced with the rendered template body.
-4. **History attach guard.** If
-   `runtime.getActiveInlineSessionId() !== sessionId`, calls
-   `runtime.rehydrateInlineFromStore(sessionId)`. Prevents
-   context bleed from concurrent prompts on different
-   sessions.
-5. **Per-turn tool list.** Bash tool (gated on
-   `featureSnapshot.bashEnabled && registry.list().length > 0
-   && services.registry`) plus enabled MCP tools. Each tool is
-   wrapped via `bindAbortSignal` so `session/cancel`
-   short-circuits running calls.
-6. **System prompt.** `composeSystemPrompt(volumes)`.
-7. **Stream override.** When `featureSnapshot.forceToolCall
-   && isDev && tools.length > 0`,
-   `streamOverrides.current = { toolChoice: 'required' }`.
-8. **Stream subscribe + prompt.** Installs
-   `services.inline.subscribe(forwardEvent)`; awaits
-   `services.inline.prompt(text)`.
-9. **Streaming events.** `forwardEvent` translates inline
-   events to ACP notifications:
-   - `message_update` → `agent_message_chunk` (delta-only;
-     see prompt-driver `StreamCursor` snippet at
-     [`acp.md`](./acp.md)).
-   - `tool_execution_start` → `tool_call`.
-   - `tool_execution_update` → `tool_call_update
-     (in_progress)`.
-   - `tool_execution_end` → `tool_call_update (completed |
-     failed)`.
-10. **Persist.** On success:
-    `services.store.recordTurn(sessionId, text,
-    services.inline.getMessages(), model.id)`.
-11. **Returns** `{ stopReason: 'end_turn' }` (or `'cancelled'`).
+`#driver.run(params)`. The full prompt-turn flow — built-in
+early return, model resolution, slash-command expansion,
+history-attach guard, per-turn tool list assembly, system
+prompt composition, stream-override toggle, stream subscribe,
+inline-event → ACP-notification translation, persistence, and
+the `{ stopReason: 'end_turn' | 'cancelled' }` return — is
+the canonical responsibility of `PromptTurnDriver` and is
+documented in detail at [`acp.md`](./acp.md) § PromptTurnDriver.
+This file does not duplicate the step list — read `acp.md`
+when you need to trace the prompt loop.
 
 ## Phase 6b — Cancellation
 

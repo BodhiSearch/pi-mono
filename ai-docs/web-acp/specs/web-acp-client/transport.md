@@ -36,7 +36,10 @@ that:
   accepted: `Uint8Array` (verbatim), `ArrayBuffer` (wrapped in
   a `Uint8Array`), and `string` (`TextEncoder().encode`). The
   agent always sends `Uint8Array`, but accepting strings keeps
-  the bridge useful for ad-hoc debugging.
+  the bridge useful for ad-hoc debugging. Unrecognised types
+  fall through both branches and are silently dropped (no
+  `else` branch logs or errors); only the three listed shapes
+  reach the controller.
 - Sets `port.onmessageerror` to error the controller.
 - Calls `port.start()` — the port is in *paused* mode by
   default; the bridge owns the start. Callers must not call
@@ -64,7 +67,7 @@ that:
 ## Worker boot shim — `agent/agent-worker.ts`
 
 The single file remaining in `packages/web-acp/src/agent/`.
-~75 lines. It exists to:
+96 lines. It exists to:
 
 1. Expose the `init` message contract the main thread posts
    into.

@@ -30,7 +30,7 @@ packages/web-acp/src/acp/
 ├── permissions.ts       # session/request_permission stub (deferred)
 ├── message-shape.ts     # Empty/get/withAssistantText helpers, builtin tag, MCP meta
 ├── session-meta.ts      # authKeyOf, toBodhiModelInfo, composeSessionMeta
-└── wire-utils.ts        # Helpers (extractSessionMeta, filterHttpServers, …)
+                                # (low-level wire helpers re-imported from @bodhiapp/web-acp-agent — no host-side wire-utils.ts)
 ```
 
 ## `AcpClient` — `acp/client.ts:44`
@@ -128,6 +128,14 @@ the call; main-thread mount errors are logged but never
 surfaced — the handler falls back to the membership check
 inside `fs-handlers.ts` on every call.
 
+The wrapper exposes a `dispose()` method (`runtime.ts:114-116`)
+that proxies through to the inner `createVolumeControl`'s
+`dispose` (which detaches the `MessagePort` listener and
+rejects every pending mount/unmount). The runtime singleton
+lives for the lifetime of the tab and never calls `dispose`
+itself — the seam exists for tests and for a future
+multi-runtime host that needs orderly teardown.
+
 ## `streamingReducer` — `acp/streaming-reducer.ts`
 
 Pure reducer over the `session/update` notifications. State
@@ -154,7 +162,7 @@ Actions (`:52`):
 - `'load-start'` — clear streaming, set `isReplaying: true` (suppresses live notifications during `loadSession` replay).
 - `'load-end'` — `isReplaying: false`. With `messages`: full snapshot replace (used after `getSession` rebuild). Without: just clear the flag.
 - `'session-update'` — full notification dispatch (see below).
-- `'reset'` — reset everything except `availableCommands` / `mcpStates` empties (preserve frozen identities).
+- `'reset'` — reset to `initialStreamingState` with a fresh `Map` for `toolCalls`. The frozen-empty `availableCommands` / `mcpStates` come along on the spread, but live values accumulated during the session **are** discarded — a reset clears the picker palette and the MCP-state badges as well as the message list.
 
 The `'session-update'` path (`applySessionUpdate`, `:129`):
 
@@ -256,11 +264,14 @@ into the SDK's `Client` callback.
 
 ## `permissions.ts:requestPermissionStub`
 
-Mirrors the agent-side stub; co-located so the host can
-inject it directly into the `Client` callback without an
-extra import path. Returns `{ outcome: { allow: true } }`
-unconditionally — see [`../web-acp-agent/acp.md`](../web-acp-agent/acp.md)
-§ permissions for the deferred plan.
+Re-export of the agent-side stub. **Throws** an `Error`
+(`requestPermission: not supported in web-acp M0`) —
+`session/request_permission` is the deferred M0 bridge and the
+bash tool runs without invoking it. See
+[`../web-acp-agent/acp.md`](../web-acp-agent/acp.md) §
+permissions for the deferred plan; the host injects this stub
+into the `Client` callback so any future permission UI can
+replace it without adopters needing a different import path.
 
 ## Constants + types — `acp/index.ts`, `acp/methods.ts`
 
@@ -304,21 +315,19 @@ yet.
 `acp/methods.ts` exists as a slimmer re-export barrel; not
 all consumers need the full `index.ts` payload.
 
-## Wire helpers — `acp/wire-utils.ts`, `message-shape.ts`, `session-meta.ts`
+## Wire helpers — `message-shape.ts`, `session-meta.ts` (+ agent-package re-exports)
 
 Pure functions for shaping wire payloads + composing helpers
-the React layer consumes. Notable exports:
+the React layer consumes. The lower-level wire helpers
+(`extractSessionMeta`, `filterHttpServers`, `toAvailableCommand`,
+`toolTitle`, `toToolCallContent`, `toWireMcpToggles`,
+`extractAssistantText`, `extractMessageId`,
+`makeBuiltinUserMessage`, `makeBuiltinAssistantMessage`) live
+agent-side and are re-imported from `@bodhiapp/web-acp-agent`
+when needed — the host does not duplicate them.
 
-- `wire-utils.ts:extractSessionMeta` (mirrors agent-side; used
-  when constructing a host-side session reload).
-- `wire-utils.ts:filterHttpServers` (host re-export of the
-  same helper — keeps the host independent of the agent
-  package).
-- `wire-utils.ts:toAvailableCommand` — `CommandDef →
-  AvailableCommand`.
-- `wire-utils.ts:makeBuiltinUserMessage` /
-  `makeBuiltinAssistantMessage` — construct the in-memory
-  AgentMessage with `_builtin` metadata for `getSession` replay.
+Host-only helpers:
+
 - `message-shape.ts:emptyAssistantMessage`,
   `getAssistantText`, `withAssistantText` — drive the
   streaming-reducer accumulation.

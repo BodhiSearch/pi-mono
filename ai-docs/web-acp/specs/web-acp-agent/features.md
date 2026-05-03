@@ -42,7 +42,7 @@ interface FeatureStore {
 | `set(sessionId, key, value)` | `_bodhi/features/set` handler — `acp/engine/ext-methods/features-set.ts:featuresSet`. | Writes the override; returns the updated snapshot. Only writes the override (not the whole row) so the default surface stays observable via deletion. |
 | `clear(sessionId)` | Reserved for session deletion paths; the host may run this from `deleteSession` if it doesn't share a transaction with `SessionStore.deleteSession`. The browser host doesn't call this directly — Dexie handles cleanup transactionally inside `deleteSession`. |
 
-## Defaults — `storage/feature-store.ts:15`
+## Defaults — `storage/feature-store.ts:15` (interface) + `:20` (value object)
 
 ```ts
 interface FeatureDefaults {

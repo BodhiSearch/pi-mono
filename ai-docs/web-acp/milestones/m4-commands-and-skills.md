@@ -6,7 +6,7 @@
   `7bc96d59`). `<mount>/.pi/commands/**/*.md` discovery + picker +
   agent-side template expansion in `prompt()`.
 - **M4 phase B — agent-handled built-in slash commands.** Shipped.
-  Initial set: `/help`, `/version`, `/session`, `/copy`, `/mcp`.
+  Initial set: `/help`, `/version`, `/info`, `/copy`, `/mcp`.
   Built-ins intercept in `AcpAgentAdapter.prompt()` **before** model
   resolution, emit a single `agent_message_chunk` stamped with
   `_meta.bodhi.builtin = { command, action? }`, and persist as a
@@ -65,7 +65,7 @@ writing an extension:
   stripped + bash-style argument substitution), and the LLM sees
   the rendered template — never the slash invocation. **Phase B**
   (agent-handled built-ins): the agent matches `/help`, `/version`,
-  `/session`, `/copy` *before* model resolution, runs a handler,
+  `/info`, `/copy`, `/mcp` *before* model resolution, runs a handler,
   emits the reply via `_meta.bodhi.builtin` on
   `agent_message_chunk`, persists a new `'builtin'`
   `SessionEntry`, and never invokes the LLM. Built-in keyword
@@ -219,7 +219,7 @@ Deliverables:
   later — for now refresh fires once per `session/new` /
   `session/load`).
 - Built-in agent actions beyond the M4 phase B initial set
-  (`/help`, `/version`, `/session`, `/copy` shipped). Phase B
+  (`/help`, `/version`, `/info`, `/copy`, `/mcp` shipped). Phase B
   established the keyword-detection mechanism and the
   `_meta.bodhi.builtin` wire envelope; new built-ins plug into
   the same registry. State-mutation built-ins (`/name`, `/model`,

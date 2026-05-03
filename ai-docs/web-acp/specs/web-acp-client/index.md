@@ -85,31 +85,42 @@ reference app embedding the agent package. The files that will
 form the **host-runtime** library boundary when this package is
 extracted (M8) are:
 
-- `acp/index.ts` — `BODHI_AUTH_METHOD_ID`,
-  `BODHI_LIST_MODELS_METHOD`, `BODHI_LIST_SESSIONS_METHOD`,
-  `BODHI_GET_SESSION_METHOD`, `BODHI_VOLUMES_LIST_METHOD`,
-  `BODHI_FEATURES_LIST_METHOD`, `BODHI_FEATURES_SET_METHOD`,
+- `acp/index.ts` — wildcard re-exports the Bodhi wire surface
+  from `@bodhiapp/web-acp-agent` so the host has one canonical
+  source of truth: every `BODHI_*_METHOD` constant
+  (`BODHI_AUTH_METHOD_ID`, `BODHI_LIST_MODELS_METHOD`,
+  `BODHI_LIST_SESSIONS_METHOD`, `BODHI_GET_SESSION_METHOD`,
+  `BODHI_VOLUMES_LIST_METHOD`, `BODHI_FEATURES_LIST_METHOD`,
+  `BODHI_FEATURES_SET_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
-  `BODHI_SESSIONS_DELETE_METHOD`; `BodhiAuthenticateMeta`,
+  `BODHI_SESSIONS_DELETE_METHOD`), every Bodhi*
+  request/response shape (`BodhiAuthenticateMeta`,
   `BodhiModelDescriptor`, `BodhiListModelsResponse`,
   `BodhiSessionSummary`, `BodhiListSessionsResponse`,
   `BodhiGetSessionRequest`, `BodhiGetSessionResponse`,
-  `BodhiMcpToggleSnapshot`, `BodhiMcpTogglesSetRequest/Response`,
+  `BodhiMcpToggleSnapshot`,
+  `BodhiMcpTogglesSetRequest/Response`,
   `BodhiSessionsDeleteRequest/Response`,
-  `BodhiVolumesListResponse`, `BodhiFeaturesListResponse`,
-  `BodhiFeaturesSetRequest/Response`,
-  `BodhiBuiltinAction<K, P>` discriminated union family,
-  `BodhiBuiltinMeta`, `BodhiBuiltinTag`,
-  `BodhiMcpInstanceDescriptor`, `BodhiSessionMeta`. SDK
-  re-exports: `AgentSideConnection`, `ClientSideConnection`,
-  `ndJsonStream`, plus `Agent`, `Client`, `LoadSessionRequest`,
-  `LoadSessionResponse`, etc.
-
-  *Note:* most of these constants + types are duplicated 1:1
-  with `packages/web-acp-agent/src/wire/index.ts`. The
-  host-side copy will collapse into a re-export from the agent
-  package as a follow-up cleanup; the duplication is benign
-  for now because both copies are kept identical by hand.
+  `BodhiVolumesListResponse`, `BodhiFeatureBag`,
+  `BodhiFeaturesListResponse`,
+  `BodhiFeaturesSetRequest/Response`), the
+  `BodhiBuiltinAction<K, P>` discriminated-union family
+  (`BodhiBuiltinCopyAction`, `BodhiBuiltinMcpAddAction`,
+  `BodhiBuiltinMcpRemoveAction`, `AnyBodhiBuiltinAction`,
+  `BodhiBuiltinMeta`, `BodhiBuiltinTag`),
+  `BodhiMcpInstanceDescriptor`, and `BodhiSessionMeta`.
+  Plus host-local SDK re-exports the file pulls in directly
+  from `@agentclientprotocol/sdk`: values
+  (`AgentSideConnection`, `ClientSideConnection`,
+  `ndJsonStream`) and types (`Agent`, `Client`,
+  `AvailableCommand`, `AvailableCommandInput`,
+  `AvailableCommandsUpdate`, `AuthenticateRequest`,
+  `AuthenticateResponse`, `CancelNotification`,
+  `InitializeRequest`, `InitializeResponse`,
+  `LoadSessionRequest`, `LoadSessionResponse`,
+  `NewSessionRequest`, `NewSessionResponse`, `PromptRequest`,
+  `PromptResponse`, `SessionNotification`, `StopReason`,
+  `UnstructuredCommandInput`).
 
 - `acp/client.ts` — `AcpClient`.
 - `acp/runtime.ts` — `AcpRuntime`, `ensureRuntime`, plus
@@ -118,13 +129,16 @@ extracted (M8) are:
   `getAuthKey`, `setAuthKey`, `getAuthPromise`,
   `setAuthPromise`, `getAuthModels`, `setAuthModels`).
 - `acp/streaming-reducer.ts` — `streamingReducer`,
-  `StreamingState`, `StreamingAction`, plus initial-state
-  factories.
+  `StreamingState`, `StreamingAction`, plus the
+  `initialStreamingState` constant (a single frozen object;
+  not a factory function).
 - `acp/builtin-dispatch.ts` — `dispatchBuiltinAction`.
 - `acp/permissions.ts` — `requestPermissionStub`.
-- `acp/{message-shape,session-meta,wire-utils,methods,
-  fs-handlers}.ts` — host-side helpers (one-liners listed in
-  [`acp.md`](./acp.md)).
+- `acp/{message-shape,session-meta,methods,fs-handlers}.ts`
+  — host-side helpers (one-liners listed in
+  [`acp.md`](./acp.md)). Lower-level wire helpers come from
+  `@bodhiapp/web-acp-agent`; there is no host-side
+  `wire-utils.ts`.
 - `agent/agent-worker.ts` — `AgentWorkerInitMessage` + the
   Worker boot shim that calls `startAcpAgent` from the agent
   package.
@@ -142,7 +156,7 @@ extracted (M8) are:
 
 ```
 packages/web-acp/src/
-├── App.tsx, main.tsx, env.ts, vite-env.d.ts
+├── App.tsx, App.test.tsx, App.css, main.tsx, env.ts, index.css, vite-env.d.ts
 ├── acp/                       # Host-side ACP wire/engine split
 │   ├── index.ts               # public constants + SDK re-exports
 │   ├── methods.ts             # `_bodhi/*` extension method name barrel
@@ -153,8 +167,8 @@ packages/web-acp/src/
 │   ├── fs-handlers.ts         # main-thread fs/readTextFile / fs/writeTextFile handlers
 │   ├── permissions.ts         # session/request_permission stub (deferred)
 │   ├── message-shape.ts       # Empty/get/withAssistantText helpers
-│   ├── session-meta.ts        # authKeyOf, toBodhiModelInfo, composeSessionMeta
-│   └── wire-utils.ts          # ACP wire helpers (extractSessionMeta, filterHttpServers, …)
+│   └── session-meta.ts        # authKeyOf, toBodhiModelInfo, composeSessionMeta
+                                # (lower-level wire helpers come from @bodhiapp/web-acp-agent — no host-side wire-utils.ts)
 ├── agent/
 │   └── agent-worker.ts        # Web Worker entry — calls startAcpAgent from agent package
 ├── runtime/                   # Host adapters satisfying agent-package interfaces
@@ -192,7 +206,9 @@ packages/web-acp/src/
 │   ├── useAcpSession.ts       # ensureSession, loadSession, clearMessages, deleteSession
 │   ├── useAcpStreaming.ts     # session/update listener + sendMessage/stop driving the reducer
 │   └── useVolumes.ts          # FSA handle resolution + dev-seed merge + add/remove/restore
-├── components/                # shadcn/ui + ChatDemo + volumes/VolumesPanel + features/FeaturePanel + mcp/McpPanel
+├── components/                # shadcn/ui (`ui/*` — 12 files) + Header.tsx + Layout.tsx + StatusIndicator.tsx + chat/{BashToolCall,ChatDemo,ChatInput,ChatMessages,CommandPicker,MessageBubble,ModelCombobox,SessionPicker}.tsx + volumes/{VolumeRow,VolumesPanel}.tsx + features/FeaturePanel.tsx + mcp/McpPanel.tsx
+├── test/
+│   └── setup.ts               # vitest setup script (no fake-indexeddb here — see storage-dexie.md § Test fixtures)
 ├── lib/
 │   ├── bodhi-models.ts        # Model id parsing + display
 │   ├── agent-model.ts         # Model selection helpers
@@ -245,7 +261,7 @@ host-runtime becomes its own package at M8.
 | File | Scope |
 | --- | --- |
 | [`transport.md`](./transport.md) | `runtime/transport/worker-stream.ts:createMessagePortStream` (MessagePort ↔ stream bridge) + the worker-control sidechannel rationale + `agent/agent-worker.ts` boot wiring. |
-| [`acp.md`](./acp.md) | Host-side ACP wire/engine split — `acp/client.ts:AcpClient`, `acp/runtime.ts:ensureRuntime`, `acp/streaming-reducer.ts:streamingReducer` (with the agent_message_chunk fold snippet), `acp/builtin-dispatch.ts:dispatchBuiltinAction`, `acp/fs-handlers.ts:buildFsHandlers`, plus the helpers under `acp/{message-shape,session-meta,wire-utils,methods,permissions,index}.ts`. |
+| [`acp.md`](./acp.md) | Host-side ACP wire/engine split — `acp/client.ts:AcpClient`, `acp/runtime.ts:ensureRuntime`, `acp/streaming-reducer.ts:streamingReducer` (with the agent_message_chunk fold snippet), `acp/builtin-dispatch.ts:dispatchBuiltinAction`, `acp/fs-handlers.ts:buildFsHandlers`, plus the helpers under `acp/{message-shape,session-meta,methods,permissions,index}.ts` (lower-level wire helpers come from `@bodhiapp/web-acp-agent`). |
 | [`hooks.md`](./hooks.md) | `hooks/useAcp.ts` (facade) + the eight slice hooks (`useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}`, `useVolumes`). StrictMode/HMR invariants. |
 | [`storage-dexie.md`](./storage-dexie.md) | `runtime/storage-dexie/db.ts:SessionStoreDb` + `createStoreFromDb`, `createFeatureStore`, `createMcpToggleStore`. Schema v3, migration discipline. |
 | [`volumes.md`](./volumes.md) | `runtime/volumes-fsa/{types,backends,volume-channel,volume-control}.ts` + `vault/{fsa-handle-store,main-zenfs}.ts` + `hooks/useVolumes.ts`. The FSA handle ↔ agent `VolumeInit` conversion + the `MainZenfs` IDE-integration seam. Dev-seed test pattern. |

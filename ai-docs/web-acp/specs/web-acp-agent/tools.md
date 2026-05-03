@@ -21,8 +21,8 @@ function shape matches `pi-agent-core`'s `AgentTool`:
 - `label: 'Bash'`
 - `description` — the multi-line `BASH_DESCRIPTION` constant
   (`:57`) telling the LLM about the mount layout.
-- `parameters: bashInputSchema` (TypeBox) with four optional
-  fields:
+- `parameters: bashInputSchema` (TypeBox) — one required field
+  + three optional:
   - `script: string` (required) — the script body.
   - `cwd?: string` — absolute working directory; defaults to
     `/mnt/<firstVolume>` from `registry.firstMountName()` or
@@ -46,7 +46,11 @@ function shape matches `pi-agent-core`'s `AgentTool`:
    `prompt-driver.ts:bindAbortSignal`) with an internal timer.
 4. Emit a single empty progress update through `onUpdate`
    (signals "running" to the UI).
-5. `await bash.exec(params.script, { signal, stdin?, cwd })`.
+5. `await bash.exec(params.script, { signal: combined.signal,
+   stdin?, cwd })`. The `combined.signal` is the linked
+   controller's signal (from step 3); without it the timeout
+   never fires because the original caller-supplied `signal`
+   has no timeout wired in.
 6. On exception: returns
    `{ stdout: '', stderr: <message>, exitCode: signal.aborted ? 130 : 1 }`
    wrapped in `toolResult`.
@@ -94,17 +98,19 @@ of these per mount; the adapter's job is to translate
 relative paths back to absolute ZenFS paths.
 
 `VolumeFileSystem` implements just-bash's `IFileSystem`
-interface (~25 methods). Constructor takes `root: string`
-(e.g. `'/mnt/wiki'`) and validates it's absolute + strips
-trailing slash. Every method composes
+interface (21 methods on the adapter). Constructor takes
+`root: string` (e.g. `'/mnt/wiki'`) and validates it's
+absolute + strips trailing slash. Every method composes
 `this.abs(path) = root + path` and delegates to
 `zenfs.promises.<op>` (the global VFS the
 `ZenfsVolumeRegistry` mounted into).
 
-The full method list is large (read, write, append, mkdir, rm,
-cp, mv, symlink, chmod, lstat, stat, readlink, realpath,
-utimes, readdir, copyFile, …). All path-translating; no logic
-lives here beyond the prefix join + buffer ↔ string encoding
+Full method list: `readFile`, `readFileBuffer`, `writeFile`,
+`appendFile`, `exists`, `stat`, `lstat`, `mkdir`, `readdir`,
+`readdirWithFileTypes`, `rm`, `cp`, `mv`, `resolvePath`,
+`getAllPaths`, `chmod`, `symlink`, `link`, `readlink`,
+`realpath`, `utimes`. All path-translating; no logic lives
+here beyond the prefix join + buffer ↔ string encoding
 helpers (`resolveReadEncoding`, `resolveWriteEncoding`,
 `decodeBuffer`, `toUint8Array`, `toNodePayload`).
 

@@ -1,7 +1,7 @@
 import { fs } from "@zenfs/core";
 import { umount } from "@zenfs/core/vfs";
 import { beforeEach, describe, expect, it } from "vitest";
-import { buildSeedInit } from "../test/seed-volume";
+import { buildSeedInit } from "../test-utils/seed-volume";
 import { ZenfsVolumeRegistry } from "./volume-registry";
 
 async function drainMounts(names: string[], registry: ZenfsVolumeRegistry): Promise<void> {

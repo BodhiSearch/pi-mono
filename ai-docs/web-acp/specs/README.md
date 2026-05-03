@@ -18,6 +18,28 @@ agent runtime is genuinely host-neutral. Today's two hosts (browser
 worker, Node CLI) speak the same ACP wire to the same agent code;
 tomorrow's HTTP/SSE host slots in behind the same boundary.
 
+**Extraction status (which package is the library?):**
+`@bodhiapp/web-acp-agent` is **already lib-shaped** — it ships
+zero browser-only runtime deps, exposes a single
+`startAcpAgent(transport, services, options)` entry point, and is
+consumed by both host runtimes via a workspace dependency. The
+M8 milestone publishes it to npm under its current name.
+`packages/web-acp/` is the **extraction-pending** browser
+reference app — host-runtime helpers under `runtime/` and
+`acp/` are the candidates for a future `@bodhiapp/bodhi-web-acp`
+host-runtime library; the `App.tsx` chat surface stays in the
+reference repo.
+
+**Historical paths.** Some files under
+`ai-docs/web-acp/prompts/` and `ai-docs/plans/` reference the
+old `specs/web-acp/` folder that was split into
+`specs/web-acp-agent/` + `specs/web-acp-client/` post-M4 phase
+B. Those plans / prompts are immutable historical artifacts —
+when reading them, mentally re-route any `specs/web-acp/<topic>.md`
+link to the matching topic file in either of the two new
+folders (host topics → `web-acp-client/`, agent topics →
+`web-acp-agent/`).
+
 ## Relationship to sibling specs
 
 - [`../../specs/worker-agent/`](../../specs/worker-agent/) and

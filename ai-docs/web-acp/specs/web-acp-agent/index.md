@@ -40,14 +40,19 @@ directly — it only sees the stream pair.
 
 ## Hard constraints
 
-- **No browser-only deps.** No `@zenfs/dom`, `idb-keyval`,
-  `dexie`, `MessagePort`, `Worker`, `FileSystemDirectoryHandle`,
-  `navigator.storage`, or `window.*`. Verified by grep guards
-  in CI. Concrete deps allowed: `@agentclientprotocol/sdk`,
+- **No browser-only runtime deps.** No `@zenfs/dom`,
+  `idb-keyval`, `dexie`, `MessagePort`, `Worker`,
+  `FileSystemDirectoryHandle`, `navigator.storage`, or
+  `window.*` referenced at runtime. Verified by grep guards in
+  CI. Concrete runtime deps allowed: `@agentclientprotocol/sdk`,
   `@mariozechner/pi-ai`, `@mariozechner/pi-agent-core`,
   `@modelcontextprotocol/sdk`, `@sinclair/typebox`,
   `@zenfs/core`, `just-bash`, `zod` (see
   `packages/web-acp-agent/package.json`).
+  `@bodhiapp/bodhi-js-react` lives in `devDependencies` —
+  the agent uses `import type` only against
+  `@bodhiapp/bodhi-js-react/api` so the type-shape lookup
+  doesn't bring browser-only React code into the runtime.
 - **No node-only deps either.** The agent runs in a Web Worker
   today; that runtime has no `fs`, `child_process`, `path`, or
   any other node-builtin. Future Node hosts can supply ZenFS
@@ -89,10 +94,13 @@ import path consumers should reach for. Notable groupings:
   `ExpansionResult`, `expandCommand`, `FrontMatter`,
   `loadCommandsFromVolumes`, `loadPromptsFromVolumes`,
   `ParseResult`, `PROMPTS_DIR_RELPATH`,
-  `COMMANDS_DIR_RELPATH`, `parseFrontMatter`).
+  `COMMANDS_DIR_RELPATH`, `parseFrontMatter`,
+  `tokenizeBash`, `InvalidCommandPathError`, `isValidSegment`,
+  `FrontMatterError`, `CanonicalNameInput`).
 - **Built-ins.** `BuiltinAction`, `BuiltinCommand`,
   `BuiltinHandlerCtx`, `BuiltinMcpInstance`, `BuiltinResult`,
-  `builtinAvailableCommands`, `findBuiltin`, `isBuiltinName`.
+  `builtinAvailableCommands`, `findBuiltin`, `isBuiltinName`,
+  `BUILTIN_COMMANDS`.
 - **MCP runtime.** `createMcpClient`, `createMcpAgentTool`,
   `McpConnectionPool`, `mcpToolName`,
   `MCP_TOOL_NAME_SEPARATOR`, plus the descriptor / event /
@@ -125,6 +133,13 @@ import path consumers should reach for. Notable groupings:
   `BodhiBuiltinTag`).
 - **Misc.** `canonicalizeMcpUrl`, `deriveSlugFromUrl`.
 
+> Engine internals (`PromptTurnDriver`, `AcpSessionRuntime`,
+> `ExtMethodHost`, `SessionState`, the per-handler
+> ext-method modules, `assembleServices`) are documented in
+> `acp.md` for orientation but are **not** re-exported on the
+> public barrel — consumers should never import them directly
+> from `@bodhiapp/web-acp-agent`.
+
 ## Folder layout
 
 ```
@@ -141,7 +156,7 @@ packages/web-acp-agent/src/
 │       ├── prompt-driver.ts       # PromptTurnDriver — single prompt-turn loop
 │       ├── builtin-dispatch.ts    # tryHandleBuiltin (early-return before LLM)
 │       ├── types.ts               # SessionState, ExtMethodHost
-│       └── ext-methods/           # one file per `_bodhi/*` / `bodhi/*` handler
+│       └── ext-methods/           # handler-per-file: 6 use `_bodhi/*` (features-list, features-set, mcp-toggles-set, sessions-delete, volumes-list); 3 use legacy `bodhi/*` (list-models, list-sessions, get-session)
 │           ├── index.ts           # dispatchExtMethod(method, params) registry
 │           ├── list-models.ts, list-sessions.ts, get-session.ts
 │           ├── volumes-list.ts
@@ -180,9 +195,8 @@ packages/web-acp-agent/src/
 ├── mcp/
 │   └── url-canonical.ts           # canonicalizeMcpUrl, deriveSlugFromUrl
 ├── wire/
-│   ├── index.ts                   # ACP method constants + Bodhi* request/response shapes
-│   └── methods.ts                 # `_bodhi/*` method-name barrel (re-export root)
-└── test/
+│   └── index.ts                   # ACP method constants + Bodhi* request/response shapes (the canonical barrel; consumers import from the package root via `src/index.ts`)
+└── test-utils/                    # vitest helpers (`seed-volume`, `setup`); exposed via the `./test-utils` package export
     ├── seed-volume.ts             # InMemory + ZenFS test helper
     └── setup.ts                   # vitest global setup
 ```
