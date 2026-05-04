@@ -49,46 +49,46 @@ export function attachVolumeChannel(
       try {
         const agentInit = await toAgentVolumeInit(msg.init);
         await registry.mount(agentInit);
-        scope.postMessage(<VolumeMountReply>{
+        scope.postMessage({
           type: 'volumes/mount:reply',
           id: msg.id,
           ok: true,
           mountName: msg.init.mountName,
-        });
+        } satisfies VolumeMountReply);
       } catch (err) {
-        scope.postMessage(<VolumeMountReply>{
+        scope.postMessage({
           type: 'volumes/mount:reply',
           id: msg.id,
           ok: false,
           mountName: msg.init.mountName,
           error: errorMessage(err),
-        });
+        } satisfies VolumeMountReply);
       }
       return;
     }
     if (msg.type === 'volumes/unmount') {
       try {
         await registry.unmount(msg.mountName);
-        scope.postMessage(<VolumeUnmountReply>{
+        scope.postMessage({
           type: 'volumes/unmount:reply',
           id: msg.id,
           ok: true,
           mountName: msg.mountName,
-        });
+        } satisfies VolumeUnmountReply);
       } catch (err) {
-        scope.postMessage(<VolumeUnmountReply>{
+        scope.postMessage({
           type: 'volumes/unmount:reply',
           id: msg.id,
           ok: false,
           mountName: msg.mountName,
           error: errorMessage(err),
-        });
+        } satisfies VolumeUnmountReply);
       }
       return;
     }
   };
-  scope.addEventListener('message', listener as EventListener);
-  return () => scope.removeEventListener('message', listener as EventListener);
+  scope.addEventListener('message', listener as unknown as EventListener);
+  return () => scope.removeEventListener('message', listener as unknown as EventListener);
 }
 
 function errorMessage(err: unknown): string {

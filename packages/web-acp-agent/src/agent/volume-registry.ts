@@ -15,8 +15,7 @@
  */
 
 import type { FileSystem } from '@zenfs/core';
-import { configure } from '@zenfs/core';
-import { mount, umount } from '@zenfs/core/vfs';
+import { configure, vfs } from '@zenfs/core';
 
 export interface VolumeInit {
   mountName: string;
@@ -77,7 +76,7 @@ export class ZenfsVolumeRegistry implements VolumeRegistry {
     }
     await this.#ensureZenfs();
     const mountPath = `/mnt/${init.mountName}`;
-    mount(mountPath, init.fs);
+    vfs.mount(mountPath, init.fs);
     if (init.initialize) {
       await init.initialize();
     }
@@ -91,7 +90,7 @@ export class ZenfsVolumeRegistry implements VolumeRegistry {
   async unmount(mountName: string): Promise<void> {
     if (!this.#volumes.has(mountName)) return;
     try {
-      umount(`/mnt/${mountName}`);
+      vfs.umount(`/mnt/${mountName}`);
     } catch (err) {
       console.warn(`[VolumeRegistry] unmount: vfs.umount failed for ${mountName}:`, err);
     }

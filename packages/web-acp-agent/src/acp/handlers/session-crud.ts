@@ -149,7 +149,7 @@ export async function handleListSessions(
   }
   // Cursor is base64(`page=N&per_page=10&sort_by=updated_at&sort_seq=desc`).
   // Bad cursor → defaults to page 1 (lenient decode).
-  const cursor = decodeCursor(params.cursor);
+  const cursor = decodeCursor(params.cursor ?? undefined);
   const { rows, total } = await store.listSummariesPage({
     page: cursor.page,
     perPage: cursor.perPage,

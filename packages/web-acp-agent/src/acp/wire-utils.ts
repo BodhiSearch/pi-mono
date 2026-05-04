@@ -6,7 +6,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { AgentMessage, AgentMessage as CoreMessage } from '@mariozechner/pi-agent-core';
 import type { CommandDef } from '../agent/commands';
-import type { McpToggleSnapshot } from '../storage/mcp-toggle-store';
+import type { McpToggleSnapshot } from '../storage/mcp-toggle-shape';
 import type {
   AnyBodhiBuiltinAction,
   BodhiMcpInstanceDescriptor,

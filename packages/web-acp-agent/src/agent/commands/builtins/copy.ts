@@ -11,7 +11,6 @@ import type { BuiltinCommand } from './types';
 function hasAnyAssistantText(messages: AgentMessage[]): boolean {
   for (const msg of messages) {
     if (msg.role !== 'assistant') continue;
-    if (typeof msg.content === 'string' && msg.content.trim().length > 0) return true;
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (

@@ -32,5 +32,5 @@ class NoopWorker {
   }
 }
 if (typeof (globalThis as { Worker?: unknown }).Worker === 'undefined') {
-  (globalThis as { Worker: typeof NoopWorker }).Worker = NoopWorker;
+  (globalThis as unknown as { Worker: typeof NoopWorker }).Worker = NoopWorker;
 }

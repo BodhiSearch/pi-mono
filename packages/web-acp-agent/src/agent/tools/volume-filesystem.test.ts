@@ -1,5 +1,4 @@
-import { fs } from '@zenfs/core';
-import { umount } from '@zenfs/core/vfs';
+import { fs, vfs } from '@zenfs/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildSeedInit } from '../../test-utils/seed-volume';
 import { ZenfsVolumeRegistry } from '../volume-registry';
@@ -7,7 +6,7 @@ import { VolumeFileSystem } from './volume-filesystem';
 
 async function resetMount(mountName: string) {
   try {
-    umount(`/mnt/${mountName}`);
+    vfs.umount(`/mnt/${mountName}`);
   } catch {
     /* not mounted */
   }

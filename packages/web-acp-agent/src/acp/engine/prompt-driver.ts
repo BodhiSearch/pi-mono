@@ -133,7 +133,9 @@ export class PromptTurnDriver {
     this.#turnAbort = new AbortController();
     if (featureSnapshot.bashEnabled && hasVolumes && this.#services.registry) {
       const bashTool = createBashTool({ registry: this.#services.registry });
-      tools.push(bindAbortSignal(bashTool, this.#turnAbort.signal) as AgentTool<TSchema>);
+      tools.push(
+        bindAbortSignal(bashTool, this.#turnAbort.signal) as unknown as AgentTool<TSchema>
+      );
     }
     for (const mcpTool of this.#runtime.mcpToolsForSession(session, mcpToggleSnapshot)) {
       tools.push(bindAbortSignal(mcpTool, this.#turnAbort.signal) as AgentTool<TSchema>);

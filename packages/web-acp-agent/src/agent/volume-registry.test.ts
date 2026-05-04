@@ -1,5 +1,4 @@
-import { fs } from '@zenfs/core';
-import { umount } from '@zenfs/core/vfs';
+import { fs, vfs } from '@zenfs/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildSeedInit } from '../test-utils/seed-volume';
 import { ZenfsVolumeRegistry } from './volume-registry';
@@ -10,7 +9,7 @@ async function drainMounts(names: string[], registry: ZenfsVolumeRegistry): Prom
       await registry.unmount(name);
     } catch {
       try {
-        umount(`/mnt/${name}`);
+        vfs.umount(`/mnt/${name}`);
       } catch {
         /* best-effort */
       }

@@ -11,6 +11,7 @@ import type {
   UserAliasResponse,
 } from '@bodhiapp/bodhi-js-react/api';
 import type { Api, Model, Provider } from '@mariozechner/pi-ai';
+import type { BodhiServerInfoResponse } from '../wire';
 
 export const BODHI_PROVIDER_TAG = 'bodhi';
 

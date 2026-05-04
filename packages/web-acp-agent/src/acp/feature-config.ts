@@ -41,11 +41,6 @@ export function configIdToFeatureKey(configId: string): FeatureKey | null {
   return FEATURE_KEY_BY_CONFIG_ID[configId] ?? null;
 }
 
-const ON_OFF_SELECT_OPTIONS = [
-  { value: 'on', name: 'On' },
-  { value: 'off', name: 'Off' },
-] as const;
-
 export function buildFeatureConfigOptions(
   snapshot: FeatureSnapshot | typeof FEATURE_DEFAULTS
 ): SessionConfigOption[] {
@@ -56,6 +51,9 @@ export function buildFeatureConfigOptions(
     description: entry.description,
     category: BODHI_FEATURE_CONFIG_CATEGORY,
     currentValue: snapshot[entry.featureKey] ? 'on' : 'off',
-    options: ON_OFF_SELECT_OPTIONS,
+    options: [
+      { value: 'on', name: 'On' },
+      { value: 'off', name: 'Off' },
+    ],
   }));
 }

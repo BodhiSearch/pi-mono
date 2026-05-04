@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import { initialStreamingState, streamingReducer, type StreamingState } from './streaming-reducer';
+import {
+  type AcpAction,
+  initialStreamingState,
+  streamingReducer,
+  type StreamingState,
+} from './streaming-reducer';
 
 function makeMsg(role: 'user' | 'assistant', text: string): AgentMessage {
   return {
@@ -268,14 +273,14 @@ describe('streamingReducer', () => {
 
   it.each([
     {
-      action: { type: 'config-options-init', configOptions: [] } as const,
+      action: { type: 'config-options-init', configOptions: [] } satisfies AcpAction,
       label: 'config-options-init',
     },
     {
       action: {
         type: 'mcp-state',
         meta: { server: 'srv-1', state: 'connected' },
-      } as const,
+      } satisfies AcpAction,
       label: 'mcp-state',
     },
   ])('panel-only action $label is a no-op on the streaming reducer', ({ action }) => {

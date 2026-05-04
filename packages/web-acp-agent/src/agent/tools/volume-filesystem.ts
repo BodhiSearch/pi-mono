@@ -15,15 +15,28 @@ import { fs as zenfs } from '@zenfs/core';
 import type {
   BufferEncoding,
   CpOptions,
-  DirentEntry,
   FileContent,
   FsStat,
   IFileSystem,
   MkdirOptions,
-  ReadFileOptions,
   RmOptions,
-  WriteFileOptions,
 } from 'just-bash/browser';
+
+// `just-bash/browser` does not re-export these `IFileSystem` helper
+// shapes. Mirror them locally so the implementation stays structurally
+// compatible with the upstream interface without a deep import.
+interface ReadFileOptions {
+  encoding?: BufferEncoding | null;
+}
+interface WriteFileOptions {
+  encoding?: BufferEncoding;
+}
+interface DirentEntry {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymbolicLink: boolean;
+}
 
 type ReadFileArg = ReadFileOptions | BufferEncoding | undefined;
 type WriteFileArg = WriteFileOptions | BufferEncoding | undefined;

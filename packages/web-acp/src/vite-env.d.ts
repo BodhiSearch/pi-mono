@@ -17,3 +17,17 @@ declare const __WEB_ACP_DEV__: boolean;
  */
 declare const __WEB_ACP_VERSION__: string;
 declare const __ACP_SDK_VERSION__: string;
+
+/**
+ * File System Access API — `showDirectoryPicker` is a Chromium-only
+ * surface not yet in `lib.dom.d.ts`. Declared minimally so the hook
+ * that uses it typechecks; runtime existence is feature-detected
+ * (`typeof window.showDirectoryPicker === 'function'`).
+ */
+interface Window {
+  showDirectoryPicker?: (options?: {
+    mode?: 'read' | 'readwrite';
+    id?: string;
+    startIn?: string | FileSystemHandle;
+  }) => Promise<FileSystemDirectoryHandle>;
+}

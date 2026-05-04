@@ -173,7 +173,7 @@ function applySessionUpdate(
       if (!existing) return state;
       const next: ToolCallView = {
         ...existing,
-        status: mapToolStatus(update.status) ?? existing.status,
+        status: mapToolStatus(update.status ?? undefined) ?? existing.status,
         rawOutput: update.rawOutput ?? existing.rawOutput,
         text: update.content ? toolCallContentText(update.content) : existing.text,
       };
