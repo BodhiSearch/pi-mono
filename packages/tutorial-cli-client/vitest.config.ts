@@ -1,9 +1,10 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: {
-    globals: true,
-    environment: 'node',
-    include: ['e2e/**/*.spec.ts'],
-  },
+	test: {
+		globals: true,
+		environment: "node",
+		include: ["src/**/*.{test,spec}.ts", "test/**/*.{test,spec}.ts"],
+		exclude: ["e2e/**", "node_modules/**"],
+	},
 });

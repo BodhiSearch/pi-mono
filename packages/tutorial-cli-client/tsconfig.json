@@ -16,5 +16,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "e2e"]
+  "include": ["src", "test", "playwright.config.ts", "vitest.config.ts"]
 }

@@ -1,0 +1,24 @@
+/**
+ * OAuth client + auth-server defaults shared with @bodhiapp/cli-acp-client.
+ *
+ * APP_CLIENT_ID is the public OAuth registration; the matching Keycloak
+ * client allows exactly one redirect_uri (http://localhost:5173/callback),
+ * so the callback port is fixed at 5173 — using anything else trips
+ * `Invalid parameter: redirect_uri` during the authorize step.
+ */
+
+export const APP_CLIENT_ID = "bodhi-app-f181a4d1-d7af-43f4-965a-0a8efd453d86";
+
+export const DEFAULT_AUTH_SERVER_URL = "https://main-id.getbodhi.app/realms/bodhi";
+
+export const DEFAULT_CALLBACK_PORT = 5173;
+
+export const DEFAULT_SCOPES = ["openid", "email", "profile", "roles"] as const;
+
+export function buildScopeString(accessRequestId: string, accessRequestScope?: string): string {
+	const scope = accessRequestScope ?? `access_request:${accessRequestId}`;
+	return [...DEFAULT_SCOPES, scope].join(" ");
+}
+
+export const STORAGE_DIR_NAME = ".tutorial-cli-client";
+export const TOKEN_FILE_NAME = "tokens.json";
