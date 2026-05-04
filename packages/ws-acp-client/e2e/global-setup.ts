@@ -8,6 +8,7 @@ import { chromium, type FullConfig } from '@playwright/test';
 import { BodhiServerManager } from './utils/bodhi-server-manager';
 import { startWsAcpServer, type WsServerHandle } from './utils/ws-server-manager';
 import { LoginPage } from './pages/admin/LoginPage';
+import { ApiModelsPage } from './pages/admin/ApiModelsPage';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +24,10 @@ export interface TestState {
   wsUrl: string;
   /** Agent working directory backing the cwd PassthroughFS volume. */
   cwd: string;
+  /** Fully-qualified Bodhi API model id ("oai/<name>") provisioned in setup. */
+  modelId: string;
+  /** Display name (without prefix) — handy for ModelPicker option matching. */
+  modelName: string;
 }
 
 export function getTestState(): TestState {
@@ -41,6 +46,13 @@ export const BODHI_SERVER_PORT = 51135;
 export const BODHI_DEFAULT_PORT = 1135;
 export const BODHI_SERVER_URL = `http://localhost:${BODHI_SERVER_PORT}`;
 
+// Single API model provisioned for Phase 3+ prompt round-trips. Matches
+// web-acp's choice (small + cheap + reliable) so the same OpenAI key
+// works for both packages.
+export const API_MODEL_PREFIX = 'oai/';
+export const API_MODEL_NAME = 'gpt-5.4-mini';
+export const FULL_MODEL_ID = `${API_MODEL_PREFIX}${API_MODEL_NAME}`;
+
 const REQUIRED_ENV_VARS = [
   'BODHIAPP_CLIENT_ID',
   'BODHIAPP_CLIENT_SECRET',
@@ -49,6 +61,7 @@ const REQUIRED_ENV_VARS = [
   'BODHIAPP_PASSWORD',
   'BODHIAPP_AUTH_URL',
   'BODHIAPP_AUTH_REALM',
+  'OPENAI_API_KEY',
 ];
 
 function getEnv(key: string): string {
@@ -155,6 +168,17 @@ async function globalSetup(_: FullConfig) {
       password: getEnv('BODHIAPP_PASSWORD'),
     });
     await loginPage.performOAuthLogin('/ui/chat/');
+
+    // Provision a single OpenAI-backed API model so the agent's
+    // `bodhi/v1/models` endpoint returns at least one entry once
+    // acp-ui pushes a token. Without this the model picker stays
+    // empty and the prompt journey can't reach `streaming`.
+    const apiModelsPage = new ApiModelsPage(page, serverUrl);
+    await apiModelsPage.configureApiModel(
+      getEnv('OPENAI_API_KEY'),
+      API_MODEL_PREFIX,
+      API_MODEL_NAME
+    );
   } catch (err) {
     setupFailed = true;
     const shotPath = path.join(E2E_DIR, 'test-results', 'global-setup-failure.png');
@@ -194,6 +218,8 @@ async function globalSetup(_: FullConfig) {
         password: getEnv('BODHIAPP_PASSWORD'),
         wsUrl: wsServer.url,
         cwd: wsServer.cwd,
+        modelId: FULL_MODEL_ID,
+        modelName: API_MODEL_NAME,
       } satisfies TestState,
       null,
       2

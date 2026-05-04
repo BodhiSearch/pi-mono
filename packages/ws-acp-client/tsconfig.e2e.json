@@ -8,6 +8,5 @@
     "noUnusedParameters": false,
     "skipLibCheck": true
   },
-  "include": ["e2e"],
-  "references": [{ "path": "./tsconfig.app.json" }]
+  "include": ["e2e"]
 }

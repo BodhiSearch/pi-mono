@@ -11,9 +11,10 @@ import { getTestState } from './global-setup';
 //   3. acp-ui surfaces an `auth-required` UI state so the user can resolve
 //      the auth flow before any LLM contact.
 //
-// No `_meta.bodhi` token push happens in this phase — Phase 3 wires that.
-// The user can only cancel the dialog, which returns the chat surface to
-// its idle `disconnected` state.
+// This intentionally skips Bodhi login — Phase 3 wires up the auto-token
+// push, and that path swallows the dialog when both `bodhi-token` is
+// advertised AND a stored token exists. Without a stored token, the
+// dialog must surface and the user can only cancel it.
 test.describe('acp-ui ↔ ws-acp-client agent init', () => {
   test('add WS agent → auth-required surfaces → cancel returns to disconnected', async ({
     page,
@@ -23,19 +24,11 @@ test.describe('acp-ui ↔ ws-acp-client agent init', () => {
     const settings = new SettingsPage(page);
     const chat = new ChatPage(page);
 
-    await test.step('Land on a fresh acp-ui page', async () => {
+    await test.step('Land on a fresh acp-ui page (no Bodhi login)', async () => {
       await page.goto('/');
       await expect(page.locator('[data-testid="app-title"]')).toBeVisible();
       await chat.expectState('disconnected');
-    });
-
-    await test.step('Authenticate to Bodhi (sets server URL + access token)', async () => {
-      await settings.open();
-      await settings.setBodhiServerUrl(state.bodhiServerUrl);
-      expect.soft(await settings.bodhiServerStatus()).toBe('configured');
-      await settings.close();
-      await auth.login({ username: state.username, password: state.password });
-      await auth.expectAuthenticated();
+      await auth.expectUnauthenticated();
     });
 
     await test.step('Open Settings and add a WebSocket agent', async () => {
