@@ -52,6 +52,10 @@ export interface VolumeRegistry {
   onChange(listener: VolumeRegistryListener): () => void;
 }
 
+// Process-global guard: ZenFS keeps one `mounts` map per process,
+// so `configure` must run at most once. See `volumes.md`.
+let zenfsConfiguredGlobally = false;
+
 export class ZenfsVolumeRegistry implements VolumeRegistry {
   #volumes = new Map<string, VolumeSnapshot>();
   #listeners = new Set<VolumeRegistryListener>();
@@ -111,10 +115,10 @@ export class ZenfsVolumeRegistry implements VolumeRegistry {
 
   async #ensureZenfs(): Promise<void> {
     if (this.#zenfsConfigured) return;
-    // Start with an empty VFS config so subsequent calls to
-    // `mount(path, backend)` land on a known surface. Idempotent across
-    // tests that reset module state.
-    await configure({ mounts: {} });
+    if (!zenfsConfiguredGlobally) {
+      await configure({ mounts: {} });
+      zenfsConfiguredGlobally = true;
+    }
     this.#zenfsConfigured = true;
   }
 

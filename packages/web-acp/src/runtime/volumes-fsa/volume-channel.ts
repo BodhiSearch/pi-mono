@@ -1,21 +1,11 @@
 /**
- * Worker-side control channel for runtime volume mount/unmount. FSA
- * `FileSystemDirectoryHandle`s are structured-cloneable but not
- * JSON-serialisable, so they can't ride the ACP NDJSON wire — we use
- * a dedicated raw-`postMessage` sidechannel on the worker global scope.
- *
- * The target is a `MountTarget` (matches `StartAgentHandle.mount`/
- * `unmount`); the worker bootstrap converts host-shaped `HostVolumeInit`
- * into the agent's transport-agnostic `VolumeInit` via
- * `toAgentVolumeInit` before forwarding.
+ * Sidechannel for FSA mount/unmount postMessages — handles can't ride
+ * the ACP NDJSON wire, so worker bootstrap forwards them directly to
+ * the host-owned `VolumeRegistry`.
  */
+import type { VolumeRegistry } from '@bodhiapp/web-acp-agent';
 import { toAgentVolumeInit } from './backends';
 import type { HostVolumeInit } from './types';
-
-export interface MountTarget {
-  mount(init: import('@bodhiapp/web-acp-agent').VolumeInit): Promise<void>;
-  unmount(mountName: string): Promise<void>;
-}
 
 export interface VolumeMountRequest {
   type: 'volumes/mount';
@@ -50,7 +40,7 @@ export type VolumeControlReply = VolumeMountReply | VolumeUnmountReply;
 
 export function attachVolumeChannel(
   scope: DedicatedWorkerGlobalScope,
-  target: MountTarget
+  registry: VolumeRegistry
 ): () => void {
   const listener = async (event: MessageEvent<unknown>): Promise<void> => {
     const msg = event.data as VolumeControlRequest | undefined;
@@ -58,7 +48,7 @@ export function attachVolumeChannel(
     if (msg.type === 'volumes/mount') {
       try {
         const agentInit = await toAgentVolumeInit(msg.init);
-        await target.mount(agentInit);
+        await registry.mount(agentInit);
         scope.postMessage(<VolumeMountReply>{
           type: 'volumes/mount:reply',
           id: msg.id,
@@ -78,7 +68,7 @@ export function attachVolumeChannel(
     }
     if (msg.type === 'volumes/unmount') {
       try {
-        await target.unmount(msg.mountName);
+        await registry.unmount(msg.mountName);
         scope.postMessage(<VolumeUnmountReply>{
           type: 'volumes/unmount:reply',
           id: msg.id,

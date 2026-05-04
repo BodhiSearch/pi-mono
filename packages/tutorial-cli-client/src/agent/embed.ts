@@ -6,6 +6,7 @@ import {
 	type BodhiServerInfoResponse,
 	createInMemoryDuplex,
 	startAgent,
+	ZenfsVolumeRegistry,
 } from "@bodhiapp/web-acp-agent";
 
 export interface EmbeddedAgent {
@@ -25,6 +26,7 @@ export async function createEmbeddedAgent(): Promise<EmbeddedAgent> {
 	const handle = startAgent({
 		transport: duplex.agent,
 		provider: new BodhiProvider(),
+		registry: new ZenfsVolumeRegistry(),
 	});
 
 	const stream = ndJsonStream(duplex.client.writable, duplex.client.readable);

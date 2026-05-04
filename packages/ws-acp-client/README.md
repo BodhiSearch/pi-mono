@@ -98,24 +98,25 @@ authenticate calls do not leak between concurrent connections.
                                      │ └───────────────────────────────┘ │
                                      │ ┌─ Per WS connection ──────────┐ │
                                      │ │ BodhiProvider (token holder) │ │
-                                     │ │ InlineAgent (turn loop)      │ │
-                                     │ │ AcpAgentAdapter              │ │
-                                     │ │ → assembleServices points    │ │
-                                     │ │   at the shared registry +   │ │
-                                     │ │   stores                     │ │
+                                     │ │ startAgent({ registry,       │ │
+                                     │ │   sessions, preferences,     │ │
+                                     │ │   provider, transport })     │ │
+                                     │ │ → handle.dispose() on close  │ │
                                      │ └──────────────────────────────┘ │
                                      └──────────────────────────────────┘
 ```
 
 - `src/server.ts` — HTTP server (for health checks) wrapped by
   `ws.WebSocketServer`. Each new socket → `WsTransportPair` →
-  per-connection `BodhiProvider` + `InlineAgent` +
-  `assembleServices({ … registry, store, preferences })` →
-  `AcpAgentAdapter` driven by `AgentSideConnection`. The advanced
-  surface lives at `@bodhiapp/web-acp-agent/test-utils` because
-  multi-connection hosts need to share a single
-  `ZenfsVolumeRegistry` (ZenFS keeps a process-global mount table —
-  two registries would collide on `/mnt/cwd`).
+  one `startAgent({ transport, provider, registry, sessions,
+  preferences })` call. `registry` is mandatory in the agent
+  API; the host passes the shared `ZenfsVolumeRegistry` and
+  sqlite-backed stores from `HostState`. The per-connection
+  `BodhiProvider` carries that user's auth token. `startAgent`
+  never mounts, unmounts, or disposes the registry — the host
+  owns its lifecycle. Sharing a single registry across
+  connections is required because ZenFS keeps a process-global
+  mount table; two registries would collide on `/mnt/cwd`.
 - `src/transport/ws-transport.ts` — adapts a `ws` socket to the
   WHATWG byte-stream pair `web-acp-agent` expects. Outbound chunks
   are sent as text frames (browsers' `WebSocket.onmessage` rejects

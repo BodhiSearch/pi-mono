@@ -6,10 +6,11 @@
 
 The wire-flow narrative for `@bodhiapp/web-acp-agent`,
 **independent of any host**. Describes what happens between
-the moment a host hands a transport + services bag to
-`startAcpAgent` and the moment the LLM emits the first
-streaming chunk. Valid for the browser host, the CLI host,
-and any future host that consumes the agent package.
+the moment a host calls `startAgent({ transport, provider,
+registry, sessions?, preferences?, buildVersion? })` and the
+moment the LLM emits the first streaming chunk. Valid for the
+browser host, the WebSocket host, the CLI host, and any future
+host that consumes the agent package.
 
 For host-specific boot details (React mount, FSA volume
 resolution, OAuth flow, etc.), follow the cross-links to
@@ -20,7 +21,7 @@ or [`../cli-acp-client/index.md`](../cli-acp-client/index.md).
 
 | Actor | File | Owns |
 | --- | --- | --- |
-| `startAcpAgent` | `bootstrap.ts:28` | Frames `ndJsonStream` over the host's transport pair; constructs the `AgentSideConnection` + adapter. |
+| `startAgent` | `api/start-agent.ts` | Builds an `InlineAgent` over the supplied `LlmProvider`, calls `assembleServices` against the host-provided `registry`, frames `ndJsonStream` over the host transport, and hands the connection to a fresh `AcpAgentAdapter`. Never mounts/unmounts/disposes the registry. |
 | `AcpAgentAdapter` | `acp/agent-adapter.ts:57` | Implements ACP's `Agent` interface; delegates to per-concern handlers. |
 | Per-method handlers | `acp/handlers/{initialize,session-crud}.ts` | Stateless functions taking `AcpAdapterContext` — own all business logic for the standard ACP surface. |
 | `AcpAdapterContext` | `acp/handlers/adapter-context.ts:6` | Frozen-shape bag (`services`, `runtime`, `driver`, `isDev`, `buildVersion`) handed to every handler. |
@@ -37,26 +38,45 @@ or [`../cli-acp-client/index.md`](../cli-acp-client/index.md).
 The host calls:
 
 ```ts
-startAcpAgent(
+const handle = startAgent({
     transport,                 // { readable, writable } byte-stream pair
-    services: AcpAdapterServices,
-    options: { isDev, buildVersion, acpSdkVersion, onAdapter? },
-);
+    provider,                  // LlmProvider (e.g. new BodhiProvider())
+    registry,                  // VolumeRegistry — host owns lifecycle
+    sessions?,                 // optional SessionStore; defaults to in-memory
+    preferences?,              // optional PreferenceStore; defaults to in-memory
+    buildVersion?,             // optional version string for `agentInfo`
+});
 ```
 
-Inside `bootstrap.ts:startAcpAgent` (`:28`):
+`registry` is **mandatory**. `StartAgentOptions` does **not**
+accept `volumes` — hosts pre-mount via `registry.mount(init)`
+(or `registry.mountAll([...])`) before or after `startAgent`,
+since the registry is the live mount surface either way. Multi-
+connection hosts (e.g. `ws-acp-client`) construct one registry
+and pass the same instance into every `startAgent` call: ZenFS
+keeps a process-global mount table so two registries collide.
+See [`volumes.md`](volumes.md) for the rationale.
 
-1. `stream = ndJsonStream(transport.writable, transport.readable)`
-   wraps the byte streams in NDJSON framing.
-2. `new AgentSideConnection((conn) => { … }, stream)` — the
-   SDK's connection constructor invokes `toAgent(conn)`
+Inside `api/start-agent.ts:startAgent`:
+
+1. `streamOverrides = { current: {} }` — per-call mutable bag
+   read by the inline agent's stream-fn.
+2. `inline = createInlineAgent(createStreamFn(provider,
+   readOverrides))` — wraps the `LlmProvider` for `pi-agent-core`.
+3. `services = assembleServices({ inline, bodhi: provider,
+   registry: options.registry, store: sessions ?? in-memory,
+   preferences ?? in-memory, streamOverrides })` — the
+   engine-layer services bag (`AcpAdapterServices`).
+4. `stream = ndJsonStream(transport.writable,
+   transport.readable)` wraps the byte streams in NDJSON framing.
+5. `new AgentSideConnection((conn) => { adapter = new
+   AcpAgentAdapter(conn, services, { buildVersion,
+   acpSdkVersion: ACP_SDK_VERSION }); return adapter }, stream)`
+   — the SDK's connection constructor invokes the factory
    synchronously to build the `Agent` implementation.
-3. Inside `toAgent`:
-   - `adapter = new AcpAgentAdapter(conn, services, { isDev,
-     buildVersion, acpSdkVersion })`.
-   - `options.onAdapter?.(adapter)` — callback so the host
-     can hold a reference for `dispose()` on teardown.
-   - Returns `adapter`.
+6. Returns `{ dispose() }` — `dispose()` calls
+   `adapter.dispose()` only; the registry / session store /
+   preference store are host-owned and untouched.
 
 The `AcpAgentAdapter` constructor (`acp/agent-adapter.ts:63`)
 synchronously builds:
@@ -66,11 +86,11 @@ synchronously builds:
   the MCP pool subscription + initialises the empty session
   map.
 - `#driver = new PromptTurnDriver({ conn, services, runtime,
-  buildVersion, acpSdkVersion, isDev })`.
-- `#ctx = { services, runtime, driver, isDev, buildVersion }`
-  — the shared bag handlers receive.
+  buildVersion, acpSdkVersion })`.
+- `#ctx = { services, runtime, driver, buildVersion }` — the
+  shared bag handlers receive.
 
-After `startAcpAgent` returns, the agent is ready to receive
+After `startAgent` returns, the agent is ready to receive
 `initialize` from the client. No work happens until the
 client makes the first call. **No model catalog is fetched up
 front** — that's lazy, see Phase 5.

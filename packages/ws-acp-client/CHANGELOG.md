@@ -28,14 +28,22 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- Migrated to the post-simplification `@bodhiapp/web-acp-agent`
-  embed surface. The host continues to drive
-  `AcpAgentAdapter` + `assembleServices` directly through
-  `@bodhiapp/web-acp-agent/test-utils` because multi-connection
-  hosts need to share a single `ZenfsVolumeRegistry` — ZenFS
-  keeps a process-global mount table, so the simpler
-  `startAgent({ volumes })` boot path (which constructs a fresh
-  registry per call) collides on `/mnt/cwd`.
+- Migrated to the public `startAgent({ transport, provider,
+  registry, sessions, preferences })` entry point. Each accepted
+  WebSocket connection passes the shared `HostState.registry`
+  (a `ZenfsVolumeRegistry` with `/mnt/cwd` pre-mounted) into
+  `startAgent`. Dropped every import from
+  `@bodhiapp/web-acp-agent/test-utils` (`AcpAgentAdapter`,
+  `assembleServices`, `createInlineAgent`, `createStreamFn`) —
+  they were a workaround for `startAgent({ volumes })`
+  constructing a fresh registry per call and colliding on the
+  process-global ZenFS mount table. The agent-side API now takes
+  a mandatory `registry` so multi-connection hosts no longer
+  need the advanced surface, and the borrowed-vs-owned ambiguity
+  goes away (the host always owns the registry lifecycle).
+- Removed the `acpSdkVersion` server option. `startAgent`
+  resolves the SDK version internally; hosts no longer need to
+  thread it through.
 - Collapsed the per-session `features` and `mcp_toggles` sqlite
   tables into a single `preferences` table keyed by
   `(session_id, key)`. Internal agent code reads the well-known

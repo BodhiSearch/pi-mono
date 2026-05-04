@@ -96,4 +96,32 @@ describe('ZenfsVolumeRegistry', () => {
     await registry.unmount('wiki');
     expect(events).toEqual([1, 2, 1]);
   });
+
+  it('does not clobber a sibling registry that already mounted into the global VFS', async () => {
+    // ZenFS keeps a process-global mounts map. A second
+    // `ZenfsVolumeRegistry` must NOT call `configure({ mounts: {} })`
+    // a second time — that would wipe the first registry's mounts.
+    // We expect mounts from both registries to coexist in the global VFS.
+    await registry.mount(
+      buildSeedInit({ mountName: 'wiki', files: { '/a.txt': 'first registry' } })
+    );
+
+    const second = new ZenfsVolumeRegistry();
+    try {
+      await second.mount(
+        buildSeedInit({ mountName: 'docs', files: { '/b.txt': 'second registry' } })
+      );
+
+      // Both mounts should be readable through the global ZenFS VFS.
+      const a = await fs.promises.readFile('/mnt/wiki/a.txt', 'utf8');
+      const b = await fs.promises.readFile('/mnt/docs/b.txt', 'utf8');
+      expect(a).toBe('first registry');
+      expect(b).toBe('second registry');
+    } finally {
+      await drainMounts(
+        second.list().map(v => v.mountName),
+        second
+      );
+    }
+  });
 });

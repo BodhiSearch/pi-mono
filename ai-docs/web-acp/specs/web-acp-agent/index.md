@@ -85,9 +85,12 @@ import path production hosts should reach for. Notable groupings
   `StartAgentHandle`, `InMemoryDuplex`.
 - **LLM provider.** `BodhiProvider`, `BODHI_PROVIDER_TAG`,
   `apiFormatOfModel`, `LlmAuthCredential`, `LlmProvider`.
-- **Volumes.** `VolumeInit` only (`VolumeRegistry`,
+- **Volumes.** `VolumeInit`, `VolumeRegistry`,
   `ZenfsVolumeRegistry`, `VolumeRegistryListener`,
-  `VolumeSnapshot` are internal — agent owns the registry).
+  `VolumeSnapshot`. Hosts construct the registry, pre-mount,
+  and pass it to `startAgent({ registry })` so multi-connection
+  hosts can share one registry across calls (see
+  [volumes.md](volumes.md) for rationale).
 - **Commands surface for host UIs.** `canonicalCommandName`,
   `COMMANDS_DIR_RELPATH`, `PROMPTS_DIR_RELPATH`, `CommandDef`,
   `CommandSource`, `FrontMatter`, `builtinAvailableCommands`,
@@ -213,7 +216,7 @@ packages/web-acp-agent/src/
 │   ├── bodhi-provider.ts          # BodhiProvider (LlmProvider impl); setAuthToken pings /info
 │   ├── stream-fn.ts               # createStreamFn(provider) — pi-ai bridge
 │   ├── system-prompt.ts           # composeSystemPrompt(volumes)
-│   ├── volume-registry.ts         # VolumeInit (public) + VolumeRegistry/ZenfsVolumeRegistry (internal)
+│   ├── volume-registry.ts         # VolumeInit + VolumeRegistry/ZenfsVolumeRegistry (public — host pre-mounts, passes to startAgent)
 │   ├── internal/                  # typed accessors over PreferenceStore (engine-only)
 │   │   ├── feature-prefs.ts       # readFeatureSnapshot / writeFeature
 │   │   └── mcp-toggle-prefs.ts    # readMcpToggles / setMcpServerToggle / setMcpToolToggle

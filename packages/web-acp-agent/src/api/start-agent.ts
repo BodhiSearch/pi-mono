@@ -3,7 +3,6 @@ import { AcpAgentAdapter } from '../acp/agent-adapter';
 import { assembleServices, type StreamOverridesRef } from '../acp/engine/services';
 import { createInlineAgent } from '../agent/inline-agent';
 import { createStreamFn } from '../agent/stream-fn';
-import { ZenfsVolumeRegistry } from '../agent/volume-registry';
 import { createInMemoryPreferenceStore, createInMemorySessionStore } from '../storage/in-memory';
 import { ACP_SDK_VERSION } from './sdk-version';
 import type { StartAgentHandle, StartAgentOptions } from './types';
@@ -18,12 +17,10 @@ export function startAgent(options: StartAgentOptions): StartAgentHandle {
     })
   );
 
-  const registry = new ZenfsVolumeRegistry();
-
   const services = assembleServices({
     inline,
     bodhi: options.provider,
-    registry,
+    registry: options.registry,
     store: options.sessions ?? createInMemorySessionStore(),
     preferences: options.preferences ?? createInMemoryPreferenceStore(),
     streamOverrides,
@@ -39,21 +36,9 @@ export function startAgent(options: StartAgentOptions): StartAgentHandle {
     return adapter;
   }, stream);
 
-  // Mount initial volumes; first prompt sees them.
-  const initialMount = registry.mountAll(options.volumes ?? []);
-
   return {
     async dispose() {
-      await initialMount.catch(() => undefined);
       await adapter?.dispose();
-    },
-    async mount(init) {
-      await initialMount.catch(() => undefined);
-      await registry.mount(init);
-    },
-    async unmount(mountName) {
-      await initialMount.catch(() => undefined);
-      await registry.unmount(mountName);
     },
   };
 }

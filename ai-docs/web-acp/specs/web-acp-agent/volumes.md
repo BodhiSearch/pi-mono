@@ -2,6 +2,39 @@
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/agent/volume-registry.ts`.
 
+## Why `startAgent` takes the registry, not volumes
+
+ZenFS keeps a process-global mount table (`@zenfs/core@2.5.6` —
+`dist/vfs/shared.js` `mounts: Map`; tracked upstream at
+[zen-fs/core#218](https://github.com/zen-fs/core/issues/218)). Two
+`ZenfsVolumeRegistry` instances in one process call
+`configure({ mounts: {} })` against the same global map, clobbering
+each other's mounts; two registries also collide on duplicate paths
+like `/mnt/cwd`. The earlier `startAgent({ volumes })` shape always
+news a fresh registry, so multi-connection hosts (e.g.
+`ws-acp-client`, with one WebSocket per accepted browser tab) had to
+fall back to the agent's internal `assembleServices` /
+`AcpAgentAdapter` surface (now hidden behind `/test-utils`) to share
+one registry.
+
+The current API takes a **required** `registry: VolumeRegistry`.
+Hosts construct the registry, pre-mount whatever they want, and pass
+the same instance into every `startAgent` call. `startAgent` never
+mounts, unmounts, or disposes the registry — host owns its
+lifecycle. Making `registry` mandatory removes any borrowed-vs-owned
+ambiguity: there is exactly one mount surface and the host always
+holds it.
+
+`ZenfsVolumeRegistry.#ensureZenfs()` carries a process-wide
+`zenfsConfiguredGlobally` guard so a second registry that is
+accidentally constructed (typically in tests) cannot re-`configure`
+the global VFS and clobber the first registry's mounts. Production
+hosts should still own a single shared registry.
+
+**Per-session isolation** — each session seeing only its own
+`/mnt/<sid>/...` — is **not implemented**. Tracked at
+[`packages/web-acp-agent/TECHDEBT.md`](../../../../packages/web-acp-agent/TECHDEBT.md).
+
 ## Purpose
 
 The agent package owns the **mount lifecycle** for `/mnt/<name>`

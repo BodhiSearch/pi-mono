@@ -1,20 +1,7 @@
 /**
- * Process-wide host state for the WebSocket server.
- *
- * Holds shared infrastructure that survives across WebSocket
- * connections:
- *   - the sqlite `AppDb` (sessions + preferences),
- *   - a single `ZenfsVolumeRegistry` with the cwd `PassthroughFS`
- *     volume mounted at `/mnt/cwd`. Sharing matters: ZenFS keeps a
- *     process-global mount table, so each connection cannot bring up
- *     its own registry without colliding on `/mnt/cwd`.
- *
- * Per-connection wiring lives in `server.ts`: each accepted
- * WebSocket spins up its own `BodhiProvider` (auth tokens are
- * per-user) and assembles a fresh `AcpAdapterServices` bag that
- * points at the shared sessions / preferences / registry. Because
- * we use the agent's "advanced" surface (`@bodhiapp/web-acp-agent/
- * test-utils`), the registry can be shared by every connection.
+ * Process-wide host state shared by every WS connection: sqlite `AppDb`
+ * (sessions + preferences) plus one `ZenfsVolumeRegistry` with `/mnt/cwd`
+ * pre-mounted. Per-connection wiring lives in `server.ts`.
  */
 
 import { type VolumeInit, ZenfsVolumeRegistry } from "@bodhiapp/web-acp-agent";

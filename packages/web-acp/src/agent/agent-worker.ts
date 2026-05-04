@@ -1,5 +1,10 @@
 /// <reference lib="webworker" />
-import { BodhiProvider, startAgent, type VolumeInit } from '@bodhiapp/web-acp-agent';
+import {
+  BodhiProvider,
+  startAgent,
+  type VolumeInit,
+  ZenfsVolumeRegistry,
+} from '@bodhiapp/web-acp-agent';
 import { createPreferenceStore, createStoreFromDb, openSessionDb } from '@/runtime/storage-dexie';
 import { createMessagePortStream } from '@/runtime/transport/worker-stream';
 import { attachVolumeChannel, toAgentVolumeInit, type HostVolumeInit } from '@/runtime/volumes-fsa';
@@ -29,18 +34,21 @@ scope.addEventListener('message', (event: MessageEvent<AgentWorkerInitMessage>) 
 
 async function boot(port: MessagePort, hostVolumes: HostVolumeInit[]): Promise<void> {
   const db = openSessionDb();
-  const volumes: VolumeInit[] = await Promise.all(hostVolumes.map(toAgentVolumeInit));
+  const initialVolumes: VolumeInit[] = await Promise.all(hostVolumes.map(toAgentVolumeInit));
 
-  const handle = startAgent({
+  const registry = new ZenfsVolumeRegistry();
+  await registry.mountAll(initialVolumes);
+
+  startAgent({
     transport: createMessagePortStream(port),
     provider: new BodhiProvider(),
-    volumes,
+    registry,
     sessions: createStoreFromDb(db),
     preferences: createPreferenceStore(db),
     buildVersion: BUILD_VERSION,
   });
 
-  // Bridge runtime mount/unmount postMessages from main thread to the
-  // agent handle (FSA handles can't ride the ACP wire).
-  attachVolumeChannel(scope, handle);
+  // FSA handles can't ride the ACP wire; bridge runtime mount/unmount
+  // postMessages from main thread directly to the registry.
+  attachVolumeChannel(scope, registry);
 }
