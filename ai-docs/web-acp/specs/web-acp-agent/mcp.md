@@ -3,18 +3,9 @@
 **Source of truth (agent package):**
 `packages/web-acp-agent/src/agent/mcp/`,
 `packages/web-acp-agent/src/storage/mcp-toggle-store.ts`,
-`packages/web-acp-agent/src/mcp/url-canonical.ts`.
-
-> **ACP 0.21 migration delta (M6).** MCP lifecycle no longer rides
-> on empty `agent_message_chunk` notifications carrying
-> `_meta.bodhi.mcp`. `AcpSessionRuntime.broadcastMcpPoolEvent` now
-> emits `extNotification("_bodhi/mcp/state", { sessionId, server,
-> state, error?, tools? })` against the connection. The constant
-> `BODHI_MCP_STATE_NOTIFICATION_METHOD` and the
-> `BodhiMcpStateNotificationParams` shape live in
-> [`wire/index.ts`](../../../../packages/web-acp-agent/src/wire/index.ts).
-> Per-server / per-tool toggle persistence (`McpToggleStore`,
-> `_bodhi/mcp/toggles/set`) is unchanged.
+`packages/web-acp-agent/src/mcp/url-canonical.ts`,
+`packages/web-acp-agent/src/acp/engine/ext-methods/mcp-toggles-set.ts`,
+`packages/web-acp-agent/src/acp/engine/session-runtime.ts:broadcastMcpPoolEvent`.
 
 ## Purpose
 
@@ -30,6 +21,11 @@ agent filters non-HTTP entries
 per server through the refcounted `McpConnectionPool`, calls
 `tools/list` once at connect time, and registers the
 resulting tools per turn (filtered by per-session toggles).
+
+Pool lifecycle events are broadcast as the
+`extNotification("_bodhi/mcp/state", BodhiMcpStateNotificationParams)`
+notification (see [Lifecycle broadcast](#lifecycle-broadcast--acpenginesession-runtimetsbroadcastmcppoolevent)
+below).
 
 ## Client — `agent/mcp/client.ts:createMcpClient`
 
@@ -69,13 +65,13 @@ interface PoolEntry {
 }
 ```
 
-Keying: `keyOf(config) = config.url`. Auth fingerprint:
-`fingerprintOf(config)` returns the **`Authorization` header
-value only** — a case-insensitive name match over
-`config.headers`, the first match's value, or `''` when no
-`Authorization` is present. Header changes other than
-`Authorization` (e.g. `X-Custom-*`) do **not** evict the pool
-entry; the connection is reused.
+Keying: `keyOf(config) = config.url` (`:215`). Auth
+fingerprint: `fingerprintOf(config)` (`:219`) returns the
+**`Authorization` header value only** — a case-insensitive
+name match over `config.headers`, the first match's value, or
+`''` when no `Authorization` is present. Header changes other
+than `Authorization` (e.g. `X-Custom-*`) do **not** evict the
+pool entry; the connection is reused.
 
 ### `acquire(sessionId, config)` — `:88`
 
@@ -97,27 +93,44 @@ entry; the connection is reused.
 7. Emit `connected` event with the tool name list.
 8. Insert the new `PoolEntry`; return `{ client, tools }`.
 
-### `release(sessionId, config)`
+### `release(sessionId, config)` — `:144`
 
 Drops the session from `refs`. When `refs.size === 0` —
 removes the entry, calls `close()`, emits `disconnected`.
 
-### `releaseAll(sessionId)`
+### `releaseAll(sessionId)` — `:155`
 
 Iterates the pool and releases every entry the session holds.
-Called by `runtime.dispose()` (per-session cleanup at
-`session-runtime.ts:386`) and by `sessions-delete.ts:22`
-(top-of-handler teardown). `loadSession` does **not** call
-`releaseAll`; it calls `releaseMcpConnections(sessionId,
-existing.mcpServers)` (the per-session, per-server release on
-the runtime) so only the previously-held servers are released
-before re-acquiring under the request's headers.
+Called by `runtime.tearDownSession`
+(`session-runtime.ts:116`) on every session teardown
+(`closeSession` and `_bodhi/sessions/delete` both go through
+this path). `loadSession` does **not** call `releaseAll`; it
+calls `releaseMcpConnections(sessionId, existing.mcpServers)`
+(the per-session, per-server release on the runtime) so only
+the previously-held servers are released before re-acquiring
+under the request's headers.
 
-### `getClient(config)` / `getTools(config)`
+### `getClient(config)` / `getTools(config)` — `:170` / `:165`
 
 Read-only accessors used by the engine layer. Returns the
 cached client / tool list without side effects. The driver
 calls these per turn (`session-runtime.ts:mcpToolsForSession`).
+
+### `size()` — `:175`
+
+Test helper — returns `entries.size`. Useful for asserting
+that `tearDownSession` actually released a session's
+connections.
+
+### `evictBySlug(slug, slugFn)` — `:184`
+
+Drops every pool entry whose `slugFn(entry.config.url)`
+matches `slug`, **regardless of refcount**. Any session
+sharing the evicted entry loses its connection and must
+re-`acquire` on next `session/load`. Called from the
+`_bodhi/mcp/toggles/set` handler when a server is toggled off
+explicitly — see [Toggle store wire surface](#wire-surface)
+below.
 
 ### Lifecycle events — `:55`
 
@@ -133,32 +146,45 @@ interface McpPoolEvent {
 }
 ```
 
-`subscribe(listener)` registers a listener; returns the
-unregister fn. The engine layer subscribes once at
-`AcpSessionRuntime` construction and forwards events to
-affected sessions via `_meta.bodhi.mcp` riding an empty
-`agent_message_chunk`. **Events are transient** — never
-persisted — see `acp/engine/session-runtime.ts:broadcastMcpPoolEvent`
-(`:201-209`) for the rationale.
+`subscribe(listener)` (`:75`) registers a listener; returns
+the unregister fn. The engine layer subscribes once at
+`AcpSessionRuntime` construction
+(`session-runtime.ts:49`) and forwards events via
+`broadcastMcpPoolEvent` — see below.
 
-Wire-envelope shape (the meta object the host receives):
+## Lifecycle broadcast — `acp/engine/session-runtime.ts:broadcastMcpPoolEvent`
+
+`broadcastMcpPoolEvent(event)` (`:191`) fans pool events to
+every affected session. Algorithm:
+
+1. Walk `#sessions` and add `sessionId` to an `affected` set
+   when any of `state.mcpServers` matches the event's
+   `{server, url}` pair.
+2. For each affected sessionId, send
+   `conn.extNotification(BODHI_MCP_STATE_NOTIFICATION_METHOD,
+   params)` with shape
+   `BodhiMcpStateNotificationParams` (defined at
+   `wire/index.ts:192`):
+
 ```ts
-_meta: {
-  bodhi: {
-    mcp: {
-      state: McpPoolEventType;   // 'connecting' | 'connected'
-                                 // | 'error' | 'disconnected'
-      server: string;            // server slug
-      url: string;
-      tools?: string[];          // present on 'connected'
-      error?: string;            // present on 'error'
-    }
-  }
+interface BodhiMcpStateNotificationParams {
+    sessionId: string;
+    server: string;        // server slug from McpServerHttp.name
+    state: string;         // pool event type ('connecting'|'connected'|'error'|'disconnected')
+    error?: string;        // present on 'error'
+    tools?: string[];      // present on 'connected'
 }
 ```
-The agent renames the pool's `type` field to `state` on the
-wire so the host's reducer key naming stays `state` — that is
-the only field rename across the boundary.
+
+The pool's `type` field is renamed to `state` on the wire so
+the host's reducer key naming stays `state` — that is the
+only field rename across the boundary.
+
+**Events are transient** — never persisted. Rationale: the
+pool rebuilds on every `loadSession` (acquire under fresh
+headers) so persisting these would replay stale state. The
+host re-derives connection status from the post-load
+`connecting` → `connected` notifications.
 
 ## Tool adapter — `agent/mcp/tool-adapter.ts:createMcpAgentTool`
 
@@ -200,7 +226,7 @@ means "not explicitly toggled off". Two granularities:
   upstream in the host's `compose-mcp-servers.ts:compose`).
 - **Tool-level**: `tools[serverSlug][toolName] === false` →
   server stays connected, but that specific tool is filtered
-  from `prompt-driver.ts:run`'s tool list per turn.
+  from `prompt-driver.ts:#runTurn`'s tool list per turn.
 
 ### `McpToggleStore` interface — `:31`
 
@@ -216,37 +242,53 @@ interface McpToggleStore {
 Writes are additive patches, not whole-row replacements, so
 the wire payload for `_bodhi/mcp/toggles/set` stays minimal.
 
-### Helpers — `:42, :54`
+### Helpers — `:47`, `:62`
 
 - `isServerEnabled(toggles, serverSlug)` — `toggles.servers?.[slug] !== false`.
 - `isToolEnabled(toggles, serverSlug, toolName)` — checks the
   server-level toggle first (off server implies all tools off),
   then `toggles.tools?.[serverSlug]?.[toolName] !== false`.
+  This is the function `mcpToolsForSession` calls per turn.
 
 `EMPTY_MCP_TOGGLES` (`:26`) — frozen `{ servers: {}, tools: {} }`
-shared default.
+shared default returned by the helpers when no row exists.
 
 ### Wire surface
 
-- `_bodhi/mcp/toggles/set` mutation handler at
-  `acp/engine/ext-methods/mcp-toggles-set.ts`. Validates the
-  param shape:
-  - `{ sessionId, serverSlug, value: boolean }` for a
-    server-level override (calls `mcpToggles.setServer`).
-  - `{ sessionId, serverSlug, toolName, value: boolean }` for
-    a per-tool override (calls `mcpToggles.setTool`).
-- The mutation response carries the wire snapshot via
-  `acp/wire-utils.ts:toWireMcpToggles`.
-- `bodhi/getSession` returns `mcpToggles: BodhiMcpToggleSnapshot`
-  on the session-snapshot response.
+`_bodhi/mcp/toggles/set` mutation handler at
+`acp/engine/ext-methods/mcp-toggles-set.ts:mcpTogglesSet`
+(`:10`):
+
+- Validates `host.mcpToggles` is configured; throws otherwise.
+- Validates the param shape
+  `{ sessionId, serverSlug, toolName?, value: boolean }`
+  (also enforced upstream by `EXT_METHOD_SCHEMAS.mcpTogglesSet`).
+- If `toolName` is present → `mcpToggles.setTool(...)`.
+- Else → `mcpToggles.setServer(...)`.
+- **Server-off forces pool eviction.** When the call is
+  `setServer(serverSlug, false)`, the handler additionally
+  invokes `host.mcpPool.evictBySlug(serverSlug,
+  deriveSlugFromUrl)` (`:38`). Forgotten sessions can hold
+  stale refs that keep the connection alive globally; explicit
+  eviction guarantees the off-toggle takes effect across all
+  refs. Per-tool toggles only filter the tool list and never
+  touch the pool.
+- Returns `{ toggles: toWireMcpToggles(next) }` — wire
+  snapshot built by `acp/wire-utils.ts:toWireMcpToggles`.
+
+The `_bodhi/session/get` ext-method response carries
+`mcpToggles: BodhiMcpToggleSnapshot` (rebuilt from the
+persisted row at fetch time) — see
+[`acp.md`](./acp.md) § ext-methods.
 
 ## URL canonicalisation — `mcp/url-canonical.ts`
 
-Shared by the agent (built-in `/mcp` command, `BuiltinHandlerCtx.requestedMcpUrls`)
-and the host (`requested-mcps-store.ts` IDB key, `compose-mcp-servers.ts`
-matching). The same canonicalisation rule running on both
-sides is what makes the requested-vs-approved comparison
-deterministic.
+Shared by the agent (built-in `/mcp` command,
+`BuiltinHandlerCtx.requestedMcpUrls`, `evictBySlug` lookup)
+and the host (`requested-mcps-store.ts` IDB key,
+`compose-mcp-servers.ts` matching). The same canonicalisation
+rule running on both sides is what makes the
+requested-vs-approved comparison deterministic.
 
 `canonicalizeMcpUrl(input)` (`:22`) — `new URL(trimmed).toString()`.
 Returns `null` on parse failure (callers surface to the user).
@@ -256,9 +298,8 @@ non-ASCII paths, preserves query + fragment.
 `deriveSlugFromUrl(input)` — best-effort match against
 `bodhiClient.mcps.list()` entries when the slug field doesn't
 match by exact URL. Walks the host labels (skipping the generic
-ones — `mcp`, `api`, `www` and also any `localhost` host —
-see `url-canonical.ts:60`) and the path segments to find the
-most distinctive label.
+ones — `mcp`, `api`, `www` and also any `localhost` host)
+and the path segments to find the most distinctive label.
 
 ## Engine integration
 
@@ -266,18 +307,17 @@ The engine consumes the MCP surface in three places:
 
 1. **Session lifecycle** —
    `acp/engine/session-runtime.ts:acquireMcpConnections`
-   (`:140`) on `newSession` / `loadSession`. Errors are caught
+   (`:155`) on `newSession` / `loadSession`. Errors are caught
    per-server (one bad MCP doesn't break the session); the
    pool's `error` lifecycle event still fires.
 2. **Per-turn tool list** —
    `acp/engine/session-runtime.ts:mcpToolsForSession`
-   (`:164`). Filters by per-tool toggles
-   (server-level filtering happened upstream in the host).
+   (`:173`). Filters by per-tool toggles (server-level
+   filtering happened upstream in the host).
 3. **Lifecycle broadcast** —
    `acp/engine/session-runtime.ts:broadcastMcpPoolEvent`
-   (`:193`). Fans transient pool events to every affected
-   session as `_meta.bodhi.mcp` on an empty
-   `agent_message_chunk`.
+   (`:191`). Fans transient pool events to every affected
+   session as `_bodhi/mcp/state` extNotifications.
 
 ## Cross-references
 

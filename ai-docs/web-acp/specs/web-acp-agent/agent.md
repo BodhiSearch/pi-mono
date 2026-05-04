@@ -2,20 +2,6 @@
 
 **Source of truth (agent package):** `packages/web-acp-agent/src/agent/`.
 
-> **ACP 0.21 migration delta (M1, M4).** Per-session model selection
-> moved from `_meta.bodhi.modelId` (carried on every `prompt`
-> request) to `Agent.unstable_setSessionModel({ sessionId, modelId })`
-> + `SessionState.currentModelId`. The prompt-driver's
-> `#resolveModel(sessionId)` now reads `currentModelId` from session
-> state — the per-prompt `_meta.bodhi.modelId` envelope has been
-> deleted. The agent lazy-loads the model catalog on first
-> `newSession`/`loadSession` via
-> `AcpSessionRuntime.ensureModelsLoaded` (calls
-> `LlmProvider.getAvailableModels` once per worker boot, cleared
-> on `authenticate`). The catalog ships back to the host on
-> `NewSessionResponse.models` / `LoadSessionResponse.models` as
-> `SessionModelState`. `bodhi/listModels` ext-method deleted.
-
 ## Purpose
 
 Wraps the LLM-driving runtime that the engine layer
@@ -31,13 +17,20 @@ Wraps the LLM-driving runtime that the engine layer
 - `composeSystemPrompt(volumes)` — builds the worker-owned
   system prompt before each turn.
 
+The catalog is fetched **once per worker boot** (lazy-loaded
+by `AcpSessionRuntime.ensureModelsLoaded`, see
+[`acp.md`](./acp.md)) and cleared by `authenticate` when the
+host rotates credentials. Per-session model selection is
+carried in `SessionState.currentModelId` and updated through
+`Agent.unstable_setSessionModel`.
+
 ## InlineAgent — `agent/inline-agent.ts`
 
-`agent/inline-agent.ts:createInlineAgent(streamFn)` constructs
-a `pi-agent-core` `Agent` and returns an `InlineAgent` value.
-`InlineAgent` is the public interface (defined at the same
-file, lines 13–27); the underlying `Agent` instance never
-escapes.
+`agent/inline-agent.ts:createInlineAgent(streamFn)` (`:29`)
+constructs a `pi-agent-core` `Agent` and returns an
+`InlineAgent` value. `InlineAgent` is the public interface
+defined at the same file (`:13–27`); the underlying `Agent`
+instance never escapes.
 
 Why a wrapper:
 
@@ -60,32 +53,31 @@ Method behaviours:
 
 | Method | Behaviour |
 | --- | --- |
-| `setModel(model, opts?)` | Sets `agent.state.model = model`, replaces `agent.state.tools` with `opts.tools ?? []`, replaces `agent.state.systemPrompt` with `opts.systemPrompt ?? ''`. Called once per turn from `prompt-driver.ts:run`. |
+| `setModel(model, opts?)` | Sets `agent.state.model = model`, replaces `agent.state.tools` with `opts.tools ?? []`, replaces `agent.state.systemPrompt` with `opts.systemPrompt ?? ''`. Called once per turn from `prompt-driver.ts:#runTurn` after model resolution. |
 | `subscribe(cb)` | Forwards to `agent.subscribe`. Returns the unsubscribe function. The driver subscribes during `run()` and unsubscribes in the `finally`. |
 | `getMessages()` | Returns a shallow copy of `agent.state.messages` (`[...agent.state.messages]`). The copy is important — the driver passes this directly to `services.store.recordTurn` and we don't want callers mutating the live `Agent` state. |
 | `getErrorMessage()` | Returns `agent.state.errorMessage`. The driver throws when this is set after `prompt()` resolves. |
 | `prompt(text)` | Awaits `agent.prompt(text)`. Streaming events fire through the `subscribe` listener as side effects. |
 | `cancel()` | Calls `agent.abort()`. |
-| `clearMessages()` | Aborts in-flight + resets `agent.state.messages = []`. Called by `authenticate` (after token rotation), `newSession`, `loadSession` (when no prior turn exists), `prompt-driver.ts:rehydrateInlineFromStore` (when no prior turn is present in the stored entries), and `sessions-delete.ts` (when deleting the active inline session). |
-| `restoreMessages(messages)` | Replaces `agent.state.messages` with `[...messages]` without firing events. Called by `loadSession` and `rehydrateInlineFromStore` (`acp/engine/session-runtime.ts:227`) to seed history from the last persisted `'turn'` entry. |
+| `clearMessages()` | Aborts in-flight + resets `agent.state.messages = []`. Called by `handleAuthenticate` (after token rotation), `handleNewSession`, `rehydrateInlineFromStore` (when no prior turn entry exists for the session being attached), and `tearDownSession` (when releasing the active inline session). |
+| `restoreMessages(messages)` | Replaces `agent.state.messages` with `[...messages]` without firing events. Called by `handleLoadSession` (final-messages handoff from the last replayed turn) and `rehydrateInlineFromStore` to seed history from the last persisted `'turn'` entry. |
 
-Constants: `SENTINEL_API_KEY` (`'bodhiapp_sentinel_api_key_ignored'`)
-is the API key the underlying `Agent.getApiKey` returns. The
-real key plumbing lives in `createStreamFn` →
+Constants: `SENTINEL_API_KEY` (`'bodhiapp_sentinel_api_key_ignored'`,
+`:6`) is the API key the underlying `Agent.getApiKey` returns.
+The real key plumbing lives in `createStreamFn` →
 `provider.getApiKeyAndHeaders`; `pi-agent-core` doesn't use
 the sentinel for anything that actually crosses the wire, but
 its API requires *some* string.
 
 ## BodhiProvider — `agent/bodhi-provider.ts`
 
-`agent/bodhi-provider.ts:BodhiProvider` is the default
+`agent/bodhi-provider.ts:BodhiProvider` (`:41`) is the default
 `LlmProvider` implementation. The interface is co-located in
-the same file — `agent/bodhi-provider.ts:LlmProvider` (line
-29) is the host-overridable seam.
-
-`LlmProvider`:
+the same file — `agent/bodhi-provider.ts:LlmProvider` (`:33`)
+is the host-overridable seam.
 
 ```ts
+// bodhi-provider.ts:33–39
 interface LlmProvider {
     getApiKeyAndHeaders(model: Model<Api>):
         Promise<{ apiKey: string; headers?: Record<string, string> }>;
@@ -94,70 +86,69 @@ interface LlmProvider {
 }
 ```
 
-`LlmAuthCredential`:
+`LlmAuthCredential` (`:27`):
 `{ provider: string, baseUrl?: string, token: string | null }`.
 
 ### State
 
-`BodhiProvider` carries two private fields: `token` and
-`baseUrl`. Both populate from `setAuthToken` and clear on
-`null` / wrong-provider credentials. `getBaseUrl()` (line 71)
-exposes `baseUrl` for the built-in command handlers
-(`/info` reports the connected server URL).
+`BodhiProvider` carries two private fields: `token` (`:42`) and
+`baseUrl` (`:43`). Both populate from `setAuthToken` and clear
+on `null` / wrong-provider credentials. `getBaseUrl()` (`:81`)
+exposes `baseUrl` for the built-in command handlers (`/info`
+reports the connected server URL via
+`session-runtime.ts:builtinHandlerCtx`).
 
-### `setAuthToken(credential)` — line 39
+### `setAuthToken(credential)` — `:45`
 
 - `null` or `provider !== BODHI_PROVIDER_TAG` → clears both fields.
 - Otherwise stores both. The agent never persists tokens; rotation
   comes from the host calling `authenticate` again with fresh
   credentials.
 
-### `getApiKeyAndHeaders(model)` — line 49
+### `getApiKeyAndHeaders(model)` — `:55`
 
 Returns `{ apiKey: this.token ?? '' }`. The Bodhi proxy reads
 `Authorization: Bearer <apiKey>` and adds its own outbound
 auth, so a single bearer is enough.
 
-### `getAvailableModels()` — line 53
+### `getAvailableModels()` — `:61`
 
-Fetches `${baseUrl}/bodhi/v1/models?page_size=100` and flattens
-the response. The Bodhi catalog has two flavours of entries:
+Fetches `${baseUrl}/bodhi/v1/models?page_size=100`
+(`CATALOG_PATH` constant `:19`) and flattens the response.
+Throws via `requireCredentials()` (`:85`) if `setAuthToken`
+hasn't run with a matching provider tag — protects callers
+from silent empty catalogs. The Bodhi catalog has two flavours
+of entries:
 
 - **API alias** (`api_format` + `models[]`) — flattened via
-  `flattenApiAlias` (`:104`) → `buildApiAliasModel` (`:112`).
+  `flattenApiAlias` (`:114`) → `buildApiAliasModel` (`:122`).
   One alias can produce multiple `Model<Api>` records (one per
   underlying model).
 - **Local alias** (`UserAliasResponse | ModelAliasResponse`) —
-  flattened via `buildLocalAliasModel` (`:130`) into a single
+  flattened via `buildLocalAliasModel` (`:145`) into a single
   OpenAI-completions-shaped `Model<Api>`.
 
-Per-format mapping helpers:
+Per-format mapping helpers (module-private, bottom of file):
 
-- `apiFormatToPiApi(fmt)` — `'openai_responses' →
+- `apiFormatToPiApi(fmt)` (`:219`) — `'openai_responses' →
   'openai-responses'`, `'anthropic' / 'anthropic_oauth' →
   'anthropic-messages'`, `'gemini' →
   'google-generative-ai'`, default `'openai-completions'`.
-- `apiFormatToProvider(fmt)` — `'anthropic' →
+- `apiFormatToProvider(fmt)` (`:233`) — `'anthropic' →
   'anthropic'`, `'gemini' → 'google'`, default `'openai'`.
-- `baseUrlForFormat(serverRoot, fmt)` — appends `/anthropic`,
-  `/v1beta`, or `/v1` depending on the format. The Bodhi
-  proxy fronts each upstream API behind a per-format
+- `baseUrlForFormat(serverRoot, fmt)` (`:239`) — appends
+  `/anthropic`, `/v1beta`, or `/v1` depending on the format.
+  The Bodhi proxy fronts each upstream API behind a per-format
   sub-path.
-- `apiFormatOfModel(model)` (`:227`) — inverse mapping for
-  the wire (`bodhi/listModels` returns
-  `{ id, apiFormat: 'openai' | 'openai_responses' | 'anthropic' | 'gemini' }`).
+- `apiFormatOfModel(model)` (`:245`) — inverse mapping
+  exported from the public barrel for hosts that need to
+  translate a `Model<Api>` back to the wire `ApiFormat`.
 
-Per-model field extraction: `extractApiModelId` (`:154`) +
-`extractApiModelDisplayName` (`:166`) + `extractApiModelLimits`
-(`:177`). They route per provider (Gemini's `name: 'models/X'`
+Per-model field extraction: `extractApiModelId` (`:172`),
+`extractApiModelDisplayName` (`:184`), `extractApiModelLimits`
+(`:195`). They route per provider (Gemini's `name: 'models/X'`
 prefix gets stripped, Anthropic's `display_name` becomes the
 display label, OpenAI uses `id` directly).
-
-`requireCredentials()` (`:75`) throws `'BodhiProvider: cannot
-fetch catalog before setAuthToken has been called with a valid
-Bodhi credential.'` if `setAuthToken` hasn't run with a
-matching provider tag — protects callers from silent empty
-catalogs.
 
 ### Replacing `BodhiProvider`
 
@@ -170,25 +161,27 @@ Hosts that want a different LLM provider implement the same
 ## createStreamFn — `agent/stream-fn.ts`
 
 `agent/stream-fn.ts:createStreamFn(provider, consumeOverrides?)`
-is the bridge from `LlmProvider` to `@mariozechner/pi-ai`'s
-`streamSimple`. It returns a `StreamFn` (the type
-`pi-agent-core`'s `Agent` consumes via the `streamFn` option).
+(`:27`) is the bridge from `LlmProvider` to
+`@mariozechner/pi-ai`'s `streamSimple`. It returns a `StreamFn`
+(the type `pi-agent-core`'s `Agent` consumes via the `streamFn`
+option).
 
 Responsibilities per call:
 
 1. Pull `apiKey` + optional `headers` from
    `provider.getApiKeyAndHeaders(model)`.
 2. Merge `auth.headers` with caller-supplied `options.headers`
-   via `mergeHeaders` (caller wins on collision).
+   via `mergeHeaders` (`:46`; caller wins on collision).
 3. Read-and-clear per-turn overrides via
    `consumeOverrides?.()`.
 4. Call `streamSimple(model, context, { ...options,
    ...overridesAsExtra, apiKey, headers })`.
 
-`StreamOptionOverrides`: `{ toolChoice?: 'auto' | 'required' |
-'none' }`. `'required'` forces the model to emit a tool call
-on the next call. The driver pushes this DEV-only override
-when `forceToolCall` is on (see [features.md](./features.md)).
+`StreamOptionOverrides` (`:21`): `{ toolChoice?: 'auto' |
+'required' | 'none' }`. `'required'` forces the model to emit
+a tool call on the next call. The driver pushes this DEV-only
+override when `forceToolCall` is on (see
+[features.md](./features.md)).
 
 **One-shot semantics.** `consumeOverrides` is called once per
 LLM request. The driver's `streamOverrides.current` ref pattern
@@ -201,8 +194,8 @@ the model's discretion. Without one-shot semantics
 
 ## composeSystemPrompt — `agent/system-prompt.ts`
 
-`agent/system-prompt.ts:composeSystemPrompt(volumes)` returns
-a string built once per turn from the volume registry
+`agent/system-prompt.ts:composeSystemPrompt(volumes)` (`:12`)
+returns a string built once per turn from the volume registry
 snapshot. Empty when no volumes are mounted (we don't
 hallucinate a `/mnt` filesystem for the LLM that doesn't exist
 on the worker).
@@ -217,8 +210,9 @@ You have access to the following volumes:
 Use the bash tool to explore them.
 ```
 
-Called from `prompt-driver.ts:run` (`:135`). Output goes into
-`InlineAgent.setModel({ systemPrompt })` for the turn.
+Called from `prompt-driver.ts:#runTurn` immediately before
+`inline.setModel({ model, tools, systemPrompt })` so the
+system prompt always reflects the current volume snapshot.
 
 ## Cross-references
 

@@ -103,9 +103,11 @@ immediately (no migration).
 
 `isFeatureKey(key)` is imported from `@bodhiapp/web-acp-agent`
 — the agent package owns the canonical key list. Throwing
-on unknown keys mirrors the agent's `_bodhi/features/set`
-validation; the host catches this in `useAcpFeatures` and
-surfaces it to the UI.
+on unknown keys mirrors the agent's
+`handleSetSessionConfigOption` validation in
+`acp/handlers/session-crud.ts`; the host's `setFeature`
+inline callback in `useAcp.ts` catches the resulting
+JSON-RPC error and surfaces it via `setError` (toast layer).
 
 ## `createMcpToggleStore` — `runtime/storage-dexie/mcp-toggle-store.ts:20`
 

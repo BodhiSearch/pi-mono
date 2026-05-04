@@ -67,7 +67,7 @@ that:
 ## Worker boot shim — `agent/agent-worker.ts`
 
 The single file remaining in `packages/web-acp/src/agent/`.
-96 lines. It exists to:
+~97 lines. It exists to:
 
 1. Expose the `init` message contract the main thread posts
    into.

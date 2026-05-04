@@ -9,52 +9,9 @@ phase B as the **reference application** for
 that mounts the agent inside a worker, renders the chat UI,
 and persists per-tab state to IndexedDB / FSA.
 
-> **ACP 0.21 migration delta (M1–M7).** Wire surface and host
-> reducer/hook shape changed as part of the migration tracked at
-> [`../../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md`](../../../plans/reviewed-the-acp-compliance-report-peaceful-journal.md):
->
-> - **`AcpClient`** (`acp/client.ts`) — added
->   `setSessionModel(sessionId, modelId)` (calls
->   `unstable_setSessionModel`),
->   `setSessionConfigOption(sessionId, configId, value)`
->   (`type: 'boolean'` discriminator),
->   `onExtNotification`/`dispatchExtNotification` registry.
->   Removed `listModels()`, `listFeatures()`, `setFeature()`.
->   `prompt(sessionId, text)` no longer takes `modelId`.
->   `listSessions()` now wraps SDK's `Agent.listSessions`.
-> - **Reducer** (`acp/streaming-reducer.ts`) — gained
->   `state.configOptions` slice, `'config-options-init'` and
->   `'mcp-state'` actions, `case 'config_option_update'` arm,
->   explicit no-op cases for the 6 currently-non-rendered
->   `SessionUpdate` kinds, default `console.warn` for unknown.
->   Dropped `extractMcpMeta` early-return (MCP arrives via
->   extNotification).
-> - **Hooks** — `useAcpModels` rewritten as a thin slice that
->   pushes user picks via `setSessionModel`. `useAcpFeatures`
->   rewritten as a memo selector over `state.configOptions`.
->   `useAcpAuth` no longer fetches the model catalog. Models
->   populate from `NewSessionResponse.models` /
->   `LoadSessionResponse.models` (`SessionModelState`) via
->   `useAcpSession`. New `_modelUpdatePromise` accessor on
->   `acp/runtime.ts` so `useAcpStreaming.sendMessage` awaits the
->   in-flight `setSessionModel` before issuing `prompt`.
->   `useAcpStreaming` registers an `onExtNotification` listener
->   that routes `_bodhi/mcp/state` → reducer's `'mcp-state'`,
->   `_bodhi/builtin/action` → existing builtin action dispatcher.
-> - **UI** (`components/chat/{ChatInput,ChatDemo,ModelCombobox}`,
->   `lib/bodhi-models.ts`) — dropped `apiFormat` plumbing
->   entirely (display-only field, no consumer). Dropped the
->   refresh-models button. `ModelCombobox` exposes
->   `data-test-state="loaded|empty|error"`.
-> - **`bodhi/getSession` round-trip** — still live; M5 deferred
->   (see `packages/web-acp/TECHDEBT.md`).
->
-> Per-topic prose may not yet reflect every change above; trust
-> the source tree where prose conflicts.
-
 The package is the future extraction target for a host-runtime
 library (working name `@bodhiapp/bodhi-web-acp` — settled at
-M8). M0–M4 ships as the reference app.
+M8). Today it ships as the reference app.
 
 ## Purpose
 
@@ -64,16 +21,16 @@ M8). M0–M4 ships as the reference app.
   `components/` tree).
 - **The host-side ACP wire layer** at `acp/` — `AcpClient`
   (main-thread `ClientSideConnection` wrapper), the per-tab
-  `AcpRuntime` singleton, the pure `streamingReducer`, the
-  host-side `dispatchBuiltinAction`, the `fs/*` IDE-integration
-  handlers, the deferred `requestPermissionStub`, plus the
-  `bodhi-token` auth method constants and the `_bodhi/*`
-  method-name barrel.
-- **The Worker boot shim** at `agent/agent-worker.ts` — a
-  ~75-line file that opens Dexie, builds the FSA volume
-  registry, constructs the `BodhiProvider` + inline agent +
-  Dexie stores, and calls `startAcpAgent` from the agent
-  package.
+  `AcpRuntime` singleton, the pure `streamingReducer`, the new
+  `panelsReducer` for cross-turn UI state (commands, MCP
+  state, configOptions), the host-side `dispatchBuiltinAction`,
+  the `fs/*` IDE-integration handlers, the deferred
+  `requestPermissionStub`, plus the frozen empty sentinels and
+  the feature-key ↔ configId mapping.
+- **The Worker boot shim** at `agent/agent-worker.ts` — opens
+  Dexie, builds the FSA volume registry, constructs the
+  `BodhiProvider` + inline agent + Dexie stores, and calls
+  `startAcpAgent` from the agent package.
 - **The host-runtime adapters** under `runtime/`:
   - `runtime/storage-dexie/` — Dexie/IndexedDB implementations
     of the agent's `SessionStore`, `FeatureStore`,
@@ -94,20 +51,25 @@ M8). M0–M4 ships as the reference app.
   `compose-mcp-servers` join, the requested-MCPs IDB
   wishlist, the `McpPanel` UI, and the URL canonicaliser.
 - **The React hook layer** at `hooks/` — `useAcp` (thin
-  facade) + eight per-concern slice hooks
-  (`useAcp{Runtime,Auth,Models,Features,Mcp,Session,
-  Streaming}`, `useVolumes`).
+  facade) + seven per-concern slice hooks
+  (`useAcp{Runtime,Auth,Models,Mcp,Session,Streaming}`,
+  `useVolumes`). The per-session feature toggles are read
+  inline inside `useAcp` from `panelsState.configOptions`;
+  there is **no** dedicated `useAcpFeatures` slice anymore.
 
 ## Hard constraints
 
 - **Consumes the agent package; does not re-implement the
-  engine.** No copies of `AcpAgentAdapter`, `assembleServices`,
-  `BodhiProvider`, `InlineAgent`, `createBashTool`, vault
-  command code, MCP runtime code. Anything host-neutral lives
-  in `@bodhiapp/web-acp-agent`. CI grep guards: every
-  legacy path (`@/agent/session-store`, `@/agent/bodhi-provider`,
-  `@/acp/engine`, `@/agent/commands`, `@/agent/mcp`,
-  `@/features/*`, `@/transport/*`) must return zero hits.
+  engine.** No copies of `AcpAgentAdapter`,
+  `assembleServices`, `BodhiProvider`, `InlineAgent`,
+  `createBashTool`, vault command code, MCP runtime code, the
+  per-session feature config registry, `McpConnectionPool`,
+  ZenFS volume registry, or the engine layer. Anything
+  host-neutral lives in `@bodhiapp/web-acp-agent`. CI grep
+  guards: every legacy path (`@/agent/session-store`,
+  `@/agent/bodhi-provider`, `@/acp/engine`, `@/agent/commands`,
+  `@/agent/mcp`, `@/features/*`, `@/transport/*`) must return
+  zero hits.
 - **No direct Bodhi auth-server contact.** OAuth 2.1 + PKCE +
   token rotation are owned by `@bodhiapp/bodhi-js-react`; the
   client observes `auth.accessToken` + `bodhiClient.getState()`
@@ -123,65 +85,102 @@ M8). M0–M4 ships as the reference app.
 
 ## Public surface
 
-`web-acp` does not yet export a public barrel — it is still the
-reference app embedding the agent package. The files that will
-form the **host-runtime** library boundary when this package is
-extracted (M8) are:
+`web-acp` does not yet export a public barrel — it is still
+the reference app embedding the agent package. The files that
+will form the **host-runtime** library boundary when this
+package is extracted (M8) are:
 
-- `acp/index.ts` — wildcard re-exports the Bodhi wire surface
-  from `@bodhiapp/web-acp-agent` so the host has one canonical
-  source of truth: every `BODHI_*_METHOD` constant
-  (`BODHI_AUTH_METHOD_ID`, `BODHI_LIST_MODELS_METHOD`,
-  `BODHI_LIST_SESSIONS_METHOD`, `BODHI_GET_SESSION_METHOD`,
-  `BODHI_VOLUMES_LIST_METHOD`, `BODHI_FEATURES_LIST_METHOD`,
-  `BODHI_FEATURES_SET_METHOD`,
+### `acp/index.ts` (host-side wire barrel)
+
+`acp/index.ts` holds explicit re-exports (no wildcards). The
+host has one canonical source of truth for the Bodhi wire
+surface — every other file in the host imports through this
+barrel rather than directly from `@bodhiapp/web-acp-agent`.
+
+- **Local frozen empty sentinels** (defined in
+  `acp/empty-sentinels.ts`) — `EMPTY_AVAILABLE_COMMANDS`,
+  `EMPTY_CONFIG_OPTIONS`, `EMPTY_MCP_STATES`,
+  `EMPTY_MCP_TOGGLES`. Identity equality (`===`) is the
+  contract so React reducers + memo selectors bail out when a
+  slice hasn't changed.
+- **Re-exports from `@bodhiapp/web-acp-agent`** (constants):
+  `BODHI_AUTH_METHOD_ID`,
+  `BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD`,
+  `BODHI_FEATURE_BASH_ENABLED_CONFIG_ID`,
+  `BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID`,
+  `BODHI_GET_SESSION_METHOD`,
+  `BODHI_MCP_STATE_NOTIFICATION_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
-  `BODHI_SESSIONS_DELETE_METHOD`), every Bodhi*
-  request/response shape (`BodhiAuthenticateMeta`,
-  `BodhiModelDescriptor`, `BodhiListModelsResponse`,
-  `BodhiSessionSummary`, `BodhiListSessionsResponse`,
-  `BodhiGetSessionRequest`, `BodhiGetSessionResponse`,
-  `BodhiMcpToggleSnapshot`,
-  `BodhiMcpTogglesSetRequest/Response`,
-  `BodhiSessionsDeleteRequest/Response`,
-  `BodhiVolumesListResponse`, `BodhiFeatureBag`,
-  `BodhiFeaturesListResponse`,
-  `BodhiFeaturesSetRequest/Response`), the
-  `BodhiBuiltinAction<K, P>` discriminated-union family
-  (`BodhiBuiltinCopyAction`, `BodhiBuiltinMcpAddAction`,
-  `BodhiBuiltinMcpRemoveAction`, `AnyBodhiBuiltinAction`,
-  `BodhiBuiltinMeta`, `BodhiBuiltinTag`),
-  `BodhiMcpInstanceDescriptor`, and `BodhiSessionMeta`.
-  Plus host-local SDK re-exports the file pulls in directly
-  from `@agentclientprotocol/sdk`: values
-  (`AgentSideConnection`, `ClientSideConnection`,
-  `ndJsonStream`) and types (`Agent`, `Client`,
-  `AvailableCommand`, `AvailableCommandInput`,
-  `AvailableCommandsUpdate`, `AuthenticateRequest`,
-  `AuthenticateResponse`, `CancelNotification`,
-  `InitializeRequest`, `InitializeResponse`,
-  `LoadSessionRequest`, `LoadSessionResponse`,
-  `NewSessionRequest`, `NewSessionResponse`, `PromptRequest`,
-  `PromptResponse`, `SessionNotification`, `StopReason`,
-  `UnstructuredCommandInput`).
+  `BODHI_SESSIONS_DELETE_METHOD`,
+  `BODHI_VOLUMES_LIST_METHOD`.
+- **Re-exports from `@bodhiapp/web-acp-agent`** (types):
+  `BodhiAuthenticateMeta`, `AnyBodhiBuiltinAction`,
+  `BodhiBuiltinTag`, `BodhiGetSessionResponse`,
+  `BodhiMcpInstanceDescriptor`, `BodhiMcpTogglesSetResponse`,
+  `BodhiSessionInfoMeta`, `BodhiSessionMeta`,
+  `BodhiSessionsDeleteResponse`, `BodhiVolumeDescriptor`,
+  `BodhiVolumesListResponse`.
+- **Local view shape** (defined here):
+  `SessionInfoView { id, title, createdAt, updatedAt,
+  turnCount, lastModelId }` — the flattened
+  `SessionInfo + _meta.bodhi` projection with numeric
+  timestamps, returned by `AcpClient.listSessions`.
+- **Not re-exported.** Legacy constants
+  (`BODHI_LIST_MODELS_METHOD`, `BODHI_LIST_SESSIONS_METHOD`,
+  `BODHI_FEATURES_LIST_METHOD`, `BODHI_FEATURES_SET_METHOD`,
+  `BODHI_FEATURE_CONFIG_CATEGORY` —
+  the latter is consumed only by the agent package). Legacy
+  types (`BodhiListModelsResponse`, `BodhiModelDescriptor`,
+  `BodhiListSessionsResponse`, `BodhiFeatureBag`,
+  `BodhiFeaturesListResponse`, `BodhiFeaturesSetRequest`,
+  `BodhiFeaturesSetResponse`, `BodhiBuiltinMeta`). Most SDK
+  types — call sites import directly from
+  `@agentclientprotocol/sdk`. The barrel does **not** re-export
+  `AgentSideConnection`, `ClientSideConnection`,
+  `ndJsonStream`, or the SDK request/response shapes.
+
+### Other host-runtime modules
 
 - `acp/client.ts` — `AcpClient`.
 - `acp/runtime.ts` — `AcpRuntime`, `ensureRuntime`, plus
-  per-tab session/auth state accessors (`getSession`,
-  `setSession`, `getSessionPromise`, `setSessionPromise`,
-  `getAuthKey`, `setAuthKey`, `getAuthPromise`,
-  `setAuthPromise`, `getAuthModels`, `setAuthModels`).
+  per-tab session/auth/model-update accessors (`getSession`,
+  `setSession`, `subscribeToSession`, `getSessionPromise`,
+  `setSessionPromise`, `getAuthKey`, `setAuthKey`,
+  `getAuthPromise`, `setAuthPromise`,
+  `getModelUpdatePromise`, `setModelUpdatePromise`,
+  `getInitResponse`). The `_modelUpdatePromise` slot is the
+  "model-swap before next prompt" mutex
+  `useAcpStreaming.sendMessage` awaits before issuing
+  `prompt`. There is **no** `getAuthModels`/`setAuthModels`
+  accessor — the catalog ships back via
+  `NewSessionResponse.models` /
+  `LoadSessionResponse.models` instead.
 - `acp/streaming-reducer.ts` — `streamingReducer`,
   `StreamingState`, `StreamingAction`, plus the
-  `initialStreamingState` constant (a single frozen object;
-  not a factory function).
-- `acp/builtin-dispatch.ts` — `dispatchBuiltinAction`.
+  `initialStreamingState` constant (a single frozen object).
+  Owns per-turn slices only: `messages`, `selectedModel`,
+  `streamCursor`, `streamingMessageId`, `inFlight`, `error`.
+- `acp/panels-reducer.ts` — **NEW.** `panelsReducer`,
+  `PanelsState`, `PanelsAction`, `initialPanelsState`. Owns
+  cross-turn slices: `availableCommands`, `mcpStates`,
+  `configOptions`. Defaults are the frozen empty sentinels
+  for stable React identity.
+- `acp/empty-sentinels.ts` — **NEW.** Frozen empty defaults
+  re-exported from `acp/index.ts`.
+- `acp/feature-keys.ts` — **NEW.**
+  `FEATURE_KEY_BY_CONFIG_ID` /
+  `FEATURE_KEY_TO_CONFIG_ID` mapping helpers and the
+  `FeatureBag = Record<string, boolean>` alias used by the
+  inline `useAcp` features slice.
+- `acp/builtin-dispatch.ts` — `dispatchBuiltinAction`,
+  `dispatchCopyAction`.
 - `acp/permissions.ts` — `requestPermissionStub`.
-- `acp/{message-shape,session-meta,methods,fs-handlers}.ts`
-  — host-side helpers (one-liners listed in
+- `acp/{message-shape,session-meta,fs-handlers}.ts` —
+  host-side helpers (one-liners listed in
   [`acp.md`](./acp.md)). Lower-level wire helpers come from
   `@bodhiapp/web-acp-agent`; there is no host-side
-  `wire-utils.ts`.
+  `wire-utils.ts` and no longer a host-side `methods.ts`
+  (constants ride `acp/index.ts` directly).
 - `agent/agent-worker.ts` — `AgentWorkerInitMessage` + the
   Worker boot shim that calls `startAcpAgent` from the agent
   package.
@@ -200,18 +199,20 @@ extracted (M8) are:
 ```
 packages/web-acp/src/
 ├── App.tsx, App.test.tsx, App.css, main.tsx, env.ts, index.css, vite-env.d.ts
-├── acp/                       # Host-side ACP wire/engine split
-│   ├── index.ts               # public constants + SDK re-exports
-│   ├── methods.ts             # `_bodhi/*` extension method name barrel
+├── acp/                       # Host-side ACP wire layer
+│   ├── index.ts               # explicit barrel: empty sentinels + Bodhi constants/types + SessionInfoView
 │   ├── client.ts              # AcpClient — main-thread ClientSideConnection wrapper
-│   ├── runtime.ts             # AcpRuntime singleton + per-tab session/auth state
-│   ├── streaming-reducer.ts   # Pure reducer over session/update + turn lifecycle
-│   ├── builtin-dispatch.ts    # dispatchBuiltinAction (copy / mcp-add / mcp-remove)
+│   ├── runtime.ts             # AcpRuntime singleton + per-tab session/auth/model-update state
+│   ├── empty-sentinels.ts     # frozen EMPTY_* defaults (===-stable for React)
+│   ├── feature-keys.ts        # FEATURE_KEY_BY_CONFIG_ID / *_TO_CONFIG_ID + FeatureBag alias
+│   ├── streaming-reducer.ts   # per-turn reducer (messages, cursor, selectedModel, inFlight)
+│   ├── panels-reducer.ts      # cross-turn reducer (availableCommands, mcpStates, configOptions)
+│   ├── builtin-dispatch.ts    # dispatchBuiltinAction (copy / mcp-add / mcp-remove) + dispatchCopyAction
 │   ├── fs-handlers.ts         # main-thread fs/readTextFile / fs/writeTextFile handlers
 │   ├── permissions.ts         # session/request_permission stub (deferred)
-│   ├── message-shape.ts       # Empty/get/withAssistantText helpers
-│   └── session-meta.ts        # authKeyOf, toBodhiModelInfo, composeSessionMeta
-                                # (lower-level wire helpers come from @bodhiapp/web-acp-agent — no host-side wire-utils.ts)
+│   ├── message-shape.ts       # parseMcpStateParams, parseBuiltinActionParams, message helpers
+│   └── session-meta.ts        # authKeyOf, composeSessionMeta
+│                                # (lower-level wire helpers come from @bodhiapp/web-acp-agent — no host-side wire-utils.ts / methods.ts)
 ├── agent/
 │   └── agent-worker.ts        # Web Worker entry — calls startAcpAgent from agent package
 ├── runtime/                   # Host adapters satisfying agent-package interfaces
@@ -230,30 +231,29 @@ packages/web-acp/src/
 │   └── transport/
 │       └── worker-stream.ts   # MessagePort ↔ ReadableStream/WritableStream bridge
 ├── mcp/                       # Main-thread MCP surface
-│   ├── types.ts               # McpInstanceView, McpConnectionState, BodhiMcpUpdateMeta
+│   ├── types.ts               # McpInstanceView, McpConnectionState, McpConnectionMeta
 │   ├── useMcpInstances.ts     # React hook over bodhiClient.mcps.list()
 │   ├── compose-mcp-servers.ts # pure compose(instances, jwt, baseUrl, toggles?)
 │   ├── requested-mcps-store.ts # IndexedDB-backed wishlist of requested MCP URLs
 │   ├── url-canonical.ts       # canonicalizeMcpUrl helper (mirrors agent package)
-│   └── McpPanel.tsx           # status chips + per-server/per-tool toggle UI
+│   └── McpPanel.tsx           # status chips + per-server/per-tool toggle UI (checkboxes)
 ├── vault/
 │   ├── fsa-handle-store.ts    # idb-keyval-backed FSA handle persistence + permission re-grant
 │   └── main-zenfs.ts          # main-thread ZenFS duplicate-mount manager (fs/* IDE seam)
 ├── hooks/
-│   ├── useAcp.ts              # Thin facade composing the slice hooks
+│   ├── useAcp.ts              # Thin facade composing the slice hooks + inline features memo
 │   ├── useAcpRuntime.ts       # ensureRuntime + useVolumes wrapper
-│   ├── useAcpAuth.ts          # Bodhi auth observation, model load, session/load rebuild
-│   ├── useAcpModels.ts        # selectedModel, ensureDefaultModel, applyLastModel
-│   ├── useAcpFeatures.ts      # _bodhi/features/* slice
+│   ├── useAcpAuth.ts          # Bodhi auth observation + token rotation (no model fetch)
+│   ├── useAcpModels.ts        # selectedModel, ensureDefaultModel, applyLastModel via setSessionModel
 │   ├── useAcpMcp.ts           # mcpToggles, composeCurrentMcpServers, dispatchAction
 │   ├── useAcpSession.ts       # ensureSession, loadSession, clearMessages, deleteSession
-│   ├── useAcpStreaming.ts     # session/update listener + sendMessage/stop driving the reducer
+│   ├── useAcpStreaming.ts     # session/update + extNotification listener + sendMessage/stop
 │   └── useVolumes.ts          # FSA handle resolution + dev-seed merge + add/remove/restore
-├── components/                # shadcn/ui (`ui/*` — 12 files) + Header.tsx + Layout.tsx + StatusIndicator.tsx + chat/{BashToolCall,ChatDemo,ChatInput,ChatMessages,CommandPicker,MessageBubble,ModelCombobox,SessionPicker}.tsx + volumes/{VolumeRow,VolumesPanel}.tsx + features/FeaturePanel.tsx + mcp/McpPanel.tsx
+├── components/                # shadcn/ui (`ui/*` — 12 files) + Header/Layout/StatusIndicator + chat/{BashToolCall,ChatDemo,ChatInput,ChatMessages,CommandPicker,MessageBubble,ModelCombobox,SessionPicker}.tsx + volumes/{VolumeRow,VolumesPanel}.tsx + features/FeaturePanel.tsx + mcp/McpPanel.tsx
 ├── test/
 │   └── setup.ts               # vitest setup script (no fake-indexeddb here — see storage-dexie.md § Test fixtures)
 ├── lib/
-│   ├── bodhi-models.ts        # Model id parsing + display
+│   ├── bodhi-models.ts        # BodhiModelInfo { id } — apiFormat plumbing dropped
 │   ├── agent-model.ts         # Model selection helpers
 │   ├── builtin-format.ts      # Markdown rendering for /help, /version, /info, /mcp
 │   └── utils.ts               # General utilities (cn, …)
@@ -270,11 +270,11 @@ host-runtime becomes its own package at M8.
 
 ## Global guarantees & invariants
 
-1. **One worker per tab.** `acp/runtime.ts` holds the worker,
-   client, `MainZenfs`, and `initialize` promise at module
-   scope; StrictMode's double-mount and React fast-refresh both
-   re-enter the effect but never spawn a second worker. Detail
-   in [`hooks.md`](./hooks.md).
+1. **One worker per tab.** `acp/runtime.ts:ensureRuntime`
+   holds the worker, client, `MainZenfs`, and `initialize`
+   promise at module scope; StrictMode's double-mount and React
+   fast-refresh both re-enter the effect but never spawn a
+   second worker. Detail in [`hooks.md`](./hooks.md).
 2. **One-shot `init`.** The worker accepts exactly one
    `{type: 'init', agentPort, volumes}` message; subsequent
    inits are logged and ignored. Detail in
@@ -292,7 +292,18 @@ host-runtime becomes its own package at M8.
 5. **Structured-clone safety.** `MessagePort` payloads are
    `Uint8Array` chunks; `worker-stream.ts:createMessagePortStream`
    allocates a fresh buffer per chunk and transfers it.
-6. **Chat UI contract is `data-test-state`-driven.** Every
+6. **Reducer split.** Per-turn state lives in
+   `streamingReducer`; cross-turn UI panel state
+   (`availableCommands`, `mcpStates`, `configOptions`) lives in
+   `panelsReducer`. Each reducer's defaults use the frozen
+   `EMPTY_*` sentinels so React selectors can `===`-bail.
+7. **Model swap mutex.** `useAcpModels.setSelectedModel` writes
+   `_modelUpdatePromise` before issuing
+   `client.setSessionModel`; `useAcpStreaming.sendMessage`
+   awaits it before `client.prompt(sessionId, text)`. Without
+   this, a quick model change followed by a send could prompt
+   under the old session model.
+8. **Chat UI contract is `data-test-state`-driven.** Every
    stateful component exposes a `data-testid` for selection
    and `data-test-state="…"` for state assertions
    (`mounted | mounting | error` on volumes,
@@ -304,14 +315,14 @@ host-runtime becomes its own package at M8.
 | File | Scope |
 | --- | --- |
 | [`transport.md`](./transport.md) | `runtime/transport/worker-stream.ts:createMessagePortStream` (MessagePort ↔ stream bridge) + the worker-control sidechannel rationale + `agent/agent-worker.ts` boot wiring. |
-| [`acp.md`](./acp.md) | Host-side ACP wire/engine split — `acp/client.ts:AcpClient`, `acp/runtime.ts:ensureRuntime`, `acp/streaming-reducer.ts:streamingReducer` (with the agent_message_chunk fold snippet), `acp/builtin-dispatch.ts:dispatchBuiltinAction`, `acp/fs-handlers.ts:buildFsHandlers`, plus the helpers under `acp/{message-shape,session-meta,methods,permissions,index}.ts` (lower-level wire helpers come from `@bodhiapp/web-acp-agent`). |
-| [`hooks.md`](./hooks.md) | `hooks/useAcp.ts` (facade) + the eight slice hooks (`useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}`, `useVolumes`). StrictMode/HMR invariants. |
+| [`acp.md`](./acp.md) | Host-side ACP wire/engine split — `acp/client.ts:AcpClient` (including `setSessionModel`, `setSessionConfigOption`, `extNotification` registry), `acp/runtime.ts:ensureRuntime` (`useMemo` initialiser, model-update + init-response accessors), `acp/streaming-reducer.ts:streamingReducer`, `acp/panels-reducer.ts:panelsReducer`, `acp/empty-sentinels.ts`, `acp/feature-keys.ts`, `acp/builtin-dispatch.ts:dispatchBuiltinAction`, `acp/fs-handlers.ts:buildFsHandlers`, plus the helpers under `acp/{message-shape,session-meta,permissions,index}.ts`. |
+| [`hooks.md`](./hooks.md) | `hooks/useAcp.ts` (facade with inline features memo) + the seven slice hooks (`useAcp{Runtime,Auth,Models,Mcp,Session,Streaming}`, `useVolumes`). StrictMode/HMR invariants. |
 | [`storage-dexie.md`](./storage-dexie.md) | `runtime/storage-dexie/db.ts:SessionStoreDb` + `createStoreFromDb`, `createFeatureStore`, `createMcpToggleStore`. Schema v3, migration discipline. |
 | [`volumes.md`](./volumes.md) | `runtime/volumes-fsa/{types,backends,volume-channel,volume-control}.ts` + `vault/{fsa-handle-store,main-zenfs}.ts` + `hooks/useVolumes.ts`. The FSA handle ↔ agent `VolumeInit` conversion + the `MainZenfs` IDE-integration seam. Dev-seed test pattern. |
-| [`mcp.md`](./mcp.md) | `mcp/{types,useMcpInstances,compose-mcp-servers,requested-mcps-store,url-canonical}.ts` + `mcp/McpPanel.tsx`. The main-thread catalog + composer + UI. Worker-side runtime lives in the agent package. |
-| [`commands.md`](./commands.md) | `components/chat/CommandPicker.tsx` (palette UI) + `lib/builtin-format.ts` (markdown rendering for built-in replies) + the `_meta.bodhi.builtin` envelope consumed in `streamingReducer` + the host-side `dispatchBuiltinAction` cross-link. |
-| [`features.md`](./features.md) | `hooks/useAcpFeatures.ts` (slice hook) + `components/features/FeaturePanel.tsx` (UI). DEV gate (`import.meta.env.DEV`) for `forceToolCall` paired with the agent-side `isDev` enforcement. |
-| [`startup-sequence.md`](./startup-sequence.md) | Browser-host startup walk-through: React mount → `useAcpRuntime` → `ensureRuntime` → Worker spawn → MessageChannel → FSA volume resolution → `init` post → `startAcpAgent` (cross-link to agent's startup-sequence) → `useAcpAuth` token push → `client.listModels()` → first prompt → reducer-driven streaming. |
+| [`mcp.md`](./mcp.md) | `mcp/{types,useMcpInstances,compose-mcp-servers,requested-mcps-store,url-canonical}.ts` + `mcp/McpPanel.tsx`. Main-thread catalog + composer + `_bodhi/mcp/state` extNotification routing + UI checkboxes. Worker-side runtime lives in the agent package. |
+| [`commands.md`](./commands.md) | `components/chat/CommandPicker.tsx` (palette UI) + `lib/builtin-format.ts` (markdown rendering for built-in replies) + the `_meta.bodhi.builtin` envelope consumed in `streamingReducer` + the `_bodhi/builtin/action` extNotification → `dispatchBuiltinAction` route. |
+| [`features.md`](./features.md) | The inline `useAcp` features memo over `panelsState.configOptions` + `setFeature` calling `client.setSessionConfigOption` + `components/features/FeaturePanel.tsx` (UI). DEV gate (`import.meta.env.DEV`) for `forceToolCall` paired with the agent-side `isDev` enforcement. |
+| [`startup-sequence.md`](./startup-sequence.md) | Browser-host startup walk-through: React mount → `useAcpRuntime` → `ensureRuntime` (`useMemo`) → Worker spawn → MessageChannel → FSA volume resolution → `init` post → `startAcpAgent` (cross-link to agent's startup-sequence) → `useAcpAuth` token push → Phase 5 first prompt → reducer-driven streaming. |
 
 ## Sibling host runtime
 

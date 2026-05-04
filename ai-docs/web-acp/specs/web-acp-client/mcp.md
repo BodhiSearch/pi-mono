@@ -1,18 +1,8 @@
 # MCP — main-thread catalog, composition, requested wishlist, UI
 
-**Source of truth:** `packages/web-acp/src/mcp/`.
-
-> **ACP 0.21 migration delta (M6).** MCP lifecycle no longer arrives
-> as `_meta.bodhi.mcp` on empty `agent_message_chunk`
-> notifications. The agent emits
-> `extNotification("_bodhi/mcp/state", { sessionId, server, state,
-> error?, tools? })`. The host's `useAcpStreaming` registers an
-> `onExtNotification` listener (`AcpClient`) that parses the params
-> via `parseMcpStateParams` (`acp/message-shape.ts`) and dispatches
-> the reducer's new `'mcp-state'` action, which updates
-> `state.mcpStates` exactly the same way the legacy chunk-meta
-> path used to. `extractMcpMeta` and the early-return at the top
-> of `applySessionUpdate` have been removed.
+**Source of truth:** `packages/web-acp/src/mcp/`,
+`packages/web-acp/src/acp/message-shape.ts:parseMcpStateParams`,
+`packages/web-acp/src/acp/panels-reducer.ts:39` (`mcp-state` arm).
 
 ## Purpose
 
@@ -29,7 +19,8 @@ Browser-host MCP surface. The host:
   — `McpPanel.tsx`.
 
 Worker-side MCP runtime (client, connection pool, tool
-adapter, toggle store interface) lives in
+adapter, toggle store interface, `extNotification`
+broadcaster) lives in
 [`../web-acp-agent/mcp.md`](../web-acp-agent/mcp.md).
 
 ## Catalog watcher — `mcp/useMcpInstances.ts`
@@ -144,34 +135,95 @@ copies are kept identical by hand. Documented at
 [`../web-acp-agent/mcp.md`](../web-acp-agent/mcp.md) § URL
 canonicalisation.
 
+## Lifecycle wire path — `extNotification("_bodhi/mcp/state")`
+
+The agent emits per-server lifecycle events via the
+ACP-standard `extNotification` envelope rather than stuffing
+state onto `agent_message_chunk` `_meta`. The host wires
+this in `useAcpStreaming`'s consolidated subscription block
+(`hooks/useAcpStreaming.ts:65–87`):
+
+```ts
+const unsubExt = runtime.client.onExtNotification((method, params) => {
+  if (method === BODHI_MCP_STATE_NOTIFICATION_METHOD) {
+    const meta = parseMcpStateParams(params);
+    if (meta) dispatch({ type: 'mcp-state', meta });
+    return;
+  }
+  // ...
+});
+```
+
+`parseMcpStateParams` (`acp/message-shape.ts:6`) is a
+defensive parser that returns `undefined` on malformed
+payloads so a misbehaving agent build can't crash the
+reducer:
+
+- `params.server` must be a string.
+- `params.state` must be one of `'disconnected' |
+  'connecting' | 'connected' | 'error'`; unknown values
+  are warned-and-dropped.
+- `params.error` (string) and `params.tools` (string array)
+  are optional.
+
+The reducer reads it in `panelsReducer` (`acp/panels-reducer.ts:39`):
+
+```ts
+case 'mcp-state':
+  return {
+    ...state,
+    mcpStates: { ...state.mcpStates, [action.meta.server]: action.meta },
+  };
+```
+
+The `streamingReducer` is an explicit no-op for `'mcp-state'`
+(documented at [`acp.md`](./acp.md) § panelsReducer) — the
+slice belongs to panels because it survives `'reset'` and
+prompt-turn boundaries.
+
+`extractMcpMeta` and the early-return at the top of
+`applySessionUpdate` (the legacy path that read
+`_meta.bodhi.mcp` off empty `agent_message_chunk`s) are gone.
+
 ## Status panel — `mcp/McpPanel.tsx`
 
 UI surface for the MCP catalog. Renders:
 
 - Per-server status chips. `data-testid="mcp-server-<slug>"`,
   `data-test-state="connecting | connected | error |
-  disconnected"`. Source: `state.mcpStates[serverSlug]`
-  (populated by the streaming reducer from
-  `_meta.bodhi.mcp` notifications).
-- Per-server toggle (`Switch` component). On flip → `setMcpToggle(slug, value)`
-  from `useAcp()`. Server-level changes re-issue `loadSession`
-  inside `useAcpMcp`.
-- Per-tool toggles within an expandable server panel. On
-  flip → `setMcpToggle(slug, value, toolName)` (no
-  `loadSession` re-issue — the agent applies tool-level
-  filtering per turn).
+  disconnected"` (`:87-89`). Source: `state.mcpStates[serverSlug]`
+  from `panelsState.mcpStates` (populated by the
+  `'mcp-state'` reducer arm above).
+- Per-server checkbox toggle
+  (`data-testid="mcp-session-server-<slug>"`,
+  `data-test-state="on|off"`, `:99-110`). On flip →
+  `setMcpToggle(slug, value)` from `useAcp().mcp.setToggle`.
+  Server-level changes re-issue `loadSession` inside
+  `useAcpMcp` so the worker pool reacquires under the new
+  server set.
+- Per-tool checkbox toggles within an expandable server
+  panel (`data-testid="mcp-session-tool-<slug>-<tool>"`,
+  `:131-145`). On flip → `setMcpToggle(slug, value,
+  toolName)`. No `loadSession` re-issue — the agent applies
+  tool-level filtering per turn.
+- Tool-level checkboxes are auto-disabled when the parent
+  server is off (`disabled={!canToggle || !serverOn}`,
+  `:139`) and the row's `data-test-state` follows
+  `toolOn && serverOn` so e2e can assert the implicit-off
+  state.
 - The panel renders **status + toggles only**. There is no
   in-panel add-server textarea and no per-row trash icon.
   Mutation of the requested-MCP list flows through the
   agent-side built-in slash commands `/mcp add <url>` and
   `/mcp remove <url>` (see [commands.md](./commands.md)) —
-  the agent emits an `_meta.bodhi.builtin.action` payload of
-  kind `'mcp-add'` / `'mcp-remove'`, the streaming reducer
-  carries the tag onto the assistant message, and
-  `useAcpStreaming` forwards the action to
+  the agent emits an
+  `extNotification("_bodhi/builtin/action")` payload of
+  kind `'mcp-add'` / `'mcp-remove'`, `useAcpStreaming`
+  parses and forwards it to
   `acp/builtin-dispatch.ts:dispatchBuiltinAction` after the
-  turn resolves. The dispatcher writes to the IDB requested
-  list and re-issues Bodhi auth via `triggerLogin`.
+  built-in turn resolves. The dispatcher writes to the IDB
+  requested list and re-issues Bodhi auth via
+  `triggerLogin`.
 
 The panel is part of the host's reference UI (the components
 folder); when the host-runtime is extracted (M8) the panel
@@ -184,30 +236,37 @@ data plumbing staying in `mcp/`.
 type McpConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 interface McpConnectionMeta {
-    server: string;
-    state: McpConnectionState;
-    error?: string;
-    tools?: string[];          // populated on 'connected'
+  server: string;
+  state: McpConnectionState;
+  error?: string;
+  tools?: string[];          // populated on 'connected'
 }
 
 interface BodhiMcpUpdateMeta {
-    bodhi?: { mcp?: McpConnectionMeta };
+  bodhi?: { mcp?: McpConnectionMeta };
 }
 ```
 
 Mirrored from the agent's `McpPoolEvent` shape (one field
 rename: `type` → `state` because the host renders it as a
-state machine). The streaming reducer reads the `bodhi.mcp`
-slot via `acp/message-shape.ts:extractMcpMeta` and stores it
-keyed by `server` in `state.mcpStates`.
+state machine). `BodhiMcpUpdateMeta` is retained as a typing
+alias only — the runtime path is the
+`extNotification("_bodhi/mcp/state")` flow described above.
+The doc-comment on the type still points to the legacy
+`_meta.bodhi.mcp` carrier, which is stale wording but not
+runtime-incorrect (no code reads from the slot).
 
 ## Cross-references
 
-- Worker-side runtime that consumes the composed payload:
+- Worker-side runtime that consumes the composed payload +
+  emits `extNotification("_bodhi/mcp/state")`:
   [`../web-acp-agent/mcp.md`](../web-acp-agent/mcp.md).
 - Host-side hook that drives composition + dispatch:
   [`hooks.md`](./hooks.md) (`useAcpMcp`).
-- Host-side built-in dispatcher (mcp-add / mcp-remove):
-  [`acp.md`](./acp.md) § builtin-dispatch.
+- Host-side built-in dispatcher (mcp-add / mcp-remove) and
+  the `extNotification("_bodhi/builtin/action")` sibling
+  channel:
+  [`acp.md`](./acp.md) § builtin-dispatch and
+  [`commands.md`](./commands.md).
 - Storage adapter:
   [`storage-dexie.md`](./storage-dexie.md) (`mcp-toggle-store`).

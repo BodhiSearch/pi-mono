@@ -11,7 +11,7 @@ shell with mounted volumes (`/mnt/<name>` from
 `/home/user`). MCP tools are a separate path with their own
 adapter ([`mcp.md`](./mcp.md)).
 
-## `createBashTool` — `agent/tools/bash-tool.ts:64`
+## `createBashTool` — `agent/tools/bash-tool.ts:74`
 
 `createBashTool({ registry })` returns an
 `AgentTool<typeof bashInputSchema, BashToolDetails>`. The
@@ -20,9 +20,9 @@ function shape matches `pi-agent-core`'s `AgentTool`:
 - `name: 'bash'`
 - `label: 'Bash'`
 - `description` — the multi-line `BASH_DESCRIPTION` constant
-  (`:57`) telling the LLM about the mount layout.
-- `parameters: bashInputSchema` (TypeBox) — one required field
-  + three optional:
+  (`:67`) telling the LLM about the mount layout.
+- `parameters: bashInputSchema` (TypeBox, `:32`) — one required
+  field + three optional:
   - `script: string` (required) — the script body.
   - `cwd?: string` — absolute working directory; defaults to
     `/mnt/<firstVolume>` from `registry.firstMountName()` or
@@ -32,18 +32,19 @@ function shape matches `pi-agent-core`'s `AgentTool`:
 - `execute(toolCallId, params, signal?, onUpdate?)` — see
   below.
 
-`execute` flow (`bash-tool.ts:70`):
+`execute` flow (`bash-tool.ts:82`):
 
-1. Resolve `cwd` via `resolveCwd(params.cwd, registry)`.
-2. Build the `MountableFs` via `buildMountable(registry)` —
-   one `VolumeFileSystem` per registered volume, plus
-   `InMemoryFs` mounts at `/tmp` and `/home/user`. The base
-   FS is `InMemoryFs()` so writes outside the mounts land in
-   an in-memory shadow rather than crashing.
+1. Resolve `cwd` via `resolveCwd(params.cwd, registry)` (`:140`).
+2. Build the `MountableFs` via `buildMountable(registry)`
+   (`:146`) — one `VolumeFileSystem` per registered volume,
+   plus `InMemoryFs` mounts at `/tmp` and `/home/user`. The
+   base FS is `InMemoryFs()` so writes outside the mounts land
+   in an in-memory shadow rather than crashing.
 3. Build a combined abort signal via `linkSignals(signal,
-   params.timeout_ms, controllers)` — chains the caller's
-   `AbortSignal` (typically the per-turn signal from
-   `prompt-driver.ts:bindAbortSignal`) with an internal timer.
+   params.timeout_ms, controllers)` (`:165`) — chains the
+   caller's `AbortSignal` (typically the per-turn signal from
+   `acp/engine/prompt-driver.ts:bindAbortSignal`) with an
+   internal timer.
 4. Emit a single empty progress update through `onUpdate`
    (signals "running" to the UI).
 5. `await bash.exec(params.script, { signal: combined.signal,
@@ -52,15 +53,15 @@ function shape matches `pi-agent-core`'s `AgentTool`:
    never fires because the original caller-supplied `signal`
    has no timeout wired in.
 6. On exception: returns
-   `{ stdout: '', stderr: <message>, exitCode: signal.aborted ? 130 : 1 }`
+   `{ stdout: '', stderr: <message>, exitCode: combined.signal.aborted ? 130 : 1 }`
    wrapped in `toolResult`.
-7. On success: applies `truncateStreams(stdout, stderr)` and
-   returns the truncated streams + `exitCode` + `truncated`
-   flag.
+7. On success: applies `truncateStreams(stdout, stderr)`
+   (`:184`) and returns the truncated streams + `exitCode` +
+   `truncated` flag.
 8. Cleanup: aborts every linked controller in `finally` to
    tear down the timeout / signal listeners.
 
-`toolResult(details)` (`:121`) wraps the `BashToolDetails`
+`toolResult(details)` (`:133`) wraps the `BashToolDetails`
 into the canonical `AgentToolResult` — `content` is a single
 text block carrying `JSON.stringify(details)` (so the LLM can
 `jq` it), and `details` carries the structured payload for the
@@ -68,8 +69,8 @@ host-side renderer.
 
 ### Output truncation
 
-`BASH_OUTPUT_BYTE_LIMIT` (256 KiB, `:20`) caps each stream
-independently. `truncateStreams` (`:171`) measures via
+`BASH_OUTPUT_BYTE_LIMIT` (256 KiB, `:30`) caps each stream
+independently. `truncateStreams` (`:184`) measures via
 `TextEncoder().encode(...).byteLength`; truncation slices the
 `Uint8Array` to the limit and decodes back via
 `TextDecoder('utf-8', { fatal: false })`. The `truncated` flag
@@ -81,11 +82,11 @@ flag in the JSON payload.
 Two cancellation sources:
 
 - The per-turn abort signal threaded by
-  `prompt-driver.ts:bindAbortSignal` so a `session/cancel`
-  short-circuits the running shell.
+  `acp/engine/prompt-driver.ts:bindAbortSignal` so a
+  `session/cancel` short-circuits the running shell.
 - The internal `params.timeout_ms` timer (when set).
 
-`linkSignals` (`:153`) creates a child `AbortController` that
+`linkSignals` (`:165`) creates a child `AbortController` that
 forwards both. When either fires, `bash.exec`'s
 `signal: combined.signal` triggers, the child process
 terminates, and the catch branch returns exit code 130 (the
@@ -124,7 +125,7 @@ worse for ACP compliance than mounting the FS on the agent.
 See `steering/02-architecture.md` § "ACP architectural
 postures".
 
-## `BashToolDetails` — `bash-tool.ts:46`
+## `BashToolDetails` — `bash-tool.ts:56`
 
 ```ts
 interface BashToolDetails {

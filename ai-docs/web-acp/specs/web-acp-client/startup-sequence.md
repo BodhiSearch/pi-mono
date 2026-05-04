@@ -18,10 +18,10 @@ this file links into it at the moment the agent takes over.
 | `App` / `AppContent` | main | `App.tsx` | Mounts `BodhiProvider`; auto-opens setup modal. |
 | `@bodhiapp/bodhi-js-react` (`useBodhi`) | main | (dep) | OAuth 2.1 flow, token storage, `auth.accessToken`. |
 | `ChatDemo` | main | `components/chat/ChatDemo.tsx` | Calls `useAcp()`. |
-| `useAcp` (facade) | main | `hooks/useAcp.ts` | Composes the eight slice hooks. |
-| `useAcp{Runtime,Auth,Models,Features,Mcp,Session,Streaming}` | main | `hooks/useAcp*.ts` | Per-concern slices — see [`hooks.md`](./hooks.md). |
-| `AcpRuntime` singleton | main | `acp/runtime.ts` | Worker, `AcpClient`, `MainZenfs`, `volumeControl`, init promise. |
-| `streamingReducer` | main | `acp/streaming-reducer.ts` | Pure reducer over `session/update`. |
+| `useAcp` (facade) | main | `hooks/useAcp.ts` | Composes the seven slice hooks + the inline features memo. |
+| `useAcp{Runtime,Auth,Models,Mcp,Session,Streaming}` + `useMcpInstances` | main | `hooks/useAcp*.ts`, `mcp/useMcpInstances.ts` | Per-concern slices — see [`hooks.md`](./hooks.md). There is no `useAcpFeatures`; features ride a memo + callback inlined in `useAcp.ts`. |
+| `AcpRuntime` singleton | main | `acp/runtime.ts` | Worker, `AcpClient`, `MainZenfs`, `volumeControl`, init promise, auth + session + model-update mutexes. |
+| `streamingReducer` + `panelsReducer` | main | `acp/streaming-reducer.ts`, `acp/panels-reducer.ts` | Per-turn vs cross-turn slices over `session/update` + `extNotification`. |
 | `AcpClient` | main | `acp/client.ts` | Typed wrapper over `ClientSideConnection`. |
 | `MessageChannel` (`port1`, `port2`) | shared | (browser) | Transport primitive. |
 | `createMessagePortStream` | either | `runtime/transport/worker-stream.ts` | Byte-stream wrapper around a `MessagePort`. |
@@ -48,14 +48,20 @@ The worker side then runs the host-neutral agent flow at
 
 ## Phase 1 — Runtime singleton + worker spawn
 
-`useAcp` mounts the eight slice hooks (order documented at
+`useAcp` mounts the slice hooks (order documented at
 [`hooks.md`](./hooks.md) § facade). `useAcpRuntime` calls
-`acp/runtime.ts:ensureRuntime()` (`:34`) inside an effect.
+`acp/runtime.ts:ensureRuntime()` (`:34`) inside a
+**`useMemo`** (lines `:17-19`) — not a `useEffect`. The
+worker spawn happens during render so the SDK gets a live
+`ClientSideConnection` synchronously, before any child
+effect tries to subscribe to it. `ensureRuntime` is
+idempotent (module-scope singleton guard) so StrictMode's
+double render is safe.
 
 `ensureRuntime`:
 
 1. Returns the cached `_runtime` if set. (StrictMode
-   double-mount and HMR re-enter the effect; the cache means
+   double-mount and HMR re-enter `useMemo`; the cache means
    we never spawn a second worker per tab.)
 2. **Spawns the Worker.** `new Worker(new URL('../agent/agent-worker.ts',
    import.meta.url), { type: 'module' })`. Vite resolves the
@@ -82,10 +88,11 @@ The worker side then runs the host-neutral agent flow at
 const holder: { client?: AcpClient } = {};
 const fsHandlers = buildFsHandlers({ view: { list: () => mainZenfs.list() } });
 const handler: Client = {
-    requestPermission: requestPermissionStub,
-    async sessionUpdate(params) { holder.client?.dispatchSessionUpdate(params); },
-    async readTextFile(params) { return fsHandlers.readTextFile(params); },
-    async writeTextFile(params) { return fsHandlers.writeTextFile(params); },
+  requestPermission: requestPermissionStub,
+  async sessionUpdate(params) { holder.client?.dispatchSessionUpdate(params); },
+  async extNotification(params) { holder.client?.dispatchExtNotification(params); },
+  async readTextFile(params) { return fsHandlers.readTextFile(params); },
+  async writeTextFile(params) { return fsHandlers.writeTextFile(params); },
 };
 const conn = new ClientSideConnection(() => handler, stream);
 const client = new AcpClient(conn);
@@ -95,15 +102,21 @@ holder.client = client;
 7. **Initialises the chain.** `initialize = initPromise.then(() =>
    client.initialize()).then(() => undefined)`. The promise
    resolves only after both volumes have been pushed *and*
-   the ACP handshake completes.
+   the ACP handshake completes. `_initResponse` is cached on
+   the runtime so `setSessionModel` + the model picker can
+   read `agentCapabilities.unstable_setSessionModel` without
+   re-fetching.
 8. **Wraps `volumeControl`.** `createVolumeControl(worker)`
    gives the main thread a typed mount/unmount client over
    the raw-postMessage volume sidechannel. The wrap layer
    `wrapVolumeControl(inner, mainZenfs)` mirrors every mount/unmount
    onto the `MainZenfs` mirror so `fs/*` handlers stay in
    sync.
-9. Caches `_runtime = { worker, client, volumeControl,
-   mainZenfs, initialize, resolveInit }`. Returns it.
+9. **Registers a tab-close hook.** `window.addEventListener('beforeunload',
+   () => worker.terminate())` so a hard navigation doesn't
+   leave the worker orphaned.
+10. Caches `_runtime = { worker, client, volumeControl,
+    mainZenfs, initialize, resolveInit }`. Returns it.
 
 ## Phase 2 — Volume resolution + init post
 
@@ -127,14 +140,14 @@ boot effect (see [`volumes.md`](./volumes.md)):
 
 ```ts
 resolveInit = (volumes) => {
-    if (initPosted) return;
-    initPosted = true;
-    void mainZenfs.mountAll(volumes);          // mirror on main thread
-    worker.postMessage(
-        { type: 'init', agentPort: channel.port2, volumes },
-        [channel.port2],
-    );
-    resolve();
+  if (initPosted) return;
+  initPosted = true;
+  void mainZenfs.mountAll(volumes);          // mirror on main thread
+  worker.postMessage(
+    { type: 'init', agentPort: channel.port2, volumes },
+    [channel.port2],
+  );
+  resolve();
 };
 ```
 
@@ -182,7 +195,7 @@ On the first `init`:
     acpSdkVersion })`. The agent is now ready to receive ACP
     requests.
 
-The whole worker boot is ~96 lines (`agent/agent-worker.ts`).
+The whole worker boot is ~97 lines (`agent/agent-worker.ts`).
 Everything beyond this point is the host-neutral agent flow
 documented at
 [`../web-acp-agent/startup-sequence.md`](../web-acp-agent/startup-sequence.md).
@@ -193,15 +206,22 @@ The host-side promise chain `client.initialize()` was
 deferred until the worker `init` post completed. Once both
 sides connect:
 
-1. `AcpClient.initialize()` (`:60`) sends `initialize({
+1. `AcpClient.initialize()` (`:54`) sends `initialize({
    protocolVersion: 1, clientCapabilities: { fs: {
    readTextFile: true, writeTextFile: true } } })`. The `fs`
    capability advertises the IDE-integration seam; built-in
    `bash` doesn't use it, but external ACP agents could.
 2. The agent responds (see
    [`../web-acp-agent/startup-sequence.md`](../web-acp-agent/startup-sequence.md)
-   § Phase 2).
+   § Phase 2). The response is cached on the runtime as
+   `_initResponse`.
 3. `runtime.initialize` resolves.
+
+There is **no** `bodhi/listModels` call here. The model
+catalog ships back with the per-session
+`NewSessionResponse.models` / `LoadSessionResponse.models`
+(`SessionModelState`) when the session is created in
+Phase 6.
 
 ## Phase 5 — Auth observation + token push
 
@@ -215,70 +235,104 @@ sides connect:
      - `await runtime.initialize` — block on the ACP
        handshake.
      - `client.authenticate({ token, baseUrl })` — Phase 3
-       in the agent's flow.
-     - `client.listModels()` — Phase 4 in the agent's flow.
-     - `setAuthModels(models)` and `setModels(models)` (the
-       `useAcpModels` slice's local state).
-     - `ensureDefaultModel(models)` — picks the first model
-       if no selection exists.
+       in the agent's flow. Errors are non-fatal; they
+       surface via `setError` only.
      - On token rotation while a session is active: rebuilds
        via `client.loadSession(sessionId, composedMcpServers,
        composeSessionMeta(...))` so the agent re-acquires
-       MCP under the new fingerprint.
+       MCP under the new fingerprint. Gated on
+       `mcpInstancesIsReady` so we don't compose with an
+       empty server list.
 3. The slice promise is cached via `getAuthPromise` /
    `setAuthPromise` so concurrent slice hooks `await` the
    same work rather than racing.
-4. On auth loss (`isAuthenticated` flips false): dispatches
-   `'reset'` to the streaming reducer; `clearFeatures`;
-   re-set `_authKey = null`.
+4. On auth loss (`isAuthenticated` flips false): the
+   auth-loss `useEffect` in `useAcpSession` (`:297`) cancels
+   any in-flight prompt, clears `_session`, clears
+   `_modelUpdatePromise`. The facade's `isAuthenticated ?
+   X : EMPTY_*` gate masks the rest of the UI.
 
-After Phase 5 the host has a populated model catalog and
-the worker is authenticated.
+After Phase 5 the worker is authenticated. The model catalog
+is **not** populated yet — it ships back from
+`session/new` / `session/load` in Phase 6.
 
 ## Phase 6 — First session
 
-`useAcpStreaming.sendMessage(prompt)` is the user's first
-prompt action. Internally:
+Two effects can drive the first session:
 
-1. `await getAuthPromise()` first — `useAcpStreaming.sendMessage`
-   waits on the Phase-5 auth slice to settle before issuing
-   any prompt-side work, so token rotation finishes before
-   the first request goes out.
-2. `await ensureSession()` (from `useAcpSession`):
-   - If `getSession()` returns an id, return it.
-   - Otherwise:
-     - `await runtime.initialize` (Worker `init` settled).
-     - `composedMcpServers = composeMcpServers(
-       mcpInstances, jwt, baseUrl, mcpToggles)`.
-     - `composedSessionMeta = composeSessionMeta(
-       requestedMcpUrls, mcpInstances)`.
-     - `client.newSession(composedMcpServers, composedSessionMeta)`
-       — Phase 5 in the agent's flow.
-     - `setSession(response.sessionId)` and
-       `refreshFeatures(sessionId)`.
-3. `streamingDispatch({ type: 'turn-start', userMessage })`
+- The auto-`ensureSession` effect in `useAcpSession`
+  (`:155`), gated on `isAuthenticated && !currentSessionId
+  && mcpInstancesIsReady`, lazily creates a session as soon
+  as auth lands and the MCP catalog is ready.
+- `useAcpStreaming.sendMessage(prompt)` calls
+  `ensureSession()` itself if the user types before the
+  auto-effect lands.
+
+`ensureSession` (`hooks/useAcpSession.ts:108`):
+
+1. Return the cached `getSession()` id if set.
+2. Otherwise `await getSessionPromise()` if one's
+   in-flight (concurrency safety).
+3. Otherwise:
+   - `await runtime.initialize` (Worker `init` settled).
+   - `composeCurrentMcpServers()` — composes the
+     `McpServerHttp[]` from `mcpInstances + jwt + baseUrl`,
+     with no toggles (fresh session defaults to all-on).
+   - `composeSessionMeta(requestedMcpUrls, mcpInstances)`.
+   - `client.newSession(servers, sessionMeta)` — Phase 5 in
+     the agent's flow.
+   - `setSession(response.sessionId)`.
+   - Dispatch `'config-options-init'` from
+     `response.configOptions ?? []` — populates the
+     features panel (see [`features.md`](./features.md)).
+   - `hydrateModelsFromSessionResponse(response.models)` —
+     the model catalog finally lands here, populated from
+     `SessionModelState`. Picks `currentModelId` if
+     valid, falls back to the first available.
+   - Reset `mcpToggles` to `EMPTY_MCP_TOGGLES`.
+
+`sendMessage(prompt)` (`hooks/useAcpStreaming.ts:89`):
+
+1. `detectBuiltinTag(prompt)` — built-ins skip the
+   "no model selected" gate.
+2. `await getAuthPromise()` if pending.
+3. Build the user message; stamp with `_builtin` if
+   detected.
+4. `await ensureSession()`.
+5. **Await `getModelUpdatePromise()` BEFORE `turn-start`** —
+   so a model-update failure surfaces as an inline error
+   instead of an orphan user message.
+6. `streamingDispatch({ type: 'turn-start', userMessage })`
    — appends the user message; clears streaming;
    `isStreaming: true`.
-4. Detect built-in invocation client-side via
-   `detectBuiltinTag` so the user bubble gets the muted
-   styling pre-emptively.
-5. `client.prompt(sessionId, prompt, selectedModel)` — Phase
-   6 in the agent's flow. The reducer ingests every
-   `session/update` notification while the prompt resolves.
-6. After resolve: `streamingDispatch({ type: 'turn-end',
-   finalMessage: streamingMessageRef.current, stopReason
-   })`.
-7. If the final message carries a `_builtin.action` (via
-   `getBuiltinTag(finalMsg)`): call `dispatchAction(action,
-   messagesRef.current)` — host-side action dispatch, see
-   [`commands.md`](./commands.md). `messagesRef.current` is
-   snapshotted *before* the appended built-in pair, giving
-   `/copy` the LLM-only conversation.
-8. `void refreshSessions()` so the picker reflects the new
+7. `client.prompt(sessionId, prompt)` — **two arguments**.
+   The agent reads the model from
+   `SessionState.currentModelId` (set via
+   `unstable_setSessionModel` in `useAcpModels`). The
+   reducer ingests every `session/update` notification while
+   the prompt resolves; the unified `extNotification`
+   listener handles `_bodhi/mcp/state` and
+   `_bodhi/builtin/action` side-channels.
+8. After resolve: `streamingDispatch({ type: 'turn-end',
+   stopReason: response.stopReason ?? 'end_turn' })`. The
+   reducer folds `streamingMessage` into `messages`
+   synchronously inside the `turn-end` arm — the caller
+   does **not** read it from a ref.
+9. `void refreshSessions()` so the picker reflects the new
    `updatedAt` / `turnCount`.
 
-After step 6 the session is live; subsequent `sendMessage`
-calls reuse the same `sessionId`.
+Built-in client-side actions (`/copy`, `/mcp add`, `/mcp
+remove`) arrive on the dedicated
+`extNotification("_bodhi/builtin/action")` channel — not on
+the streaming message's `_builtin.action` slot. The
+`useAcpStreaming` listener parses them via
+`parseBuiltinActionParams` and forwards to
+`dispatchBuiltinAction(action, messagesRef.current)`. See
+[`commands.md`](./commands.md) for the full action
+contract.
+
+After the first turn the session is live; subsequent
+`sendMessage` calls reuse the same `sessionId`.
 
 ## Phase 7 — Steady state
 
@@ -289,14 +343,22 @@ steady state. Pending interactions:
 - `stop()` mid-turn → `client.cancel(sessionId)`.
 - `loadSession(id)` from the picker — see
   [`hooks.md`](./hooks.md) § `useAcpSession.loadSession`.
-- `clearMessages()` to start fresh — `streamingDispatch
-  ({ type: 'reset' })` + `clearFeatures()` + drop the
-  active session id.
+- `clearMessages()` to start fresh — fires
+  `cancel + closeSession`, clears `_session`,
+  `_modelUpdatePromise`, error, mcpToggles, dispatch
+  `'reset'`.
 - `deleteSession(id)` — `client.deleteSession`; if active,
-  also `clearMessages`. `refreshSessions` after.
+  also `cancel` + `clearMessages` first. `refreshSessions`
+  after.
 - Volume mount/unmount via `useVolumes.addVolume /
   removeVolume / restoreAccess` → volume-control sidechannel.
-- Feature toggle via `setFeature` → `_bodhi/features/set`.
+- Feature toggle via the inline `setFeature` callback in
+  `useAcp.ts` → `client.setSessionConfigOption(sessionId,
+  configId, value ? 'on' : 'off')` → standard ACP wire.
+- Model swap via `setSelectedModel(id)` →
+  `client.setSessionModel(sessionId, id)` (publishes the
+  in-flight promise to `setModelUpdatePromise` so the next
+  `sendMessage` awaits it before `prompt`).
 - MCP toggle via `setMcpToggle` → `_bodhi/mcp/toggles/set`
   (server-level changes also re-issue `loadSession`).
 
@@ -328,8 +390,10 @@ for tests. Tests never `page.evaluate` into ZenFS internals
   [`transport.md`](./transport.md).
 - Volume resolution detail:
   [`volumes.md`](./volumes.md).
-- Host-side wire layer (AcpClient, runtime, reducer):
+- Host-side wire layer (AcpClient, runtime, reducers):
   [`acp.md`](./acp.md).
+- Built-in action arrival path:
+  [`commands.md`](./commands.md) § extNotification.
 - CLI host's TTY boot for comparison:
   [`../cli-acp-client/index.md`](../cli-acp-client/index.md)
   § "Boot sequence".

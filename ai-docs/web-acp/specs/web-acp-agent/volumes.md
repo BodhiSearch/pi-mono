@@ -59,9 +59,9 @@ Consumers in the engine layer:
 - `acp/engine/session-runtime.ts:refreshAvailableCommands`
   reads `services.registry.list()` to find vault command
   sources.
-- `acp/engine/prompt-driver.ts:run` reads `registry.list()`
-  for `composeSystemPrompt(volumes)` and gates the bash tool
-  on `volumes.length > 0`.
+- `acp/engine/prompt-driver.ts:#runTurn` reads
+  `registry.list()` for `composeSystemPrompt(volumes)` and
+  gates the bash tool on `volumes.length > 0`.
 - `acp/engine/ext-methods/volumes-list.ts:volumesList`
   surfaces the snapshot through `_bodhi/volumes/list`.
 - `agent/tools/bash-tool.ts:resolveCwd` calls
@@ -128,9 +128,9 @@ their own. The `_bodhi/volumes/list` extension method
 on-demand snapshot when needed.
 
 When a host re-mounts a volume mid-session, the next `prompt`
-turn picks it up automatically: `prompt-driver.ts:run` reads
-`registry.list()` afresh for the system prompt and the bash
-tool's `MountableFs`. Vault-sourced commands also reload from
+turn picks it up automatically:
+`prompt-driver.ts:#runTurn` reads `registry.list()` afresh for
+the system prompt and the bash tool's `MountableFs`. Vault-sourced commands also reload from
 the new mount on the next `refreshAvailableCommands` call
 (typically tied to `session/load`).
 

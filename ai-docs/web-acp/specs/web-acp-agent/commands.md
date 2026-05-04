@@ -1,16 +1,8 @@
 # Commands — vault sources, prompt templates, built-ins
 
-**Source of truth (agent package):** `packages/web-acp-agent/src/agent/commands/`.
-
-> **ACP 0.21 migration delta (M6).** Built-in slash commands still
-> reply with a single `agent_message_chunk` carrying the muted-bubble
-> tag at `_meta.bodhi.builtin.command`. The optional `action`
-> (e.g. `{ kind: 'copy' }`, `{ kind: 'mcp-add', params }`) **no
-> longer rides on the chunk** — `tryHandleBuiltin` now emits
-> `extNotification("_bodhi/builtin/action", { sessionId, command,
-> action })` after the chunk so live action dispatch travels on a
-> dedicated side-channel. The persisted `'builtin'` store entry
-> still records the action for replay.
+**Source of truth (agent package):**
+`packages/web-acp-agent/src/agent/commands/`,
+`packages/web-acp-agent/src/acp/engine/builtin-dispatch.ts`.
 
 ## Purpose
 
@@ -20,19 +12,20 @@ sources, all with the same wire shape (`AvailableCommand` —
 ACP has no kind discriminator):
 
 1. **Built-ins** — agent-handled (`/help`, `/version`,
-   `/info`, `/copy`, `/mcp`). M4 phase B. Source:
+   `/info`, `/copy`, `/mcp`). Source:
    `agent/commands/builtins/`.
-2. **Vault commands** — `<mount>/.pi/commands/**/*.md`. M4
-   phase A. Source: `agent/commands/loader.ts:loadCommandsFromVolumes`.
-3. **Prompt templates** — `<mount>/.pi/prompts/**/*.md`. M4.2
-   first slice. Source: `agent/commands/loader.ts:loadPromptsFromVolumes`.
+2. **Vault commands** — `<mount>/.pi/commands/**/*.md`. Source:
+   `agent/commands/loader.ts:loadCommandsFromVolumes`.
+3. **Prompt templates** — `<mount>/.pi/prompts/**/*.md`. Source:
+   `agent/commands/loader.ts:loadPromptsFromVolumes`.
 
-Built-ins are intercepted in `prompt-driver.ts:run` *before*
-LLM resolution (early-return path), so they never count
-against the LLM history. Vault commands and prompt templates
-are **template substitutions**: the literal `/<name> <args>`
-in the prompt is replaced with the rendered template body
-before the LLM sees the request.
+Built-ins are intercepted in
+`acp/engine/prompt-driver.ts:#runTurn` *before* LLM resolution
+(early-return path), so they never count against the LLM
+history. Vault commands and prompt templates are **template
+substitutions**: the literal `/<name> <args>` in the prompt is
+replaced with the rendered template body before the LLM sees
+the request.
 
 ## Discovery — `agent/commands/loader.ts`
 
@@ -92,9 +85,9 @@ Per-mount discovery flow (`loadFromVolumes`, `:71`):
    - `source` — `{ mountName, relPath: '<dirRelpath>/<rel>' }`.
 
 Cross-source dedup happens upstream in
-`acp/engine/session-runtime.ts:refreshAvailableCommands`:
-commands win on canonical-name collision; prompts losing get a
-`[prompts]` warning logged.
+`acp/engine/session-runtime.ts:refreshAvailableCommands`
+(`:243`): commands win on canonical-name collision; prompts
+losing get a `[prompts]` warning logged.
 
 ## Canonical naming — `agent/commands/path.ts`
 
@@ -127,8 +120,7 @@ Supports:
   some later line.
 - `key: value` lines (single-line strings only; no nested
   arrays / objects / multi-line scalars).
-- Lines starting with `#` are skipped as comments
-  (`front-matter.ts:106` — `if (line.startsWith("#")) continue;`).
+- Lines starting with `#` are skipped as comments.
   Inline `# trailing` comments after a value are not stripped —
   they end up in the value string.
 
@@ -147,8 +139,8 @@ bash-style: single quotes verbatim, double quotes unescape
 `\\`, `\"`, `\$`, and `` \` `` (everything else literal),
 backslash escapes outside quotes, whitespace separates
 tokens. **Variable interpolation (`$VAR`) is intentionally
-skipped** so a
-template can reference `$HOME` literally without surprise.
+skipped** so a template can reference `$HOME` literally without
+surprise.
 
 Substitution (`substitute`, `:123`):
 
@@ -183,10 +175,10 @@ Five commands ship today:
 | Command | File | Description |
 | --- | --- | --- |
 | `help` | `help.ts` | Lists every advertised command (built-ins + vault). |
-| `version` | `version.ts` | Reports `buildVersion` + `acpSdkVersion` from `BuiltinHandlerCtx`. |
-| `info` | `info.ts` | Reports current session: `Id`, `Turns`, `Messages (LLM-visible)`, `Model`, `MCP servers`. Renamed from `/session` in commit `ec152c1e` so it doesn't collide with the CLI host's session-management command. |
-| `copy` | `copy.ts` | Returns `{ replyText: '…copied…', action: { kind: 'copy' } }`. The host dispatcher (`web-acp-client`'s `acp/builtin-dispatch.ts:dispatchBuiltinAction`) builds the markdown locally from `messages` state — the agent doesn't ship the payload across the wire. |
-| `mcp` | `mcp.ts` | `mcp list` / `mcp add <url>` / `mcp remove <url>` — emits `{ action: { kind: 'mcp-add' \| 'mcp-remove', params: { url } } }` for `add` / `remove`; `list` emits no action. |
+| `version` | `version.ts` | Reports `web-acp` build, `ACP SDK` version, `Model` (`ctx.modelId`), and `Bodhi server` URL (`ctx.serverUrl`) from `BuiltinHandlerCtx`. |
+| `info` | `info.ts` | Reports current session: `Id`, `Turns`, `Messages (LLM-visible)`, `Model`, `MCP servers`. Renamed from `/session` so it doesn't collide with the CLI host's session-management command. |
+| `copy` | `copy.ts` | Returns `{ replyText: '…copied…', action: { kind: 'copy' } }`. The host dispatcher (`web-acp-client`'s `acp/builtin-dispatch.ts:dispatchCopyAction`) builds the markdown locally from `messages` state — the agent doesn't ship the payload across the wire. |
+| `mcp` | `mcp.ts` | `/mcp` (no args) lists Connected + Pending; `/mcp add <url>` / `/mcp remove <url>` emit `{ action: { kind: 'mcp-add' \| 'mcp-remove', params: { url } } }`. List emits no action. URLs are canonicalised via `mcp/url-canonical.ts:canonicalizeMcpUrl` before comparison; idempotent. |
 
 ### `BuiltinCommand` shape — `builtins/types.ts:68`
 
@@ -203,11 +195,15 @@ interface BuiltinCommand {
 ### `BuiltinHandlerCtx` — `builtins/types.ts:34`
 
 The narrow snapshot every handler sees. Built by
-`acp/engine/builtin-dispatch.ts:tryHandleBuiltin` (line 40).
-`mcpInstances` and `requestedMcpUrls` are read from the
-**per-session** `SessionState` (`session?.mcpInstances` /
-`session?.requestedMcpUrls`); `sessionStats` and
-`mcpServersConnected` come through runtime accessors.
+`acp/engine/builtin-dispatch.ts:tryHandleBuiltin` (`:42`).
+`modelId` reads from `session?.currentModelId` (per-session
+state set by `unstable_setSessionModel`); `serverUrl` reads
+`services.bodhi.getBaseUrl()`; `mcpInstances` and
+`requestedMcpUrls` read from the **per-session** `SessionState`
+(`session?.mcpInstances` / `session?.requestedMcpUrls`);
+`sessionStats` and `mcpServersConnected` come through runtime
+accessors.
+
 Fields: `sessionId`, `modelId`, `serverUrl`,
 `sessionStats: { turnCount, messageCount }`,
 `mcpServersConnected: string[]`,
@@ -228,7 +224,7 @@ projection of a Bodhi-side MCP entry the worker received via
 ```
 
 `BuiltinAction` is a re-export of the wire-level
-`AnyBodhiBuiltinAction` (`packages/web-acp-agent/src/wire/index.ts:198`):
+`AnyBodhiBuiltinAction` (`packages/web-acp-agent/src/wire/index.ts:134`):
 
 ```ts
 type AnyBodhiBuiltinAction =
@@ -238,7 +234,7 @@ type AnyBodhiBuiltinAction =
 ```
 
 The discriminated-union pattern `BodhiBuiltinAction<K, P>` is
-defined at `wire/index.ts:181` — payload-conditional
+defined at `wire/index.ts:117` — payload-conditional
 (`[P] extends [void] ? { kind: K } : { kind: K; params: P }`).
 New built-ins that need a client-side action either reuse one
 of the existing kinds or extend the union by adding a new
@@ -265,53 +261,83 @@ ACP `AvailableCommand[]`; merged with vault commands by
 ## Wire surface — `available_commands_update`
 
 The advertisement runs once per `newSession` and once per
-`loadSession`, via `acp/engine/session-runtime.ts:refreshAvailableCommands`
-(`:271`). Order: built-ins first (5 entries), then vault
+`loadSession`, via
+`acp/engine/session-runtime.ts:refreshAvailableCommands`
+(`:243`). Order: built-ins first (5 entries), then vault
 commands + prompts merged. Hosts treat the list as a
 black-box `AvailableCommand[]` — no kind discriminator on the
-wire (added in M4.2 first slice; the agent picks one source
-per name with commands winning).
+wire (the agent picks one source per name, with commands
+winning).
 
-## `_meta.bodhi.builtin` envelope
+## Built-in reply wire path — `acp/engine/builtin-dispatch.ts:tryHandleBuiltin`
 
-Built-in replies ride the standard `agent_message_chunk`
-notification with a tag stamped on `_meta`:
+Built-in dispatch is split across **two wire envelopes**: the
+muted-bubble reply rides standard `agent_message_chunk`; the
+optional client action rides `extNotification("_bodhi/builtin/action", …)`.
+This is the only place the engine bypasses
+`runtime.emit`/`runtime.sendRawNotification` — both calls go
+direct on `conn` to avoid double-persistence (the `'builtin'`
+store entry below is the single source of truth for replay).
+
+### Reply chunk — `agent_message_chunk` with `_meta.bodhi.builtin`
 
 ```json
 {
-  "sessionId": "bodhi-…",
-  "update": {
-    "sessionUpdate": "agent_message_chunk",
-    "content": { "type": "text", "text": "<replyText>" }
-  },
-  "_meta": {
-    "bodhi": {
-      "builtin": {
-        "command": "<name>",
-        "action": { "kind": "...", "params": {...} }
-      }
+    "sessionId": "bodhi-…",
+    "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "<replyText>" }
+    },
+    "_meta": {
+        "bodhi": {
+            "builtin": { "command": "<name>" }
+        }
     }
-  }
 }
 ```
 
-Hosts read the meta via the host-side `streamingReducer`'s
-`session/update` branch, which inspects
-`update.update._meta?.bodhi?.builtin` and stamps the tag onto
-the message bubble for the muted-built-in render. The action
-dispatch happens in the host's `dispatchBuiltinAction` —
+The chunk carries the muted-bubble tag at
+`_meta.bodhi.builtin.command`; `action` is **not** stamped on
+the chunk anymore. Hosts read the meta via the host-side
+`streamingReducer`'s `session/update` branch, which inspects
+`update.update._meta?.bodhi?.builtin?.command` and stamps the
+tag onto the message bubble for the muted-built-in render.
+
+### Action notification — `_bodhi/builtin/action`
+
+When `BuiltinResult.action` is set, `tryHandleBuiltin` emits
+(`:84–94`):
+
+```ts
+conn.extNotification(
+    BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD, // '_bodhi/builtin/action'
+    {
+        sessionId,
+        command: match.cmd.name,
+        action: result.action,
+    } satisfies BodhiBuiltinActionNotificationParams,
+);
+```
+
+Shape `BodhiBuiltinActionNotificationParams` (defined at
+`wire/index.ts:200`):
+`{ sessionId, command, action: AnyBodhiBuiltinAction }`. The
+host's `extNotification` sink (registered when
+`AcpClient.connect` builds `ClientSideConnection`) routes the
+method to `dispatchBuiltinAction` —
 [`../web-acp-client/acp.md`](../web-acp-client/acp.md).
 
 ## `'builtin'` `SessionEntry` kind
 
 Persistence rides via
-`acp/engine/builtin-dispatch.ts:tryHandleBuiltin` (`:80`)
+`acp/engine/builtin-dispatch.ts:tryHandleBuiltin` (`:97`)
 calling `services.store.recordBuiltin(sessionId, payload)`.
 `BuiltinPayload` shape:
-`{ command, userText, replyText, action? }`. Replay rebuilds
-the muted-builtin pair via the agent's
-`bodhi/getSession` interleaving so the host UI can render the
-historical bubble correctly without re-walking the chunks.
+`{ command, userText, replyText, action? }`. The action is
+persisted alongside the reply so a `_bodhi/session/get`
+rebuild can reconstruct the muted-builtin pair (and replay the
+side-effect descriptor for any host that wants to render past
+copy / mcp-add intents).
 
 See [`sessions.md`](./sessions.md) for the full entry shape +
 replay semantics.
@@ -320,7 +346,7 @@ replay semantics.
 
 - Engine layer that drives expansion + built-in early return:
   [`acp.md`](./acp.md).
-- Persistence (`'builtin'` entries, `bodhi/getSession`
+- Persistence (`'builtin'` entries, `_bodhi/session/get`
   rebuild): [`sessions.md`](./sessions.md).
 - Host-side built-in action dispatch (`/copy`, `/mcp add`):
   [`../web-acp-client/acp.md`](../web-acp-client/acp.md) +

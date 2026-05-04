@@ -2,222 +2,321 @@
 
 **Source of truth:** `packages/web-acp/src/hooks/`.
 
-> **ACP 0.21 migration delta (M1–M7).**
-> - `useAcpModels` rewritten as a thin slice. `setSelectedModel(id)`
->   now pushes the user pick to the agent via
->   `client.setSessionModel(sessionId, id)` and publishes the
->   in-flight promise to `acp/runtime.ts:setModelUpdatePromise` so
->   `useAcpStreaming.sendMessage` can await it before `prompt()`.
->   Removed: `loadModels`, `loadingModelsRef`, `isLoadingModels`,
->   `selectedApiFormat`, `apiFormat` plumbing.
-> - `useAcpAuth` no longer fetches the model catalog. Removed
->   `setModels`, `setIsLoadingModels`, `ensureDefaultModel`,
->   `loadingModelsRef` deps. The auth effect just authenticates +
->   handles token rotation.
-> - `useAcpFeatures` rewritten as a memo selector over
->   `state.configOptions`. `setFeature(key, value)` calls
->   `client.setSessionConfigOption(sessionId, '_bodhi/features/'+key,
->   value)`. Removed `featureDefaults`, `clearFeatures`,
->   `refreshFeatures`.
-> - `useAcpSession.ensureSession` and `loadSession` populate the
->   model picker from `NewSessionResponse.models` /
->   `LoadSessionResponse.models` (`SessionModelState`) via a pure
->   `applyModelState` helper, and dispatch `'config-options-init'`
->   from `response.configOptions`. `loadSession` still fetches
->   `bodhi/getSession` for the message snapshot (M5 deferred).
-> - `useAcpStreaming` gained an extNotification subscription that
->   routes `_bodhi/mcp/state` to the reducer and
->   `_bodhi/builtin/action` to the action dispatcher (M6). The
->   in-band action dispatch from `streamingMessage._builtin.action`
->   was removed; `sendMessage` awaits `getModelUpdatePromise()`
->   before `client.prompt()` to avoid the model-update race.
-
 ## Purpose
 
 `useAcp()` is the single entry point the React layer
-consumes. It composes eight per-concern slice hooks and
-applies an `isAuthenticated ? real : EMPTY_*` gate so
-consumers see empty state the instant auth flips rather than
-stale data from a previous login.
+consumes. It composes seven per-concern slice hooks plus an
+inline features memo, and applies an `isAuthenticated ?
+real : EMPTY_*` gate so consumers see empty state the instant
+auth flips rather than stale data from a previous login.
 
 The split mirrors the agent's wire/engine cut: `useAcp.ts`
 is the facade, the per-concern hooks each own one slice of
 the worker conversation. State that survives across
 re-renders — the worker, the ACP client, the per-tab session
-id — lives at module scope inside `acp/runtime.ts`. See
-[`acp.md`](./acp.md) § runtime singleton.
+id, the model-update mutex — lives at module scope inside
+`acp/runtime.ts`. See [`acp.md`](./acp.md) § runtime singleton.
 
 ## `useAcp` facade — `hooks/useAcp.ts:51`
 
-Orchestrator. Mounts the eight slice hooks in dependency
-order, threads cross-hook callbacks (e.g. `useAcpStreaming`
-calls `refreshSessions` from `useAcpSession`), and gates the
-returned values on `isAuthenticated`.
+Orchestrator. Mounts the slice hooks in dependency order, runs
+the streaming + panels reducers, derives the per-session
+features memo, exposes `setFeature`, and gates the returned
+values on `isAuthenticated`.
 
-Mount order (matches dataflow). Eight slice hooks plus one
-React primitive `useReducer` call interleaved between the
-auth and session slices:
+There is **no** `useAcpFeatures` hook anymore — the inline
+`features` memo + `setFeature` callback below absorbed it.
 
-1. `useMcpInstances()` — Bodhi catalog watcher (live fetch).
-2. `useAcpModels(isAuthenticated, setError)` — model catalog state.
-3. `useAcpFeatures(setError)` — feature toggle slice.
-4. `useAcpRuntime()` — runtime singleton + volumes.
-5. `useAcpMcp({ setError, mcpInstances })` — toggle store + composer + dispatcher.
-6. `useAcpAuth({ ...mutators })` — observes Bodhi auth, drives `authenticate`+`listModels`.
-7. `useReducer(streamingReducer, initialStreamingState)` — primitive React call (not a slice hook), wires the streaming state machine.
-8. `useAcpSession({ ...mutators, streamingDispatch })` — `ensureSession`, `loadSession`, `clearMessages`, `deleteSession`.
-9. `useAcpStreaming({ state, dispatch, ... })` — `sendMessage`, `stop`, `session/update` subscription.
+Mount order (matches dataflow):
 
-Empty constants (`EMPTY_MESSAGES`, `EMPTY_MODELS`, …) are
-declared at module scope and frozen so they have stable
-reference identity. The gate `isAuthenticated ? real :
-EMPTY_*` keeps consumer effects from re-firing when auth
-toggles.
+1. `const { isAuthenticated } = useBodhi()`.
+2. `useMcpInstances()` — Bodhi catalog watcher (live fetch).
+3. `useState<string | null>(null)` for `error`.
+4. `useAcpModels(setError)` — model catalog state +
+   `hydrateFromSessionResponse`.
+5. `useAcpRuntime()` — runtime singleton + volumes.
+6. `useAcpMcp({ setError, mcpInstances })` — toggle store +
+   composer + dispatcher + the three refs (`mcpInstancesRef`,
+   `mcpTogglesRef`, `requestedMcpUrlsRef`).
+7. `useAcpAuth({ setError, mcpInstancesRef, mcpTogglesRef,
+   requestedMcpUrlsRef, mcpInstancesIsReady })` — observes
+   Bodhi auth, drives `authenticate` + token-rotation
+   `loadSession`. **Does not fetch the model catalog**.
+8. `useReducer(streamingReducer, initialStreamingState)` and
+   `useReducer(panelsReducer, initialPanelsState)` —
+   per-turn vs cross-turn reducer pair (lines `:81–82`).
+9. `dispatch` callback (lines `:83–86`) — fans every
+   `AcpAction` into both reducers; `panelsReducer`'s
+   `===`-bailout invariant means non-panel actions don't cause
+   panel consumers to re-render.
+10. **Inline features memo** (lines `:88–101`) — translates
+    `panelsState.configOptions` into a `FeatureBag` via
+    `FEATURE_KEY_BY_CONFIG_ID`. Accepts both stable
+    `select` (`currentValue === 'on'`) and legacy unstable
+    `boolean` shapes so a stale agent build doesn't break the
+    toggle UI.
+11. **Inline `setFeature` callback** (lines `:103–121`) —
+    reads `getSession()`; bails when no session. Uses
+    `FEATURE_KEY_TO_CONFIG_ID` to translate the UI's feature
+    key back to the wire configId, then calls
+    `client.setSessionConfigOption(sessionId, configId, value
+    ? 'on' : 'off')`. Errors surface via `setError` and a
+    `console.error`.
+12. `useAcpSession({ ..., streamingDispatch: dispatch,
+    hydrateModelsFromSessionResponse, setMcpToggles })` —
+    `ensureSession`, `loadSession`, `clearMessages`,
+    `deleteSession`, `refreshSessions`. Both `ensureSession`
+    and `loadSession` populate the model picker via
+    `hydrateFromSessionResponse(response.models)` and dispatch
+    `'config-options-init'` from `response.configOptions`.
+13. `useAcpStreaming({ state: streamingState, dispatch,
+    ensureSession, refreshSessions, dispatchAction,
+    selectedModel, setError })` — `sendMessage`, `stop`,
+    `clearError`, plus the unified `session/update` +
+    `extNotification` listener.
 
-Return shape: `{ messages, models, isLoadingModels,
-selectedModel, setSelectedModel, sendMessage, stop, error,
-clearError, sessions, currentSessionId, isLoadingSession,
-loadSession, clearMessages, deleteSession, isStreaming,
-toolCalls, isAuthenticated, refreshSessions, volumes,
-features, featureDefaults, setFeature, clearFeatures,
-mcp, availableCommands }`. The MCP slice is grouped under a
-single nested key — `mcp: { instances, states, toggles,
-isLoading, error, refresh, setToggle }` — so consumers
-destructure `const { mcp } = useAcp()` and read
-`mcp.instances`, `mcp.toggles`, `mcp.setToggle`. The internal
-`dispatchAction` callback is **not** re-exported on the
-facade return; it's threaded as a `useAcpStreaming` dep
-inside the hook and stays internal. Consumer reference:
-`components/chat/ChatDemo.tsx:33`.
+Empty constants (`EMPTY_MESSAGES`, `EMPTY_MODELS`,
+`EMPTY_SESSIONS`, `EMPTY_FEATURES`, `EMPTY_TOOL_CALLS`,
+`EMPTY_MCP_INSTANCES`) are declared at module scope (lines
+`:35–40`) so they have stable reference identity. The
+`EMPTY_AVAILABLE_COMMANDS`, `EMPTY_MCP_STATES`, and
+`EMPTY_MCP_TOGGLES` constants are imported from
+`@/acp/index` (the frozen sentinels) so the gate uses the
+same identity the panel reducer initialises with.
+
+The gate `isAuthenticated ? real : EMPTY_*` keeps consumer
+effects from re-firing when auth toggles.
+
+Return shape (lines `:161–193`): `{ messages, streamingMessage,
+isStreaming, selectedModel, setSelectedModel, sendMessage,
+stop, clearMessages, error, clearError, models, sessions,
+refreshSessions, loadSession, deleteSession, currentSessionId,
+isLoadingSession, volumes, features, setFeature, toolCalls,
+availableCommands, mcp: { instances, states, toggles,
+isLoading, error, refresh, setToggle } }`. The MCP slice is
+grouped under a single nested key so consumers destructure
+`const { mcp } = useAcp()` and read `mcp.instances`,
+`mcp.toggles`, `mcp.setToggle`. The internal `dispatchAction`
+callback is **not** re-exported on the facade return; it's
+threaded as a `useAcpStreaming` dep and stays internal.
+Consumer reference: `components/chat/ChatDemo.tsx`.
 
 ## Slice hooks
 
-### `useAcpRuntime` — `hooks/useAcpRuntime.ts`
+### `useAcpRuntime` — `hooks/useAcpRuntime.ts:17`
 
-Mounts the runtime singleton. `ensureRuntime()` (from
-`acp/runtime.ts`) constructs the Worker + `AcpClient` once
-per tab; the hook is just an effect that calls it. Wraps
-`useVolumes({ volumeControl, onInitialVolumes })` — the
-volumes hook is responsible for resolving the worker's
-`init` payload by calling
-`runtime.resolveInit(initialMounts)`.
+Mounts the runtime singleton via `useMemo(() => ensureRuntime(),
+[])` (line `:19`). The `useMemo` runs during render — no effect
+needed because `ensureRuntime()` is idempotent and the
+module-scope guard inside it is the StrictMode-safe seam.
+Wraps `useVolumes({ volumeControl, onInitialVolumes })` — the
+volumes hook is responsible for resolving the worker's `init`
+payload by calling `runtime.resolveInit(initialMounts)`.
 
 Returns `{ runtime, volumes }`.
 
-### `useAcpAuth` — `hooks/useAcpAuth.ts`
+### `useAcpAuth` — `hooks/useAcpAuth.ts:51`
 
 Owns the auth observation + token rotation effects. Watches
 Bodhi auth state (`useBodhi`) and:
 
 - Computes the auth key via `acp/session-meta.ts:authKeyOf`.
-- On change: calls `client.authenticate({ token, baseUrl })`,
-  then `client.listModels()` to warm the catalog.
-- Caches the auth key + models via the runtime's
-  `setAuthKey` / `setAuthModels` accessors so other slice
-  hooks see consistent values.
-- On token rotation while a session is active: rebuilds
-  the session via `client.loadSession(sessionId,
-  composedMcpServers, composeSessionMeta(...))` so the
-  worker re-acquires MCP connections under the new
-  fingerprint and reloads its inline-agent history.
-- On auth loss: dispatches `'reset'` to the streaming
-  reducer.
+- On change: calls `client.authenticate({ token, baseUrl })`
+  inside the `getAuthPromise` dedupe + caches the auth key.
+- On token rotation while a session is active (token A →
+  token B with a non-null `getSession()`): re-issues
+  `client.loadSession(sessionId, composedMcpServers,
+  composeSessionMeta(...))` so the worker re-acquires MCP
+  connections under the new fingerprint and reloads its
+  inline-agent history. Gated on `mcpInstancesIsReady` —
+  otherwise we'd compose with an empty server list and the
+  worker pool would drop every connection.
 
 `UseAcpAuthDeps` is the cross-hook plumbing bag. The slice
-calls into mutators owned by sibling hooks (`setModels`,
-`ensureDefaultModel`, etc.) so the facade is the single
-place that knows the wiring.
+no longer mutates anyone else's state — it just touches
+`runtime.client` and the runtime accessors. The model catalog
+is no longer fetched here; it ships back via
+`NewSessionResponse.models` /
+`LoadSessionResponse.models`, consumed by `useAcpModels`.
 
-### `useAcpModels` — `hooks/useAcpModels.ts`
+### `useAcpModels` — `hooks/useAcpModels.ts:31`
 
-Owns the per-tab model catalog state.
+Owns the per-tab model catalog state. Thin slice: state +
+mutators + `hydrateFromSessionResponse` + the
+`setSelectedModel` push.
 
 | Returned value | Behaviour |
 | --- | --- |
-| `models: BodhiModelDescriptor[]` | The cached catalog. |
-| `isLoadingModels` | True while the model fetch is in-flight. |
-| `selectedModel: string`, `selectedApiFormat: ApiFormat` | Active selection. |
-| `setSelectedModel(id, fmt)` | UI-driven selection update. |
-| `loadModels()` | Manual refresh — used by the picker's "Reload" button. Calls `client.listModels()` + `setAuthModels(models)`. |
-| `setModels(list)` / `setIsLoadingModels(loading)` | Mutators exposed for use by sibling hooks (`useAcpAuth` populates `models` after auth flip). |
-| `ensureDefaultModel(list)` | If no selection or current selection has vanished, pick the first model. |
-| `applyLastModel(lastModelId, list)` | After `session/load`: re-select the snapshot's `lastModelId` if it's still in `list`. |
-| `loadingModelsRef: MutableRefObject<boolean>` | Concurrent-fetch dedupe used by `useAcpAuth`. |
+| `models: BodhiModelInfo[]` | The cached catalog (`{ id }` only — `apiFormat` plumbing dropped). |
+| `selectedModel: string` | Active selection. |
+| `setSelectedModel(id)` (`:35`) | Updates local state; if `getSession()` is set, calls `client.setSessionModel(sessionId, id)`, publishes the in-flight promise to `setModelUpdatePromise` so `useAcpStreaming.sendMessage` can await it before `prompt()`, and clears the promise on `finally`. Errors flow into `setError`. |
+| `hydrateFromSessionResponse(state)` (`:59`) | Consumed by `useAcpSession.ensureSession` / `loadSession` after `NewSessionResponse` / `LoadSessionResponse` arrives. Maps `availableModels[].modelId → BodhiModelInfo[]`. Selects `state.currentModelId` if still in the list, else preserves the prior selection if still in the list, else picks the first available. |
 
-### `useAcpFeatures` — `hooks/useAcpFeatures.ts`
+There are no `loadModels` / `loadingModelsRef` /
+`isLoadingModels` / `selectedApiFormat` / `applyLastModel`
+returns anymore — model catalog hydration rides on
+`SessionModelState` from the agent.
 
-`_bodhi/features/list` + `_bodhi/features/set` slice. The
-features bag is **per-session**; this hook neither owns nor
-watches the session id —`refreshFeatures(sessionId)` is
-invoked by `useAcpSession` on `session/new` / `session/load`,
-while `setFeature(key, value)` reads the active session from
-the runtime singleton.
-
-Returns `{ features, featureDefaults, refreshFeatures,
-setFeature, clearFeatures }`. `featureDefaults` is **state**,
-not a static mirror — it is populated by the worker's
-per-call response (`payload.defaults`) inside
-`refreshFeatures`. The agent today returns the agent-package
-`FEATURE_DEFAULTS` verbatim, but the UI must not assume that
-contract; treat `featureDefaults` as session-derived.
-
-### `useAcpMcp` — `hooks/useAcpMcp.ts`
+### `useAcpMcp` — `hooks/useAcpMcp.ts:50`
 
 The MCP composition + toggle slice. Owns:
 
-- `mcpToggles: McpToggleSnapshot` — current toggle state, reset on `clearFeatures` / `loadSession`.
-- `setMcpToggles(toggles)` — React setter exposed for `useAcpSession.ts` to call after `bodhi/getSession`'s snapshot rebuild (full toggle-snapshot replace).
-- `setMcpToggle(serverSlug, value, toolName?)` — single-key mutate via `client.setMcpToggle`. Server-level changes re-issue `client.loadSession` so the agent re-acquires under the new server set.
-- `composeCurrentMcpServers(toggles?: McpToggleSnapshot)` — joins instance catalog + JWT + server-level toggle filter into the `McpServerHttp[]` payload `loadSession` expects. The token + `baseUrl` are read from `useBodhi`'s `auth.accessToken` and `bodhiClient.getState()` **inside the closure** — they are not parameters. Calls `compose-mcp-servers.ts:composeMcpServers` after the lookup.
-- `dispatchAction(action, messages)` — proxies into `acp/builtin-dispatch.ts:dispatchBuiltinAction`, passing the live `triggerLogin` closure.
-- Refs (`mcpInstancesRef`, `mcpTogglesRef`, `requestedMcpUrlsRef`) — mutable views of the latest values, useful for `useAcpAuth`/`useAcpSession` callbacks that don't want a re-render dependency on a fast-changing object.
+- `mcpToggles: McpToggleSnapshot` — current toggle state, reset
+  on `clearMessages` / `loadSession`.
+- `setMcpToggles(toggles)` — React setter exposed for
+  `useAcpSession` to call after `loadSession` (full
+  toggle-snapshot replace from the snapshot's
+  `_meta.bodhi.mcpToggles`).
+- `setMcpToggle(serverSlug, value, toolName?)` (`:161`) —
+  single-key mutate via `client.setMcpToggle`. Server-level
+  changes re-issue `client.loadSession` so the agent
+  re-acquires under the new server set; per-tool changes
+  trickle through to the next `prompt` turn since the pool is
+  unchanged.
+- `composeCurrentMcpServers(toggles?: McpToggleSnapshot)`
+  (`:87`) — joins instance catalog + JWT + server-level
+  toggle filter into the `McpServerHttp[]` payload
+  `loadSession` expects. The token + `baseUrl` are read from
+  `useBodhi`'s `auth.accessToken` and `bodhiClient.getState()`
+  **inside the closure** — they are not parameters. Calls
+  `compose-mcp-servers.ts:composeMcpServers` after the
+  lookup.
+- `dispatchAction(action, messages)` (`:143`) — proxies into
+  `acp/builtin-dispatch.ts:dispatchBuiltinAction`, passing
+  the live `triggerLoginWithRequested` closure.
+  `triggerLoginWithRequested` (`:120`) calls `logout()` then
+  `login(builder.build())` so Keycloak re-issues the
+  authorization redirect with the updated MCP scopes (the
+  Bodhi SDK's `login()` short-circuits on
+  already-authenticated tokens, hence the explicit logout
+  first).
+- Refs (`mcpInstancesRef`, `mcpTogglesRef`,
+  `requestedMcpUrlsRef`) — mutable views of the latest
+  values, useful for `useAcpAuth` / `useAcpSession` callbacks
+  that don't want a re-render dependency on a fast-changing
+  object.
 
-Boot effect: loads `requested-mcps-store.ts:loadRequestedMcps()`
-into `requestedMcpUrlsRef.current` on mount.
+Boot effect (`:79`): loads `requested-mcps-store.ts:loadRequestedMcps()`
+into `requestedMcpUrlsRef.current` once on mount.
 
-### `useAcpSession` — `hooks/useAcpSession.ts`
+### `useAcpSession` — `hooks/useAcpSession.ts:57`
 
 Session lifecycle slice. Owns:
 
-- `sessions: BodhiSessionSummary[]` — the picker list.
-- `currentSessionId: string | null`.
+- `sessions: SessionInfoView[]` — the picker list (the
+  flattened `SessionInfo + _meta.bodhi` shape from
+  `AcpClient.listSessions`).
+- `currentSessionId: string | null` — read via
+  `useSyncExternalStore(subscribeToSession, getSession,
+  getSession)` so external `setSession` calls (auth-loss
+  effect, cancel path) repaint the picker without local
+  mirror state.
 - `isLoadingSession: boolean`.
-- `refreshSessions()` — `client.listSessions` → state.
-- `ensureSession()` — returns the active session id, lazily creating one via `client.newSession` if absent. Concurrency-safe via the runtime's `getSessionPromise` / `setSessionPromise`.
-- `loadSession(sessionId)` — full reload:
-    1. `streamingDispatch({ type: 'load-start' })`.
-    2. `client.loadSession(...)` (replays via `runtime.sendRawNotification`s on the agent side).
-    3. `client.getSession(...)` for the snapshot rebuild (messages, lastModelId, mcpToggles, …).
-    4. `applyLastModel(snapshot.lastModelId, models)`.
-    5. `setMcpToggles(snapshot.mcpToggles)` + `refreshFeatures(sessionId)`.
-    6. `streamingDispatch({ type: 'load-end', messages: snapshot.messages })`.
-- `clearMessages()` — `streamingDispatch({ type: 'reset' })` + `clearFeatures()` + un-set the active session id.
-- `deleteSession(sessionId)` — `client.deleteSession`; if active, also `clearMessages`. Fires `refreshSessions` on success.
+- `refreshSessions()` (`:76`) — `client.listSessions` →
+  state. Re-checks `isAuthenticated` after the await so a
+  mid-flight auth-loss doesn't stamp a stale list.
+- `ensureSession()` (`:108`) — returns the active session id,
+  lazily creating one via `client.newSession` if absent.
+  Concurrency-safe via the runtime's `getSessionPromise` /
+  `setSessionPromise`. After resolution: dispatches
+  `'config-options-init'` from `response.configOptions ?? []`,
+  calls `hydrateModelsFromSessionResponse(response.models)`,
+  and resets `mcpToggles` to `EMPTY_MCP_TOGGLES`.
+- `loadSession(sessionId)` (`:182`) — full reload:
+    1. Dispatch `'load-start'`.
+    2. Close prior active session via
+       `client.closeSession(prior)` so the agent releases MCP
+       refcounts.
+    3. **Pre-pass `client.getSession(sessionId)`** to read
+       toggles before composing servers (TODO at `:208–210`
+       tracks collapsing this round-trip — M5 deferred).
+    4. `client.loadSession(sessionId, servers, sessionMeta)`.
+    5. `setSession(sessionId)` + `setModelUpdatePromise(null)`
+       (drop any in-flight set-model promise owned by the
+       prior session).
+    6. `setMcpToggles(toggles)`.
+    7. Dispatch `'config-options-init'` from
+       `loadResponse.configOptions ?? []`.
+    8. Dispatch `'load-end'` with `snapshot.messages`.
+    9. `hydrateModelsFromSessionResponse(loadResponse.models)`.
+- `clearMessages()` (`:252`) — fire-and-forget
+  `cancel + closeSession` for the active session, then
+  `setSession(null)`, `setModelUpdatePromise(null)`,
+  `setError(null)`, `setMcpToggles(EMPTY_MCP_TOGGLES)`,
+  dispatch `'reset'`.
+- `deleteSession(sessionId)` (`:267`) —
+  `client.deleteSession`; if active, also `cancel` +
+  `clearMessages` first. Fires `refreshSessions` in `finally`.
 
-Boot effects (two separate `useEffect`s, do not collapse them
-in your head):
+Boot effects (two separate `useEffect`s):
 
 1. `refreshSessions()` runs unconditionally on mount and
    whenever its deps flip — the function itself gates on
-   `isAuthenticated` internally and clears state on logout.
-2. The auto-`ensureSession` effect is gated on
-   `isAuthenticated && mcpInstancesIsReady` and lazily creates
-   a fresh session when the user is authenticated and the MCP
-   catalog is ready but no `currentSessionId` exists yet.
+   `isAuthenticated` internally and clears state on logout
+   (lines `:96–106`).
+2. The auto-`ensureSession` effect (`:155`) is gated on
+   `isAuthenticated && !currentSessionId && mcpInstancesIsReady`
+   and lazily creates a fresh session when the user is
+   authenticated and the MCP catalog is ready but no
+   `currentSessionId` exists yet. Awaits `getAuthPromise()`
+   first so the session fetch doesn't race the
+   `authenticate` round-trip.
 
-### `useAcpStreaming` — `hooks/useAcpStreaming.ts`
+Auth-loss teardown effect (`:297`): cancels any in-flight
+prompt, clears `_session`, clears
+`_modelUpdatePromise`. The `isAuthenticated ? X : EMPTY_*`
+gating in the facade masks the rest of the UI on its own.
 
-The prompt-turn loop + `session/update` listener.
+### `useAcpStreaming` — `hooks/useAcpStreaming.ts:33`
 
-- Subscribes to `client.onSessionUpdate(notif => dispatch({ type: 'session-update', notif }))` once per mount.
-- `sendMessage(prompt)`:
-    1. `await ensureSession()`.
-    2. Build the user message, detect a built-in tag via `detectBuiltinTag`, dispatch `'turn-start'`.
-    3. `client.prompt(sessionId, prompt, selectedModel)`.
-    4. After resolve: dispatch `'turn-end'` with `finalMessage` from the `streamingMessageRef`. The ref is **not** updated by the reducer (the reducer is pure) — it is synced via a side-effect `useEffect` listening on `state.streamingMessage` so the imperative `sendMessage` callback can read the latest assistant message at resolve time without a re-render dependency.
-    5. If the final message carries a `_builtin.action`, call `dispatchAction(action, messagesRef.current)` — note `messagesRef.current` is snapshotted *before* the appended built-in pair, giving `/copy` the LLM-only conversation.
-- `stop()` — `client.cancel(sessionId)`.
-- `clearError()` — `setError(null)`.
+The prompt-turn loop + the unified `session/update` +
+`extNotification` listener.
+
+Single-effect listener pair (`:65–87`):
+
+- `client.onSessionUpdate(notif => dispatch({ type:
+  'session-update', notif }))`.
+- `client.onExtNotification((method, params) => {...})` —
+  routes:
+  - `BODHI_MCP_STATE_NOTIFICATION_METHOD` →
+    `parseMcpStateParams(params)` → dispatch `{ type:
+    'mcp-state', meta }` (consumed by `panelsReducer`).
+  - `BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD` →
+    `parseBuiltinActionParams(params)` → call the latest
+    `dispatchActionRef.current(action, messagesRef.current)`.
+    The refs (`messagesRef`, `dispatchActionRef`) are synced
+    via plain `useEffect`s so the listener doesn't need to
+    resubscribe on every dispatch identity churn.
+  - Anything else → `console.warn`.
+
+`sendMessage(prompt)` (`:89`):
+
+1. Detect a built-in tag via `detectBuiltinTag` so the
+   "no model selected" gate doesn't apply to built-ins
+   (built-ins bypass the LLM agent-side).
+2. `await getAuthPromise()` if one's pending (silent return
+   on auth error — surfaced by the auth effect).
+3. Build the user message (`userMessage(prompt)`),
+   stamp the built-in tag if present.
+4. `await ensureSession()`.
+5. **Await `getModelUpdatePromise()` before `turn-start`** —
+   so a model-update failure surfaces as an inline error
+   instead of an orphan user message in the transcript.
+6. Dispatch `'turn-start'` with the user message.
+7. `await client.prompt(sessionId, prompt)` — two arguments;
+   the agent reads the model from
+   `SessionState.currentModelId`.
+8. Dispatch `'turn-end'` with `response.stopReason ??
+   'end_turn'`. **Note: the turn-end fold of
+   `streamingMessage` happens inside the reducer** (no ref
+   read here), closing a commit/effect race that the legacy
+   ref-based fold exhibited.
+9. `void refreshSessions()` to keep the picker in sync.
+
+`stop()` (`:144`) — `client.cancel(sessionId)` for the
+active session.
+
+`clearError()` — `setError(null)`.
 
 ### `useVolumes` — `hooks/useVolumes.ts`
 
@@ -230,14 +329,26 @@ Volume hook called from `useAcpRuntime`. Documented in
   reads / writes `_runtime` at module scope. StrictMode's
   double-mount calls `ensureRuntime()` twice; the second
   call returns the cached value. Vite HMR preserves module
-  state.
+  state. `useAcpRuntime` calls `ensureRuntime` from a
+  `useMemo` so the worker spawn happens during render rather
+  than after-effect — a deliberate choice that hands the SDK a
+  live `ClientSideConnection` synchronously, before any child
+  effect tries to subscribe to it.
 - **Per-tab session id.** Same pattern: `let _session` at
-  module scope. `useAcpSession` reads it on every effect,
-  so a hook re-mount sees the existing session rather than
-  creating a duplicate.
-- **Auth promise dedup.** `getAuthPromise` / `setAuthPromise`
-  hold the in-flight auth+listModels work; concurrent slice
-  hooks `await` the same promise rather than racing.
+  module scope. `useAcpSession` reads it on every effect, so
+  a hook re-mount sees the existing session rather than
+  creating a duplicate. `useSyncExternalStore` gives the
+  picker a re-render hook into the singleton.
+- **Auth promise dedup.** `getAuthPromise` /
+  `setAuthPromise` hold the in-flight `authenticate` work;
+  concurrent slice hooks `await` the same promise rather
+  than racing.
+- **Model-update promise mutex.** `setSelectedModel` writes
+  the in-flight `setSessionModel` promise to
+  `setModelUpdatePromise`; `sendMessage` awaits
+  `getModelUpdatePromise()` before `prompt`. `loadSession`
+  and `clearMessages` clear the slot so a stale promise from
+  a closed session can't bleed into the next one.
 
 ## Cross-hook plumbing
 
@@ -255,14 +366,15 @@ than React Context. Reasoning:
 
 - ACP wire layer the hooks consume:
   [`acp.md`](./acp.md) (`AcpClient`, `streamingReducer`,
-  `dispatchBuiltinAction`).
+  `panelsReducer`, `dispatchBuiltinAction`,
+  `parseMcpStateParams`, `parseBuiltinActionParams`).
 - Storage adapters:
   [`storage-dexie.md`](./storage-dexie.md).
 - Volume hook detail:
   [`volumes.md`](./volumes.md) § hook surface.
 - MCP catalog + composer:
   [`mcp.md`](./mcp.md).
-- Features UI surface:
+- Features UI surface (inline `useAcp` slice + FeaturePanel):
   [`features.md`](./features.md).
 - Browser-host startup walk-through:
   [`startup-sequence.md`](./startup-sequence.md).
