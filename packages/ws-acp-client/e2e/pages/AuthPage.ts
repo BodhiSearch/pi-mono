@@ -24,12 +24,32 @@ export class AuthPage {
   readonly authName: Locator;
   readonly approveButton: Locator;
 
+  // Auth-method dialog (surfaced by the agent advertising auth methods
+  // on `initialize`, before `session/new`).
+  readonly methodDialog: Locator;
+  readonly methodDialogCancel: Locator;
+  readonly methodDialogClose: Locator;
+
   constructor(private page: Page) {
     this.loginButton = page.locator('[data-testid="btn-bodhi-login"]');
     this.logoutButton = page.locator('[data-testid="btn-bodhi-logout"]');
     this.authSection = page.locator('[data-testid="section-bodhi-auth"]');
     this.authName = page.locator('[data-testid="span-bodhi-auth-name"]');
     this.approveButton = page.getByTestId('review-approve-button');
+
+    this.methodDialog = page.locator('[data-testid="dialog-auth-method"]');
+    this.methodDialogCancel = page.locator('[data-testid="btn-auth-method-cancel"]');
+    this.methodDialogClose = page.locator('[data-testid="btn-auth-method-close"]');
+  }
+
+  /** Click an advertised auth method (e.g. `bodhi-token`). */
+  methodButton(methodId: string): Locator {
+    return this.page.locator(`[data-testid="btn-auth-method-${methodId}"]`);
+  }
+
+  async cancelMethodDialog(): Promise<void> {
+    await this.methodDialogCancel.click();
+    await expect(this.methodDialog).toBeHidden();
   }
 
   async expectUnauthenticated(): Promise<void> {

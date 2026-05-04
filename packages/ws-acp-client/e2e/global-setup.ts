@@ -6,17 +6,23 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { chromium, type FullConfig } from '@playwright/test';
 import { BodhiServerManager } from './utils/bodhi-server-manager';
+import { startWsAcpServer, type WsServerHandle } from './utils/ws-server-manager';
 import { LoginPage } from './pages/admin/LoginPage';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const E2E_DIR = path.resolve(__dirname);
+const PKG_DIR = path.resolve(E2E_DIR, '..');
 export const STATE_FILE = path.join(E2E_DIR, '.test-state.json');
 
 export interface TestState {
   bodhiServerUrl: string;
   username: string;
   password: string;
+  /** ws://host:port for the spawned ws-acp-client server. */
+  wsUrl: string;
+  /** Agent working directory backing the cwd PassthroughFS volume. */
+  cwd: string;
 }
 
 export function getTestState(): TestState {
@@ -98,6 +104,7 @@ function buildUserAgent(): string {
 }
 
 let bodhiServer: BodhiServerManager | null = null;
+let wsServer: WsServerHandle | null = null;
 
 async function globalSetup(_: FullConfig) {
   loadEnv({ path: path.join(E2E_DIR, '.env.test'), quiet: true });
@@ -167,6 +174,17 @@ async function globalSetup(_: FullConfig) {
     }
   }
 
+  // Boot the ws-acp-client process under test. We use a fresh temp dir
+  // as its `$cwd` so tests see an empty PassthroughFS volume each run;
+  // the dir (and its `.ws-acp-client/state.db`) are deleted at teardown.
+  wsServer = await startWsAcpServer({
+    packageDir: PKG_DIR,
+    port: 0,
+    host: '127.0.0.1',
+    verbose: false,
+  });
+  console.log(`[global-setup] ws-acp-client at ${wsServer.url} (cwd=${wsServer.cwd})`);
+
   writeFileSync(
     STATE_FILE,
     JSON.stringify(
@@ -174,6 +192,8 @@ async function globalSetup(_: FullConfig) {
         bodhiServerUrl: serverUrl,
         username: getEnv('BODHIAPP_USERNAME'),
         password: getEnv('BODHIAPP_PASSWORD'),
+        wsUrl: wsServer.url,
+        cwd: wsServer.cwd,
       } satisfies TestState,
       null,
       2
@@ -182,6 +202,14 @@ async function globalSetup(_: FullConfig) {
   console.log(`[global-setup] Ready. Bodhi server at ${serverUrl}`);
 
   return async () => {
+    if (wsServer) {
+      try {
+        await wsServer.stop();
+      } catch (err) {
+        console.warn('[global-setup] ws-acp-client.stop() failed:', err);
+      }
+      wsServer = null;
+    }
     if (bodhiServer) {
       await bodhiServer.stop();
       bodhiServer = null;
