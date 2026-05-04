@@ -86,7 +86,12 @@ export function useAcpAuth(deps: UseAcpAuthDeps): void {
           setAuthPromise(
             (async () => {
               await runtime.initialize;
-              await runtime.client.authenticate({ token, baseUrl: serverUrl });
+              const resp = await runtime.client.authenticate({ token, baseUrl: serverUrl });
+              const meta = resp?._meta as { bodhi?: { providerInfo?: unknown } } | undefined;
+              const providerInfo = meta?.bodhi?.providerInfo;
+              if (providerInfo !== undefined) {
+                console.info('[acp/auth] BodhiApp probe:', providerInfo);
+              }
             })()
           );
         }

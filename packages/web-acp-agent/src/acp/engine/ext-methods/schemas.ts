@@ -1,7 +1,5 @@
 import { z } from 'zod';
 import {
-  BODHI_GET_SESSION_METHOD,
-  BODHI_GET_SESSION_METHOD_LEGACY,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
@@ -23,8 +21,6 @@ const empty = z.object({}).passthrough();
 // Wire-shape only; handlers own authorisation. Unlisted methods pass through.
 export const EXT_METHOD_SCHEMAS: Record<string, z.ZodType<unknown>> = {
   [BODHI_VOLUMES_LIST_METHOD]: empty,
-  [BODHI_GET_SESSION_METHOD]: sessionIdParam,
-  [BODHI_GET_SESSION_METHOD_LEGACY]: sessionIdParam,
   [BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSetParams,
   [BODHI_SESSIONS_DELETE_METHOD]: sessionIdParam,
 };

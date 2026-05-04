@@ -15,9 +15,11 @@ import type {
   SetSessionModelResponse,
 } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import { walkEntries } from '../engine/replay';
+import { reconstructMessages, walkEntries } from '../engine/replay';
 import { writeFeature } from '../../agent/internal/feature-prefs';
+import { isServerEnabled } from '../../storage/mcp-toggle-shape';
 import { type BodhiLoadSessionMeta, type BodhiSessionInfoMeta } from '../../wire';
+import { decodeCursor, encodeCursor } from './list-sessions-cursor';
 import { buildFeatureConfigOptions, configIdToFeatureKey } from '../feature-config';
 import { extractSessionMeta, filterHttpServers, toWireMcpToggles } from '../wire-utils';
 import {
@@ -73,7 +75,15 @@ export async function handleLoadSession(
   if (!row) {
     throw new Error(`session/load: unknown session '${params.sessionId}'`);
   }
-  const mcpServers = filterHttpServers(params.mcpServers ?? []);
+  // Agent owns toggle application: read stored toggles and drop any
+  // server marked disabled. The host passes the full composed list and
+  // doesn't need to know which servers are off — the worker-side
+  // toggles are the source of truth. Per-tool toggles still apply
+  // downstream in `mcpToolsForSession`.
+  const toggles = await ctx.runtime.readMcpToggles(params.sessionId);
+  const mcpServers = filterHttpServers(params.mcpServers ?? []).filter(cfg =>
+    isServerEnabled(toggles, cfg.name)
+  );
   const sessionMeta = extractSessionMeta(params._meta);
   const existing = ctx.runtime.getSession(params.sessionId);
   if (existing) {
@@ -91,10 +101,6 @@ export async function handleLoadSession(
 
   const entries = await store.readEntries(params.sessionId);
   let lastTurnMessages: AgentMessage[] | undefined;
-  // TODO(web-acp TECHDEBT): `walkEntries` replays notifications + turns only;
-  // built-in rows are merged client-side from `bodhi/getSession`. Fold that
-  // transcript into loadSession replay (or walk `builtin` entries here) to
-  // drop the extra round-trip — see packages/web-acp/TECHDEBT.md.
   await walkEntries(entries, {
     notification: async payload => {
       // sendRawNotification bypasses persistence — store already has this row.
@@ -124,10 +130,10 @@ export async function handleLoadSession(
   if (modelState) response.models = modelState;
   const featureSnapshot = await ctx.runtime.readFeatures(params.sessionId);
   response.configOptions = buildFeatureConfigOptions(featureSnapshot);
-  const toggles = await ctx.runtime.readMcpToggles(params.sessionId);
   const meta: BodhiLoadSessionMeta = {
     title: row.title,
     mcpToggles: toWireMcpToggles(toggles),
+    messages: reconstructMessages(entries),
   };
   response._meta = { bodhi: meta };
   return response;
@@ -135,15 +141,20 @@ export async function handleLoadSession(
 
 export async function handleListSessions(
   ctx: AcpAdapterContext,
-  _params: ListSessionsRequest
+  params: ListSessionsRequest
 ): Promise<ListSessionsResponse> {
   const store = ctx.services.store;
   if (!store) {
     throw new Error('session/list: server has no session store configured');
   }
-  // Unpaginated — `sessionCapabilities.list = {}` does not advertise cursor support.
-  const summaries = await store.listSummaries();
-  const sessions: SessionInfo[] = summaries.map(row => {
+  // Cursor is base64(`page=N&per_page=10&sort_by=updated_at&sort_seq=desc`).
+  // Bad cursor → defaults to page 1 (lenient decode).
+  const cursor = decodeCursor(params.cursor);
+  const { rows, total } = await store.listSummariesPage({
+    page: cursor.page,
+    perPage: cursor.perPage,
+  });
+  const sessions: SessionInfo[] = rows.map(row => {
     const meta: BodhiSessionInfoMeta = {
       turnCount: row.turnCount,
       lastModelId: row.lastModelId,
@@ -157,7 +168,12 @@ export async function handleListSessions(
       _meta: { bodhi: meta },
     };
   });
-  return { sessions };
+  const consumed = cursor.page * cursor.perPage;
+  const response: ListSessionsResponse = { sessions };
+  if (consumed < total) {
+    response.nextCursor = encodeCursor({ ...cursor, page: cursor.page + 1 });
+  }
+  return response;
 }
 
 export async function handleCloseSession(
@@ -200,18 +216,15 @@ export async function handleSetSessionConfigOption(
   if (!ctx.services.preferences) {
     throw new Error('setSessionConfigOption: preference store unavailable');
   }
-  // Accept stable-schema 'on'/'off' and legacy boolean from older clients.
   const value = params.value;
   let nextBool: boolean;
-  if (typeof value === 'boolean') {
-    nextBool = value;
-  } else if (value === 'on') {
+  if (value === 'on') {
     nextBool = true;
   } else if (value === 'off') {
     nextBool = false;
   } else {
     throw new Error(
-      `setSessionConfigOption: configId '${params.configId}' value must be 'on' | 'off' (or legacy boolean)`
+      `setSessionConfigOption: configId '${params.configId}' value must be 'on' | 'off'`
     );
   }
   const next = await writeFeature(ctx.services.preferences, params.sessionId, featureKey, nextBool);

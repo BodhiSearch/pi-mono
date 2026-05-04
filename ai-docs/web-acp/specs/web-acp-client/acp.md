@@ -56,14 +56,12 @@ Constructor takes a `ClientSideConnection`. Members:
 | `initialize()` | `:54` | Calls `conn.initialize` with `protocolVersion: PROTOCOL_VERSION` and `clientCapabilities: {}`. Architecture is agent-owned filesystem (volumes mount inside the worker); the `fs/*` IDE seam was dropped. Logs a `console.warn` when the agent advertises a different protocol version. |
 | `authenticate({ token, baseUrl })` | `:73` | `conn.authenticate({ methodId: BODHI_AUTH_METHOD_ID, _meta: { token, baseUrl } })`. |
 | `setSessionModel(sessionId, modelId)` | `:80` | Wraps `conn.unstable_setSessionModel({ sessionId, modelId })`. The agent updates `SessionState.currentModelId` (see agent's [`acp.md`](../web-acp-agent/acp.md) § handlers). |
-| `listSessions()` | `:85` | Wraps SDK's `Agent.listSessions({})` and **flattens** each `SessionInfo` + `_meta.bodhi` into a `SessionInfoView` with numeric timestamps (`updatedAt = Date.parse(info.updatedAt)`, `createdAt`/`turnCount`/`lastModelId` read from `_meta.bodhi`). The picker UI consumes the flat shape. |
-| `newSession(mcpServers, sessionMeta?)` | `:101` | `conn.newSession({ cwd: '/', mcpServers: toMcpServers(mcpServers), _meta?.bodhi })`. Returns the SDK `NewSessionResponse` (carries `models?` + `configOptions`). |
-| `closeSession(sessionId)` | `:113` | `conn.closeSession({ sessionId })` — releases in-memory resources; the persisted row remains for `loadSession`. The runtime's `pagehide`/`beforeunload` hook calls this for the active session. |
-| `loadSession(sessionId, mcpServers, sessionMeta?)` | `:117` | Same shape, `conn.loadSession`. Returns the SDK `LoadSessionResponse` (carries `models?`, `configOptions`, `_meta.bodhi.{title, mcpToggles}`). |
-| `getSession(sessionId)` | `:130` | `conn.extMethod(BODHI_GET_SESSION_METHOD, { sessionId })` → `BodhiGetSessionResponse`. Used after `loadSession` to rebuild the muted-builtin transcript. |
-| `deleteSession(sessionId)` | `:142` | `conn.extMethod(BODHI_SESSIONS_DELETE_METHOD, { sessionId })` → `boolean`. Idempotent on missing rows. |
-| `listVolumes()` | `:148` | `conn.extMethod(BODHI_VOLUMES_LIST_METHOD, {})` → `BodhiVolumeDescriptor[]`. |
-| `setSessionConfigOption(sessionId, configId, value)` | `:154` | Wraps SDK's `conn.setSessionConfigOption({ sessionId, configId, value })`. The host always sends the stable `'on'` / `'off'` string schema; the agent accepts a legacy boolean too. See [`features.md`](./features.md). |
+| `listSessions(cursor?)` | `:85` | Wraps SDK's `Agent.listSessions({ cursor? })`. **Flattens** each `SessionInfo` + `_meta.bodhi` into a `SessionInfoView` with numeric timestamps and returns `{sessions, nextCursor: string \| null}`. The picker fetches page 1 via `refreshSessions` and appends subsequent pages via `loadMoreSessions(cursor)` — see `useAcpSession`. |
+| `newSession(mcpServers, sessionMeta?)` | Wraps `conn.newSession({ cwd: '/', mcpServers: toMcpServers(mcpServers), _meta?.bodhi })`. Returns the SDK `NewSessionResponse` (carries `models?` + `configOptions`). |
+| `closeSession(sessionId)` | `conn.closeSession({ sessionId })` — releases in-memory resources; the persisted row remains for `loadSession`. The runtime's `pagehide`/`beforeunload` hook calls this for the active session. |
+| `loadSession(sessionId, mcpServers, sessionMeta?)` | Same shape, `conn.loadSession`. Returns the SDK `LoadSessionResponse` (carries `models?`, `configOptions`, `_meta.bodhi.{title, mcpToggles, messages}` — the agent walks `'turn'` + `'builtin'` entries on replay and stamps the rebuilt transcript on `_meta.bodhi.messages`). |
+| `deleteSession(sessionId)` | `conn.extMethod(BODHI_SESSIONS_DELETE_METHOD, { sessionId })` → `boolean`. Idempotent on missing rows. |
+| `setSessionConfigOption(sessionId, configId, value)` | Wraps SDK's `conn.setSessionConfigOption({ sessionId, configId, value })`. The host always sends the stable `'on'` / `'off'` string schema. See [`features.md`](./features.md). |
 | `setMcpToggle(sessionId, serverSlug, value, toolName?)` | `:164` | `conn.extMethod(BODHI_MCP_TOGGLES_SET_METHOD, { sessionId, serverSlug, toolName?, value })`. Server-level when `toolName` is `undefined`. |
 | `prompt(sessionId, text)` | `:179` | `conn.prompt({ sessionId, prompt: [{ type: 'text', text }] })`. Two arguments — model selection rides `setSessionModel` per session, **not** `_meta.bodhi.modelId`. |
 | `cancel(sessionId)` | `:186` | `conn.cancel({ sessionId })`. |
@@ -418,18 +416,19 @@ Explicit re-export barrel (no wildcards). Three groups:
   `BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD`,
   `BODHI_FEATURE_BASH_ENABLED_CONFIG_ID`,
   `BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID`,
-  `BODHI_GET_SESSION_METHOD`,
   `BODHI_MCP_STATE_NOTIFICATION_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
-  `BODHI_SESSIONS_DELETE_METHOD`,
-  `BODHI_VOLUMES_LIST_METHOD`.
+  `BODHI_SESSIONS_DELETE_METHOD`.
 - **Re-exports from `@bodhiapp/web-acp-agent`** (types):
   `BodhiAuthenticateMeta`, `AnyBodhiBuiltinAction`,
-  `BodhiBuiltinTag`, `BodhiGetSessionResponse`,
+  `BodhiBuiltinTag`, `BodhiLoadSessionMeta`,
   `BodhiMcpInstanceDescriptor`, `BodhiMcpTogglesSetResponse`,
   `BodhiSessionInfoMeta`, `BodhiSessionMeta`,
-  `BodhiSessionsDeleteResponse`, `BodhiVolumeDescriptor`,
-  `BodhiVolumesListResponse`.
+  `BodhiSessionsDeleteResponse`. The host wires
+  `_bodhi/volumes/list` through the FSA sidechannel rather than
+  the ACP wire, so neither the constant nor `BodhiVolumesListResponse`
+  is re-exported here — the agent-side handler stays for external
+  ACP clients.
 - **Local view shape** — `SessionInfoView { id, title,
   createdAt, updatedAt, turnCount, lastModelId }` returned by
   `AcpClient.listSessions`.

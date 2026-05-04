@@ -22,7 +22,9 @@ export default function ChatDemo() {
     clearError: clearChatError,
     models,
     sessions,
+    nextSessionsCursor,
     loadSession,
+    loadMoreSessions,
     deleteSession,
     currentSessionId,
     volumes,
@@ -66,8 +68,10 @@ export default function ChatDemo() {
           <SessionPicker
             sessions={sessions}
             activeSessionId={currentSessionId}
+            nextCursor={nextSessionsCursor}
             onSelect={handleSelectSession}
             onDelete={handleDeleteSession}
+            onLoadMore={() => void loadMoreSessions()}
           />
         </div>
       </div>

@@ -84,6 +84,21 @@ export function createInMemorySessionStore(): SessionStore {
         }));
     },
 
+    async listSummariesPage({ page, perPage }) {
+      const sorted = [...rows.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+      const total = sorted.length;
+      const start = Math.max(0, (page - 1) * perPage);
+      const slice = sorted.slice(start, start + perPage).map(row => ({
+        id: row.id,
+        title: row.title,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        turnCount: row.turnCount,
+        lastModelId: row.lastModelId,
+      }));
+      return { rows: slice, total };
+    },
+
     async readEntries(id): Promise<SessionEntry[]> {
       return [...(entries.get(id) ?? [])];
     },

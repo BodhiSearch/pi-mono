@@ -6,7 +6,7 @@ import type {
   McpServerHttp,
   NewSessionResponse,
 } from '@agentclientprotocol/sdk';
-import { EMPTY_MCP_TOGGLES, type SessionInfoView } from '@/acp/index';
+import { EMPTY_MCP_TOGGLES, type BodhiLoadSessionMeta, type SessionInfoView } from '@/acp/index';
 import {
   ensureRuntime,
   getAuthPromise,
@@ -27,7 +27,11 @@ export interface UseAcpSessionResult {
   sessions: SessionInfoView[];
   currentSessionId: string | null;
   isLoadingSession: boolean;
+  /** Cursor for the next page, or `null` when the last page has loaded. */
+  nextSessionsCursor: string | null;
   refreshSessions: () => Promise<void>;
+  /** Append the next page of sessions; no-op if `nextSessionsCursor` is null. */
+  loadMoreSessions: () => Promise<void>;
   ensureSession: () => Promise<string>;
   loadSession: (sessionId: string) => Promise<void>;
   clearMessages: () => void;
@@ -68,6 +72,7 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
   } = deps;
 
   const [sessions, setSessions] = useState<SessionInfoView[]>([]);
+  const [nextSessionsCursor, setNextSessionsCursor] = useState<string | null>(null);
   // Subscribe to the runtime singleton's `_session` so external `setSession` calls
   // (auth-loss effect, cancel path) repaint the picker without local mirror state.
   const currentSessionId = useSyncExternalStore(subscribeToSession, getSession, getSession);
@@ -76,19 +81,42 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
   const refreshSessions = useCallback(async () => {
     if (!isAuthenticated) {
       setSessions([]);
+      setNextSessionsCursor(null);
       return;
     }
     try {
       const runtime = ensureRuntime();
       await runtime.initialize;
-      const list = await runtime.client.listSessions();
+      const { sessions: page, nextCursor } = await runtime.client.listSessions();
       // Re-check auth after the await — auth-loss can fire mid-flight from the prompt-end path.
       if (!isAuthenticated) return;
-      setSessions(list);
+      setSessions(page);
+      setNextSessionsCursor(nextCursor);
     } catch (err) {
       console.error('session/list failed:', err);
     }
   }, [isAuthenticated]);
+
+  const loadMoreSessions = useCallback(async () => {
+    if (!isAuthenticated) return;
+    if (!nextSessionsCursor) return;
+    try {
+      const runtime = ensureRuntime();
+      await runtime.initialize;
+      const { sessions: page, nextCursor } = await runtime.client.listSessions(nextSessionsCursor);
+      if (!isAuthenticated) return;
+      // Append, dedup against any concurrently-deleted ids the picker
+      // might still hold from the previous page.
+      setSessions(prev => {
+        const seen = new Set(prev.map(s => s.id));
+        const additions = page.filter(s => !seen.has(s.id));
+        return additions.length === 0 ? prev : [...prev, ...additions];
+      });
+      setNextSessionsCursor(nextCursor);
+    } catch (err) {
+      console.error('session/list (load-more) failed:', err);
+    }
+  }, [isAuthenticated, nextSessionsCursor]);
 
   // Refresh sessions once auth is in place; list persists across reload
   // because the worker writes to IndexedDB. `refreshSessions` already
@@ -205,17 +233,18 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
             /* swallow — the agent may already have torn the prior session down */
           }
         }
-        // TODO(web-acp TECHDEBT): collapse the bodhi/getSession pre-pass once
-        // loadSession carries transcript + toggles. Today we read Dexie first so
-        // composeCurrentMcpServers can honour stored toggles. See packages/web-acp/TECHDEBT.md.
-        const snapshot = await runtime.client.getSession(sessionId);
-        const toggles = snapshot.mcpToggles ?? { servers: {}, tools: {} };
-        const servers = composeCurrentMcpServers(toggles);
+        // Pass the FULL composed list — agent applies stored toggles
+        // server-side before acquiring connections. The host is no
+        // longer the source of truth for which servers are off.
+        const servers = composeCurrentMcpServers();
         const sessionMeta = composeSessionMeta(
           requestedMcpUrlsRef.current,
           mcpInstancesRef.current
         );
         const loadResponse = await runtime.client.loadSession(sessionId, servers, sessionMeta);
+        const meta = (loadResponse._meta?.bodhi ?? {}) as Partial<BodhiLoadSessionMeta>;
+        const toggles = meta.mcpToggles ?? { servers: {}, tools: {} };
+        const messages = Array.isArray(meta.messages) ? meta.messages : [];
         setSession(sessionId);
         // Drop any in-flight set-model promise owned by the prior session so
         // `sendMessage` doesn't await a stale round-trip and surface a spurious error.
@@ -227,7 +256,7 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
         });
         streamingDispatch({
           type: 'load-end',
-          messages: (snapshot.messages ?? []) as AgentMessage[],
+          messages: messages as AgentMessage[],
         });
         hydrateModelsFromSessionResponse(loadResponse.models);
       } catch (err) {
@@ -316,7 +345,9 @@ export function useAcpSession(deps: UseAcpSessionDeps): UseAcpSessionResult {
     sessions,
     currentSessionId,
     isLoadingSession,
+    nextSessionsCursor,
     refreshSessions,
+    loadMoreSessions,
     ensureSession,
     loadSession,
     clearMessages,

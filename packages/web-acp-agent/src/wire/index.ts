@@ -22,9 +22,6 @@ export type {
 export { AgentSideConnection, ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 
 export const BODHI_AUTH_METHOD_ID = 'bodhi-token';
-export const BODHI_GET_SESSION_METHOD = '_bodhi/session/get';
-/** Deprecated synonym for `_bodhi/session/get`; accepted for one release window. */
-export const BODHI_GET_SESSION_METHOD_LEGACY = 'bodhi/getSession';
 
 export const BODHI_VOLUMES_LIST_METHOD = '_bodhi/volumes/list';
 
@@ -66,25 +63,6 @@ export interface BodhiVolumesListResponse extends Record<string, unknown> {
 export interface BodhiAuthenticateMeta {
   token: string;
   baseUrl: string;
-}
-
-/**
- * Snapshot of a session's UI-ready state — the condensed view the
- * client needs after `session/load` to rebuild the transcript and
- * restore model selection without having to aggregate streamed
- * chunks itself. Sourced from the last `turn` entry in the session
- * store (which records the full conversation after each turn).
- */
-export interface BodhiGetSessionRequest extends Record<string, unknown> {
-  sessionId: string;
-}
-
-export interface BodhiGetSessionResponse extends Record<string, unknown> {
-  sessionId: string;
-  messages: unknown[];
-  lastModelId: string | null;
-  title: string | null;
-  mcpToggles: BodhiMcpToggleSnapshot;
 }
 
 /**
@@ -200,10 +178,20 @@ export interface BodhiSessionInfoMeta {
   createdAt: number;
 }
 
-/** Extras stamped on `_meta.bodhi` of `LoadSessionResponse` (ACP carries neither natively). */
+/**
+ * Extras stamped on `_meta.bodhi` of `LoadSessionResponse`. ACP's stable
+ * `loadSession` response carries `models` + `configOptions` natively;
+ * `title` and `mcpToggles` are UI-affordance fields with no ACP analog.
+ * `messages` carries the full reconstructed transcript (turn-derived
+ * assistant messages interleaved with `'builtin'`-row pairs in
+ * chronological order). Replaces the now-deleted `_bodhi/session/get`
+ * extension method; the host's `streamingReducer` seeds it as the
+ * authoritative transcript on `session/load`.
+ */
 export interface BodhiLoadSessionMeta {
   title?: string | null;
   mcpToggles?: BodhiMcpToggleSnapshot;
+  messages: unknown[];
 }
 
 export const BODHI_MCP_STATE_NOTIFICATION_METHOD = '_bodhi/mcp/state';

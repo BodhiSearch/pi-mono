@@ -87,6 +87,27 @@ export function createStoreFromDb(db: SessionStoreDb): SessionStore {
       }));
     },
 
+    async listSummariesPage({ page, perPage }) {
+      const total = await db.sessions.count();
+      const rows = await db.sessions
+        .orderBy('updatedAt')
+        .reverse()
+        .offset(Math.max(0, (page - 1) * perPage))
+        .limit(perPage)
+        .toArray();
+      return {
+        rows: rows.map(row => ({
+          id: row.id,
+          title: row.title,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          turnCount: row.turnCount,
+          lastModelId: row.lastModelId,
+        })),
+        total,
+      };
+    },
+
     async readEntries(id) {
       return db.entries.where('sessionId').equals(id).sortBy('seq');
     },

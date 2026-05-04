@@ -1,5 +1,6 @@
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import type {
+  AuthenticateResponse,
   ClientSideConnection,
   InitializeResponse,
   LoadSessionResponse,
@@ -11,18 +12,13 @@ import type {
 } from '@agentclientprotocol/sdk';
 import {
   BODHI_AUTH_METHOD_ID,
-  BODHI_GET_SESSION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
-  BODHI_VOLUMES_LIST_METHOD,
   type BodhiAuthenticateMeta,
-  type BodhiGetSessionResponse,
   type BodhiMcpTogglesSetResponse,
   type BodhiSessionInfoMeta,
   type BodhiSessionMeta,
   type BodhiSessionsDeleteResponse,
-  type BodhiVolumeDescriptor,
-  type BodhiVolumesListResponse,
   type SessionInfoView,
 } from './index';
 
@@ -54,11 +50,7 @@ export class AcpClient {
   async initialize(): Promise<InitializeResponse> {
     const response = await this.#conn.initialize({
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        // Advertise fs/* for external ACP agents / IDE integrations.
-        // Built-in bash does not use these entry points (see volumes.md).
-        fs: { readTextFile: true, writeTextFile: true },
-      },
+      clientCapabilities: {},
     });
     if (response.protocolVersion !== PROTOCOL_VERSION) {
       console.warn(
@@ -70,8 +62,8 @@ export class AcpClient {
     return response;
   }
 
-  async authenticate(args: BodhiAuthenticateMeta): Promise<void> {
-    await this.#conn.authenticate({
+  async authenticate(args: BodhiAuthenticateMeta): Promise<AuthenticateResponse> {
+    return this.#conn.authenticate({
       methodId: BODHI_AUTH_METHOD_ID,
       _meta: { token: args.token, baseUrl: args.baseUrl },
     });
@@ -81,10 +73,19 @@ export class AcpClient {
     await this.#conn.unstable_setSessionModel({ sessionId, modelId });
   }
 
-  /** Flattens `SessionInfo._meta.bodhi` extras into a numeric-timestamp view. */
-  async listSessions(): Promise<SessionInfoView[]> {
-    const response = await this.#conn.listSessions({});
-    return (response.sessions ?? []).map(info => {
+  /**
+   * Cursor-paginated list of sessions, sorted by `updatedAt` desc.
+   * Page size is fixed at 10 (encoded inside the agent's cursor).
+   * Pass the previous response's `nextCursor` to fetch the next page;
+   * `nextCursor: null` means the last page has been reached.
+   * Flattens `SessionInfo._meta.bodhi` extras into a numeric-timestamp view.
+   */
+  async listSessions(cursor?: string): Promise<{
+    sessions: SessionInfoView[];
+    nextCursor: string | null;
+  }> {
+    const response = await this.#conn.listSessions(cursor ? { cursor } : {});
+    const sessions = (response.sessions ?? []).map(info => {
       const meta = (info._meta?.bodhi ?? {}) as Partial<BodhiSessionInfoMeta>;
       const updatedAtMs = info.updatedAt ? Date.parse(info.updatedAt) : NaN;
       return {
@@ -96,6 +97,7 @@ export class AcpClient {
         lastModelId: typeof meta.lastModelId === 'string' ? meta.lastModelId : null,
       };
     });
+    return { sessions, nextCursor: response.nextCursor ?? null };
   }
 
   async newSession(
@@ -127,11 +129,6 @@ export class AcpClient {
     });
   }
 
-  async getSession(sessionId: string): Promise<BodhiGetSessionResponse> {
-    const raw = await this.#conn.extMethod(BODHI_GET_SESSION_METHOD, { sessionId });
-    return raw as BodhiGetSessionResponse;
-  }
-
   /**
    * Persistently remove a session. Resolves with `true` if the worker
    * found and deleted a row, `false` if it had no record (idempotent
@@ -143,12 +140,6 @@ export class AcpClient {
     const raw = await this.#conn.extMethod(BODHI_SESSIONS_DELETE_METHOD, { sessionId });
     const payload = raw as BodhiSessionsDeleteResponse;
     return payload.deleted === true;
-  }
-
-  async listVolumes(): Promise<BodhiVolumeDescriptor[]> {
-    const raw = await this.#conn.extMethod(BODHI_VOLUMES_LIST_METHOD, {});
-    const payload = raw as BodhiVolumesListResponse;
-    return payload.volumes ?? [];
   }
 
   async setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void> {

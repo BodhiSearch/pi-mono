@@ -5,8 +5,11 @@ import type { SessionInfoView } from '@/acp/index';
 interface SessionPickerProps {
   sessions: SessionInfoView[];
   activeSessionId: string | null;
+  /** Cursor for the next page; `null` once the last page has loaded. */
+  nextCursor?: string | null;
   onSelect: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
+  onLoadMore?: () => void;
 }
 
 /**
@@ -19,8 +22,10 @@ interface SessionPickerProps {
 export default function SessionPicker({
   sessions,
   activeSessionId,
+  nextCursor,
   onSelect,
   onDelete,
+  onLoadMore,
 }: SessionPickerProps) {
   return (
     <aside
@@ -80,6 +85,18 @@ export default function SessionPicker({
           })}
         </ul>
       )}
+      {nextCursor && onLoadMore ? (
+        <div className="px-3 py-2">
+          <button
+            type="button"
+            data-testid="session-picker-load-more"
+            onClick={onLoadMore}
+            className="w-full text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded px-2 py-1.5 transition-colors"
+          >
+            Load more
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }

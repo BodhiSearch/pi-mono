@@ -12,14 +12,14 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AgentSideConnection,
+  LoadSessionResponse,
   PromptRequest,
   SessionNotification,
 } from '@agentclientprotocol/sdk';
 import {
-  BODHI_GET_SESSION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
-  type BodhiGetSessionResponse,
+  type BodhiLoadSessionMeta,
   type BodhiMcpTogglesSetResponse,
   type BodhiProvider,
   type BodhiSessionsDeleteResponse,
@@ -95,11 +95,11 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
     db.close();
   });
 
-  it('bodhi/getSession returns an empty toggle snapshot when no overrides are stored', async () => {
-    const raw = await adapter.extMethod(BODHI_GET_SESSION_METHOD, { sessionId: 's1' });
-    const resp = raw as BodhiGetSessionResponse;
-    expect(resp.sessionId).toBe('s1');
-    expect(resp.mcpToggles).toEqual({ servers: {}, tools: {} });
+  it('loadSession returns an empty toggle snapshot when no overrides are stored', async () => {
+    const resp = await adapter.loadSession({ sessionId: 's1', cwd: '/', mcpServers: [] });
+    const meta = resp._meta?.bodhi as BodhiLoadSessionMeta;
+    expect(meta.mcpToggles).toEqual({ servers: {}, tools: {} });
+    expect(meta.messages).toEqual([]);
   });
 
   it('_bodhi/mcp/toggles/set stores a server-level override and returns the snapshot', async () => {
@@ -112,9 +112,9 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
     expect(resp.toggles.servers).toEqual({ everything: false });
     expect(resp.toggles.tools).toEqual({});
 
-    const getRaw = await adapter.extMethod(BODHI_GET_SESSION_METHOD, { sessionId: 's1' });
-    const getResp = getRaw as BodhiGetSessionResponse;
-    expect(getResp.mcpToggles.servers).toEqual({ everything: false });
+    const loadResp = await adapter.loadSession({ sessionId: 's1', cwd: '/', mcpServers: [] });
+    const meta = loadResp._meta?.bodhi as BodhiLoadSessionMeta;
+    expect(meta.mcpToggles?.servers).toEqual({ everything: false });
   });
 
   it('_bodhi/mcp/toggles/set stores a per-tool override when toolName is provided', async () => {
@@ -164,7 +164,30 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
     );
   });
 
-  it('bodhi/getSession reflects per-server + per-tool overrides accumulated via set calls', async () => {
+  it('listSessions paginates with a base64 cursor and emits nextCursor until exhausted', async () => {
+    // beforeEach already created 's1' (at Date.now()); pin extras above so
+    // the picker sees them on top of 's1' in updatedAt-desc order. 14 extras
+    // → 15 total sessions, crossing the 10-per-page boundary.
+    const baseTs = Date.now() + 10_000;
+    for (let i = 0; i < 14; i++) {
+      await store.createSession(`extra-${i}`, baseTs + i);
+    }
+
+    const firstPage = await adapter.listSessions({});
+    expect(firstPage.sessions).toHaveLength(10);
+    expect(firstPage.nextCursor).toBeDefined();
+    // updatedAt-desc; the most-recently-created sessions land first.
+    expect(firstPage.sessions[0].sessionId).toBe('extra-13');
+
+    const secondPage = await adapter.listSessions({ cursor: firstPage.nextCursor });
+    // 15 total = 10 + 5 — second page is partial; nextCursor must be absent.
+    expect(secondPage.sessions).toHaveLength(5);
+    expect(secondPage.nextCursor).toBeUndefined();
+    // 's1' was created at Date.now(), well below baseTs, so it lands last.
+    expect(secondPage.sessions[secondPage.sessions.length - 1].sessionId).toBe('s1');
+  });
+
+  it('loadSession reflects per-server + per-tool overrides accumulated via set calls', async () => {
     await adapter.extMethod(BODHI_MCP_TOGGLES_SET_METHOD, {
       sessionId: 's1',
       serverSlug: 'everything',
@@ -176,9 +199,9 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
       toolName: 'echo',
       value: false,
     });
-    const raw = await adapter.extMethod(BODHI_GET_SESSION_METHOD, { sessionId: 's1' });
-    const resp = raw as BodhiGetSessionResponse;
-    expect(resp.mcpToggles).toEqual({
+    const resp = await adapter.loadSession({ sessionId: 's1', cwd: '/', mcpServers: [] });
+    const meta = resp._meta?.bodhi as BodhiLoadSessionMeta;
+    expect(meta.mcpToggles).toEqual({
       servers: { everything: true },
       tools: { everything: { echo: false } },
     });
@@ -654,13 +677,17 @@ describe('AcpAgentAdapter built-in slash commands', () => {
     expect(inline.prompt).toHaveBeenCalledWith('real follow-up');
   });
 
-  it('bodhi/getSession interleaves built-in entries with tagged user+assistant pairs', async () => {
+  it('loadSession interleaves built-in entries with tagged user+assistant pairs', async () => {
     const { sessionId } = await adapter.newSession({ cwd: '/', mcpServers: [] });
     await adapter.prompt({ sessionId, prompt: [{ type: 'text', text: '/help' }] });
-    const raw = await adapter.extMethod(BODHI_GET_SESSION_METHOD, { sessionId });
-    const resp = raw as BodhiGetSessionResponse;
-    expect(resp.messages).toHaveLength(2);
-    const [u, a] = resp.messages as Array<{
+    const resp: LoadSessionResponse = await adapter.loadSession({
+      sessionId,
+      cwd: '/',
+      mcpServers: [],
+    });
+    const meta = resp._meta?.bodhi as BodhiLoadSessionMeta;
+    expect(meta.messages).toHaveLength(2);
+    const [u, a] = meta.messages as Array<{
       role: string;
       _builtin?: { command: string };
       content: Array<{ text: string }>;

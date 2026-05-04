@@ -103,103 +103,23 @@ store returns, and that the host's `setMcpToggles(toggles)` call in
 `useAcpSession.loadSession` actually sees the per-tool patch (not
 just the server-level patch).
 
-## `Agent.listSessions` returns the full list (no pagination)
+## ~~`Agent.listSessions` returns the full list~~ — fixed (post-2026-05-04 sweep)
 
-**What.** `agent-client-protocol` `session-list.mdx` documents the
-standard `listSessions` method as supporting `cursor` + `nextCursor`
-pagination. Today our agent's `listSessions` ignores `cursor` from
-the request and returns the full set in a single response; the
-host's `client.listSessions` doesn't pass a cursor either. The
-agent advertises `sessionCapabilities.list = {}` (a plain capability
-object — no field that asserts pagination) so an external ACP
-client SHOULD treat us as "supports list, returns full set in one
-shot". This is option (b) from agent-review **A6**.
+Cursor pagination shipped. Cursor encoding is base64(`page=N&per_page=10&sort_by=updated_at&sort_seq=desc`); see `packages/web-acp-agent/src/acp/handlers/list-sessions-cursor.ts`. `SessionStore` grew `listSummariesPage({page, perPage}): {rows, total}` (Dexie + in-memory impls). Host's `AcpClient.listSessions(cursor?)` returns `{sessions, nextCursor}`; `useAcpSession` exposes `loadMoreSessions` and `nextSessionsCursor`; `SessionPicker` shows a "Load more" button while `nextCursor !== null`.
 
-**Where.**
-- `packages/web-acp-agent/src/acp/agent-adapter.ts` — `listSessions`
-  ignores `params.cursor` / does not return `nextCursor`.
-- `packages/web-acp-agent/src/acp/agent-adapter.ts` — `initialize`
-  sets `agentCapabilities.sessionCapabilities.list = {}` (no
-  pagination flag is added to that object).
-- `packages/web-acp/src/acp/client.ts` — `listSessions` calls
-  `this.#conn.listSessions({})` without a cursor.
+## ~~M5 deferred: `bodhi/getSession` round-trip~~ — fixed (post-2026-05-04 sweep)
 
-**Why it matters.** Today the host shows every persisted session in
-one picker; the per-tab Dexie row count is small enough that
-unpaginated transit is fine. If a future product wants to page the
-picker (or if an external ACP client expects pagination semantics
-because the spec advertises them), we'll need to plumb opaque
-cursors through `SessionStore.listSummaries` and
-`agent-adapter.listSessions`.
+Migrated to the **envelope-ride** path (Option A from the prior fix-sketch). Agent's `handleLoadSession` calls `reconstructMessages(entries)` (lifted from the deleted `get-session.ts`) and stamps the rebuilt transcript on `LoadSessionResponse._meta.bodhi.messages` alongside the already-present `title` and `mcpToggles`. Host's `useAcpSession.loadSession` reads that field directly — no pre-pass `getSession` round-trip. The `_bodhi/session/get` ext-method, its un-prefixed legacy alias `bodhi/getSession`, the `BodhiGetSessionRequest`/`BodhiGetSessionResponse` types, and the `AcpClient.getSession` host wrapper were all deleted. Server-level MCP toggle filtering also moved agent-side: `handleLoadSession` reads stored toggles before `acquireMcpConnections` and drops disabled servers from the request's `mcpServers` list.
 
-**Fix sketch.** When pagination is required, extend
-`SessionStore.listSummaries(opts?: { cursor?: string; limit?: number })`,
-have the agent decode the cursor (offset or last-id token) and
-return `nextCursor` when there are more rows. Host's
-`AcpClient.listSessions` grows a `cursor?` parameter and
-`SessionInfoView` consumers either page or accumulate.
+## Future: chunk-stream replay (Option B)
 
-## M5 deferred: `bodhi/getSession` round-trip not yet collapsed
+**What.** A purer alternative to the envelope ride above: have the agent emit synthetic `user_message_chunk` + `agent_message_chunk` notifications during `loadSession` replay, and drop the host reducer's `isReplaying` early-return guard. The reducer becomes the single source of truth for transcript reconstruction; `_meta.bodhi.messages` retires.
 
-**What.** The plan at
-`ai-docs/plans/reviewed-the-acp-compliance-report-peaceful-journal.md`
-called for M5 to drop the pre-`session/load` `bodhi/getSession`
-round-trip and have the host reducer fold messages from the
-notification re-emit stream during `loadSession`. M5 was deferred
-after analysis showed the proposed approach is incomplete.
+**Why it matters.** Cleaner ACP-canonical posture — `session/update` notifications already carry the rendered transcript shape, and a replay that emits them folds naturally into the existing reducer arms. Eliminates the `messages: unknown[]` ride on the load response.
 
-**Where.**
-- `packages/web-acp-agent/src/acp/agent-adapter.ts:loadSession` —
-  re-emits only `kind === 'notification'` entries via
-  `sendRawNotification`. `'turn'` and `'builtin'` entries are not
-  re-emitted; they are consulted only for inline-runtime restore.
-- `packages/web-acp-agent/src/acp/engine/ext-methods/get-session.ts`
-  — still serves `bodhi/getSession`, which builds the rendered
-  transcript from `'turn'` (cumulative `finalMessages`) and
-  `'builtin'` (synthesised user+assistant pair) entries.
-- `packages/web-acp/src/hooks/useAcpSession.ts:loadSession` —
-  still issues a pre-load `runtime.client.getSession(sessionId)`
-  to fetch messages, then dispatches `'load-end'` with that array.
-- `packages/web-acp/src/acp/streaming-reducer.ts` — the
-  `state.isReplaying` guard still suppresses chunks during
-  replay; the assumption is that the snapshot is the source of
-  truth for the rendered transcript.
+**Why not now.** Five non-trivial correctness gates: ordering between `'turn'` rows (which arrive AFTER their constituent notifications) and a synthetic user-message chunk that needs to arrive BEFORE; unique `messageId` selection across replayed turns; per-turn boundary flushes (without one, only the last replayed turn lands in `messages`); cancelled-turn handling (orphan `'notification'` chunks with no closing `'turn'` row leave tool calls stuck on `in_progress`); builtin synthesis (live builtins emit chunks without `messageId`, so synthetic ones need unique ids). Each is solvable but the bundle is medium risk and ~3-5 days of careful work.
 
-**Why it matters.** The notification stream alone cannot
-reconstruct the rendered transcript: user message text rides on
-the agent-side `prompt` request body (not a notification) and is
-only persisted in the `'turn'` entry, while built-in slash
-commands persist as `'builtin'` entries with no corresponding
-notification. A reducer that folded only `'notification'` payloads
-during replay would render assistant chunks + tool calls but
-silently drop user messages and built-in pairs. The cleaner
-alternative is to ride the rendered messages on
-`LoadSessionResponse._meta.bodhi.messages` (alongside the
-already-present `title` and `mcpToggles`), which collapses the
-round-trip in one envelope without inventing replay-mode reducer
-state. Either path is fine — neither is shipped.
-
-**Fix sketch.** Two viable shapes:
-
-1. **Envelope ride (simplest).** Add `messages?: unknown[]` to
-   `BodhiLoadSessionMeta` in
-   `packages/web-acp-agent/src/wire/index.ts:213`. In the agent's
-   `loadSession`, build the same `messages[]` that `getSession`
-   builds today and stamp it on `_meta.bodhi.messages`. In the
-   host's `useAcpSession.loadSession`, read that field instead of
-   issuing `client.getSession(...)`. Drop `BODHI_GET_SESSION_METHOD`
-   + the `get-session.ts` ext-method handler + `client.getSession`.
-   Reducer untouched.
-
-2. **Replay-folding reducer (closer to original plan).** Have the
-   agent's replay re-emit synthetic `user_message_chunk`
-   notifications for every `'turn'` entry (one chunk per user
-   message text) and for every `'builtin'` entry (user + assistant
-   pair). The reducer learns a `replayBuffer` slice that
-   accumulates folded chunks during replay and flushes into
-   `state.messages` on `'load-end'`. More invasive and risks
-   ordering bugs, but keeps the reducer's "single source of
-   truth = notifications" property.
+**When to revisit.** If/when the reducer needs a deeper refactor anyway (e.g. for true streamed multi-modal content), fold this in. Until then the envelope ride is correct and small.
 
 ## model-fallback when `lastModelId` disappears — no e2e harness
 

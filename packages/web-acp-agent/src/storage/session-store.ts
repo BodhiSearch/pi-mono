@@ -79,6 +79,16 @@ export function deriveTitle(userText: string): string {
   return `${single.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
 }
 
+/**
+ * Pagination contract for `listSummariesPage`. Page is 1-indexed.
+ * `total` is the count across all pages (post-filter), used by the
+ * handler to decide whether to emit a `nextCursor`.
+ */
+export interface SessionSummaryPage {
+  rows: SessionSummary[];
+  total: number;
+}
+
 export interface SessionStore {
   createSession(id: string, at?: number): Promise<void>;
   recordNotification(id: string, notification: SessionNotification, at?: number): Promise<void>;
@@ -90,7 +100,10 @@ export interface SessionStore {
     at?: number
   ): Promise<void>;
   recordBuiltin(id: string, payload: BuiltinPayload, at?: number): Promise<void>;
+  /** Full unpaginated list, sorted by `updatedAt` desc. */
   listSummaries(): Promise<SessionSummary[]>;
+  /** Paginated read, sorted by `updatedAt` desc. Page is 1-indexed. */
+  listSummariesPage(opts: { page: number; perPage: number }): Promise<SessionSummaryPage>;
   readEntries(id: string): Promise<SessionEntry[]>;
   getSession(id: string): Promise<SessionRow | undefined>;
   setTitle(id: string, title: string): Promise<void>;

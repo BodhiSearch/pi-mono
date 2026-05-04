@@ -102,8 +102,6 @@ import path production hosts should reach for. Notable groupings
   `isServerEnabled`, `isToolEnabled`.
 - **Wire constants.** Re-exported from `wire/index.ts`:
   `BODHI_AUTH_METHOD_ID`,
-  `BODHI_GET_SESSION_METHOD`,
-  `BODHI_GET_SESSION_METHOD_LEGACY`,
   `BODHI_VOLUMES_LIST_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
   `BODHI_SESSIONS_DELETE_METHOD`,
@@ -114,7 +112,6 @@ import path production hosts should reach for. Notable groupings
   `BODHI_FEATURE_CONFIG_CATEGORY`.
 - **Wire types.** `BodhiAuthenticateMeta`,
   `BodhiAuthenticateResponseMeta`,
-  `BodhiGetSessionRequest/Response`,
   `BodhiVolumeDescriptor`, `BodhiVolumesListResponse`,
   `BodhiMcpToggleSnapshot`,
   `BodhiMcpTogglesSetRequest/Response`,
@@ -167,6 +164,15 @@ import path production hosts should reach for. Notable groupings
 > `provider-agnostic-embed-simplification` plan. The connectivity
 > probe now rides as a side effect of `LlmProvider.setAuthToken`,
 > surfacing on `AuthenticateResponse._meta.bodhi.providerInfo`.
+>
+> `_bodhi/session/get` (and its legacy un-prefixed alias
+> `bodhi/getSession`) removed in the post-2026-05-04 ACP-compliance
+> sweep. Transcript + toggles ride natively on
+> `LoadSessionResponse._meta.bodhi.{messages, mcpToggles, title}`
+> per `BodhiLoadSessionMeta`. `Agent.listSessions` now honours
+> cursor pagination — cursor is base64(`page=N&per_page=10&
+> sort_by=updated_at&sort_seq=desc`); see
+> `acp/handlers/list-sessions-cursor.ts`.
 
 ## Folder layout
 
@@ -196,10 +202,9 @@ packages/web-acp-agent/src/
 │       ├── builtin-dispatch.ts    # tryHandleBuiltin (early-return before LLM)
 │       ├── replay.ts              # walkEntries(entries, callbacks) — shared replay walker
 │       ├── types.ts               # SessionState, ExtMethodHost
-│       └── ext-methods/           # _bodhi/* extension methods + legacy bodhi/getSession
+│       └── ext-methods/           # _bodhi/* extension methods
 │           ├── index.ts           # dispatchExtMethod(method, params, host)
 │           ├── schemas.ts         # Zod validators
-│           ├── get-session.ts     # _bodhi/session/get + bodhi/getSession (legacy alias)
 │           ├── volumes-list.ts    # _bodhi/volumes/list
 │           ├── mcp-toggles-set.ts # _bodhi/mcp/toggles/set (writes through PreferenceStore)
 │           └── sessions-delete.ts # _bodhi/sessions/delete

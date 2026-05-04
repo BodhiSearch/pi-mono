@@ -110,18 +110,15 @@ barrel rather than directly from `@bodhiapp/web-acp-agent`.
   `BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD`,
   `BODHI_FEATURE_BASH_ENABLED_CONFIG_ID`,
   `BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID`,
-  `BODHI_GET_SESSION_METHOD`,
   `BODHI_MCP_STATE_NOTIFICATION_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
-  `BODHI_SESSIONS_DELETE_METHOD`,
-  `BODHI_VOLUMES_LIST_METHOD`.
+  `BODHI_SESSIONS_DELETE_METHOD`.
 - **Re-exports from `@bodhiapp/web-acp-agent`** (types):
   `BodhiAuthenticateMeta`, `AnyBodhiBuiltinAction`,
-  `BodhiBuiltinTag`, `BodhiGetSessionResponse`,
+  `BodhiBuiltinTag`, `BodhiLoadSessionMeta`,
   `BodhiMcpInstanceDescriptor`, `BodhiMcpTogglesSetResponse`,
   `BodhiSessionInfoMeta`, `BodhiSessionMeta`,
-  `BodhiSessionsDeleteResponse`, `BodhiVolumeDescriptor`,
-  `BodhiVolumesListResponse`.
+  `BodhiSessionsDeleteResponse`.
 - **Local view shape** (defined here):
   `SessionInfoView { id, title, createdAt, updatedAt,
   turnCount, lastModelId }` — the flattened

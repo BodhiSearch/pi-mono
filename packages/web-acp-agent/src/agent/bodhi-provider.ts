@@ -99,8 +99,8 @@ export class BodhiProvider implements LlmProvider {
   /**
    * Fetch BodhiApp's `/bodhi/v1/info` under the current bearer token and
    * return the response body verbatim. Surfaces snake_case fields
-   * (`client_id`, `status`, `version`, `url`) to the caller — the
-   * `_bodhi/server/info` extension method passes through unchanged.
+   * (`client_id`, `status`, `version`, `url`) to the caller; consumed by
+   * `setAuthToken` to populate `AuthenticateResponse._meta.bodhi.providerInfo`.
    *
    * Throws if `setAuthToken` has not been called with valid credentials,
    * or if the HTTP call returns a non-2xx response.

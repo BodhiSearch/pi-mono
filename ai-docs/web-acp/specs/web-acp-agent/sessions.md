@@ -31,13 +31,17 @@ emits. Replay = re-execute every persisted notification +
 reseed the inline agent's history from the last `'turn'`
 entry.
 
-> **TECHDEBT (M5 deferred — `bodhi/getSession` collapse).** The
-> built-in transcript still requires a follow-up
-> `_bodhi/session/get` round-trip after `loadSession` resolves
-> because `walkEntries` in `handleLoadSession` replays
-> notifications + turns only. The TODO at
-> `acp/handlers/session-crud.ts:93–96` tracks the consolidation;
-> see also `packages/web-acp/TECHDEBT.md` § "M5 deferred".
+> **`session/load` carries the full transcript natively.**
+> `handleLoadSession` walks all three entry kinds (`'notification'`
+> for streamed `session/update` replay, `'turn'` for the
+> inline-agent's LLM history reseed, `'builtin'` for muted
+> slash-command exchanges) and stamps the rebuilt `messages`
+> array on `LoadSessionResponse._meta.bodhi.messages`
+> alongside `mcpToggles` and `title`. The reconstruction logic
+> lives in `acp/engine/replay.ts:reconstructMessages`. The
+> previous `_bodhi/session/get` extension method (and its
+> un-prefixed legacy alias `bodhi/getSession`) was deleted in
+> the post-2026-05-04 ACP-compliance sweep.
 
 ## `SessionStore` interface — `storage/session-store.ts:115`
 
@@ -63,6 +67,10 @@ interface SessionStore {
         at?: number,
     ): Promise<void>;
     listSummaries(): Promise<SessionSummary[]>;
+    listSummariesPage(opts: { page: number; perPage: number }): Promise<{
+        rows: SessionSummary[];
+        total: number;
+    }>;
     readEntries(id: string): Promise<SessionEntry[]>;
     getSession(id: string): Promise<SessionRow | undefined>;
     setTitle(id: string, title: string): Promise<void>;
@@ -75,10 +83,11 @@ interface SessionStore {
 | `createSession(id)` | `acp/handlers/session-crud.ts:handleNewSession` (`:44`) | Inserts a fresh `SessionRow` (`createdAt`, `updatedAt`, `title: null`, `turnCount: 0`, `lastModelId: null`). |
 | `recordNotification(id, notif)` | `acp/engine/session-runtime.ts:emit` (`:326`) | Appends a `'notification'` entry. Persists the wire bytes verbatim so `loadSession` replay re-emits them through `runtime.sendRawNotification` without translation. |
 | `recordTurn(id, userText, finalMessages, modelId)` | `acp/engine/prompt-driver.ts:#runTurn` | Appends a `'turn'` entry, bumps `turnCount`, sets `title` from `deriveTitle(userText)` if not set, sets `lastModelId`. The single source of inline-agent history for `loadSession`. |
-| `recordBuiltin(id, payload)` | `acp/engine/builtin-dispatch.ts:tryHandleBuiltin` | Appends a `'builtin'` entry. The host's `_bodhi/session/get` rebuild interleaves these alongside `'turn'` entries via `walkEntries(turn + builtin)`. |
-| `listSummaries()` | `acp/handlers/session-crud.ts:handleListSessions` (`:144`) | Returns every session row in some host-defined order (browser sorts by `updatedAt desc`). Unpaginated — `sessionCapabilities.list = {}` does not advertise cursor support. |
-| `readEntries(id)` | `acp/handlers/session-crud.ts:handleLoadSession` (`:91`), `acp/engine/session-runtime.ts:rehydrateInlineFromStore` (`:223`), `acp/engine/ext-methods/get-session.ts:getSession` | Returns entries in insertion order (`seq`-ordered). |
-| `getSession(id)` | `handleLoadSession` (`:71`), `get-session.ts`, `sessions-delete.ts`, `acp/engine/session-runtime.ts:sessionStatsFor` (`:302`) | Returns the row or `undefined`. |
+| `recordBuiltin(id, payload)` | `acp/engine/builtin-dispatch.ts:tryHandleBuiltin` | Appends a `'builtin'` entry. `loadSession` interleaves these alongside `'turn'` entries via `reconstructMessages` and ships the rebuilt array on `_meta.bodhi.messages`. |
+| `listSummaries()` | (legacy callers; tests) | Returns every session row sorted `updatedAt desc`. Kept for tests + simple call sites; the production `handleListSessions` uses the paginated `listSummariesPage` below. |
+| `listSummariesPage({page, perPage})` | `acp/handlers/session-crud.ts:handleListSessions` | Page-offset read; returns `{rows, total}`. Page is 1-indexed. The handler decodes the request `cursor` (base64 `page=N&per_page=M&sort_by=updated_at&sort_seq=desc`; defaults to page 1, per_page 10) and emits a `nextCursor` while `page * perPage < total`. |
+| `readEntries(id)` | `acp/handlers/session-crud.ts:handleLoadSession`, `acp/engine/session-runtime.ts:rehydrateInlineFromStore` | Returns entries in insertion order (`seq`-ordered). |
+| `getSession(id)` | `handleLoadSession`, `sessions-delete.ts`, `acp/engine/session-runtime.ts:sessionStatsFor` | Returns the row or `undefined`. |
 | `setTitle(id, title)` | Reserved — no caller. The host UI can drive a future `_bodhi/sessions/setTitle` extension method. |
 | `deleteSession(id)` | `acp/engine/session-runtime.ts:tearDownSession` (`:122`, only when `persistRow: false`) | Drops the row + every entry + per-session features + per-session mcpToggles. The host impl runs this transactionally. The runtime guarantees teardown order (abort matching prompt → release MCP refs → drop in-memory state → delete persisted row). |
 

@@ -66,11 +66,18 @@ seeds Keycloak realms/users, and registers any MCP servers the suite needs.
 The Playwright `webServer` block boots Vite at `localhost:5173` for the run.
 Credentials (LLM API keys, Bodhi admin) live in `packages/web-acp/e2e/.env.test`.
 
-**Mandatory:** After **any** code change under `packages/web-acp/` or
-`packages/web-acp-agent/`, run `npm run test:e2e` from `packages/web-acp/`
-before committing. Unit tests (`npm test`) and `npm run check` are necessary
-but not sufficient — the agent + transport + IndexedDB + LLM round-trip is
-only exercised end-to-end. Treat any new e2e regression as a blocker.
+**Run e2e once per task, not per change.** When changes under
+`packages/web-acp/` or `packages/web-acp-agent/` are complete (all
+intended code edits in, unit tests + `npm run check` green), run
+`npm run test:e2e` from `packages/web-acp/` yourself before reporting
+the task done. Do not ask the user to run it. Unit tests (`npm test`)
+and `npm run check` are necessary but not sufficient — the
+agent + transport + IndexedDB + LLM round-trip is only exercised
+end-to-end. Treat any new e2e regression as a blocker.
+
+For multi-step refactors, run e2e at the end of the work, not after
+every intermediate edit. Re-run it after any fix that follows from
+e2e feedback.
 
 `packages/cli-acp-client/` (active — second host runtime for `@bodhiapp/web-acp-agent`):
 
@@ -83,10 +90,10 @@ npm run check               # lint + typecheck
 
 The CLI's e2e setup mirrors `packages/web-acp/e2e/` exactly — same
 `@bodhiapp/app-bindings` BodhiApp boot + Playwright OAuth flow + `.env.test`
-contract. Run `npm run test:e2e` from `packages/cli-acp-client/` after any
-change under that folder OR under `packages/web-acp-agent/` (the same
-mandate as web-acp; pick whichever host's e2e is relevant — the agent
-package change should pass both).
+contract. Run `npm run test:e2e` from `packages/cli-acp-client/` yourself
+once changes under that folder OR under `packages/web-acp-agent/` are
+complete (same per-task discipline as web-acp; pick whichever host's
+e2e is relevant — agent-package changes should pass both).
 
 `packages/web-agent/` (frozen — reference only, do not extend):
 

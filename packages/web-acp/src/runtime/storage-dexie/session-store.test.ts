@@ -150,6 +150,45 @@ describe('SessionStore (Dexie host impl)', () => {
     expect(summaries.map(s => s.id)).toEqual(['new', 'old']);
   });
 
+  it('listSummariesPage paginates by updatedAt desc', async () => {
+    for (let i = 0; i < 25; i++) {
+      // updatedAt grows with i, so reverse-chrono yields s24, s23, ..., s0
+      await store.createSession(`s${i}`, 1000 + i);
+    }
+
+    const page1 = await store.listSummariesPage({ page: 1, perPage: 10 });
+    expect(page1.total).toBe(25);
+    expect(page1.rows.map(s => s.id)).toEqual([
+      's24',
+      's23',
+      's22',
+      's21',
+      's20',
+      's19',
+      's18',
+      's17',
+      's16',
+      's15',
+    ]);
+
+    const page2 = await store.listSummariesPage({ page: 2, perPage: 10 });
+    expect(page2.rows.map(s => s.id)).toEqual([
+      's14',
+      's13',
+      's12',
+      's11',
+      's10',
+      's9',
+      's8',
+      's7',
+      's6',
+      's5',
+    ]);
+
+    const page3 = await store.listSummariesPage({ page: 3, perPage: 10 });
+    expect(page3.rows.map(s => s.id)).toEqual(['s4', 's3', 's2', 's1', 's0']);
+  });
+
   it('rejects writes to an unknown session', async () => {
     await expect(store.recordNotification('missing', notification('missing', 'x'))).rejects.toThrow(
       /Unknown session|unknown session/

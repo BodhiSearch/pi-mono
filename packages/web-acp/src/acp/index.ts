@@ -13,25 +13,21 @@ export {
   BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD,
   BODHI_FEATURE_BASH_ENABLED_CONFIG_ID,
   BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID,
-  BODHI_GET_SESSION_METHOD,
   BODHI_MCP_STATE_NOTIFICATION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
-  BODHI_VOLUMES_LIST_METHOD,
 } from '@bodhiapp/web-acp-agent';
 
 export type {
   BodhiAuthenticateMeta,
   AnyBodhiBuiltinAction,
   BodhiBuiltinTag,
-  BodhiGetSessionResponse,
+  BodhiLoadSessionMeta,
   BodhiMcpInstanceDescriptor,
   BodhiMcpTogglesSetResponse,
   BodhiSessionInfoMeta,
   BodhiSessionMeta,
   BodhiSessionsDeleteResponse,
-  BodhiVolumeDescriptor,
-  BodhiVolumesListResponse,
 } from '@bodhiapp/web-acp-agent';
 
 /** Flattened `SessionInfo` + `_meta.bodhi` view with numeric timestamps. */

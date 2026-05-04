@@ -1,5 +1,5 @@
 import { builtinAvailableCommands } from "@bodhiapp/web-acp-agent";
-import { type EmbeddedAgent, readBodhiServerInfo } from "./agent/embed";
+import type { EmbeddedAgent } from "./agent/embed";
 import { readTokens } from "./auth/token-store";
 import type { Emitter } from "./emitter";
 
@@ -22,7 +22,6 @@ const CLIENT_COMMANDS: CommandEntry[] = [
 	{ name: "/help", description: "Show this help" },
 	{ name: "/quit", description: "Exit the CLI" },
 	{ name: "/token", description: "Print the stored access token" },
-	{ name: "/bodhiapp:status", description: "Check BodhiApp connectivity via the agent" },
 ];
 
 export async function dispatch(line: string, ctx: DispatchContext): Promise<DispatchResult> {
@@ -36,10 +35,6 @@ export async function dispatch(line: string, ctx: DispatchContext): Promise<Disp
 	}
 	if (line === "/token") {
 		await emitToken(ctx);
-		return { exit: false };
-	}
-	if (line === "/bodhiapp:status") {
-		await emitStatus(ctx);
 		return { exit: false };
 	}
 	if (line === "") {
@@ -88,26 +83,5 @@ function emitHelp(ctx: DispatchContext): void {
 		text,
 		client_commands: CLIENT_COMMANDS,
 		server_commands: serverCommands,
-	});
-}
-
-async function emitStatus(ctx: DispatchContext): Promise<void> {
-	const tokens = await readTokens(ctx.cwd);
-	if (!tokens) {
-		ctx.emitter.emit({ text: "no token stored — run login first" });
-		return;
-	}
-	const resp = await ctx.agent.authenticate({
-		token: tokens.accessToken,
-		baseUrl: tokens.bodhiUrl,
-	});
-	const info = readBodhiServerInfo(resp);
-	if (!info) {
-		ctx.emitter.emit({ text: "BodhiApp connectivity probe returned no info" });
-		return;
-	}
-	ctx.emitter.emit({
-		text: `BodhiApp ${info.status} at ${info.url} (version ${info.version})`,
-		...info,
 	});
 }

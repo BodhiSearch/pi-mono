@@ -1,12 +1,9 @@
 import {
-  BODHI_GET_SESSION_METHOD,
-  BODHI_GET_SESSION_METHOD_LEGACY,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
 } from '../../../wire';
 import type { ExtMethodHost } from '../types';
-import { getSession } from './get-session';
 import { mcpTogglesSet } from './mcp-toggles-set';
 import { EXT_METHOD_SCHEMAS } from './schemas';
 import { sessionsDelete } from './sessions-delete';
@@ -17,16 +14,11 @@ export type ExtMethodHandler = (
   host: ExtMethodHost
 ) => Promise<Record<string, unknown>>;
 
-// Legacy alias kept for one release; remove next release.
 const HANDLERS: Record<string, ExtMethodHandler> = {
   [BODHI_VOLUMES_LIST_METHOD]: volumesList,
-  [BODHI_GET_SESSION_METHOD]: getSession,
-  [BODHI_GET_SESSION_METHOD_LEGACY]: getSession,
   [BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSet,
   [BODHI_SESSIONS_DELETE_METHOD]: sessionsDelete,
 };
-
-const legacyMethodWarned = new Set<string>();
 
 export async function dispatchExtMethod(
   method: string,
@@ -38,12 +30,6 @@ export async function dispatchExtMethod(
     const err = new Error(`Method not found: ${method}`);
     (err as unknown as { code: number }).code = -32601;
     throw err;
-  }
-  if (method === BODHI_GET_SESSION_METHOD_LEGACY && !legacyMethodWarned.has(method)) {
-    legacyMethodWarned.add(method);
-    console.warn(
-      `[acp-agent] '${BODHI_GET_SESSION_METHOD_LEGACY}' is deprecated; clients should use '${BODHI_GET_SESSION_METHOD}'.`
-    );
   }
   const schema = EXT_METHOD_SCHEMAS[method];
   if (schema) {
