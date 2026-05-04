@@ -1,9 +1,3 @@
-/**
- * The single entry the bootstrap calls. Reads tokens.json; if present and
- * fresh, returns silently. Otherwise runs the OAuth flow and persists the
- * result to disk.
- */
-
 import type { Emitter } from "../emitter";
 import { runLoginFlow } from "./login-flow";
 import { isTokenFresh, readTokens, type StoredTokens, writeTokens } from "./token-store";

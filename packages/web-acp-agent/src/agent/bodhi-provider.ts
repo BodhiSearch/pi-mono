@@ -82,6 +82,33 @@ export class BodhiProvider implements LlmProvider {
     return this.baseUrl;
   }
 
+  /**
+   * Fetch BodhiApp's `/bodhi/v1/info` under the current bearer token and
+   * return the response body verbatim. Surfaces snake_case fields
+   * (`client_id`, `status`, `version`, `url`) to the caller — the
+   * `_bodhi/server/info` extension method passes through unchanged.
+   *
+   * Throws if `setAuthToken` has not been called with valid credentials,
+   * or if the HTTP call returns a non-2xx response.
+   */
+  async fetchServerInfo(): Promise<Record<string, unknown>> {
+    const { baseUrl, token } = this.requireCredentials();
+    const response = await fetch(`${baseUrl}/bodhi/v1/info`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      const detail = await this.readErrorDetail(response);
+      throw new Error(
+        `Failed to fetch BodhiApp server info: ${response.status} ${response.statusText}${detail}`
+      );
+    }
+    return (await response.json()) as Record<string, unknown>;
+  }
+
   private requireCredentials(): { baseUrl: string; token: string } {
     if (!this.baseUrl || !this.token) {
       throw new Error(

@@ -57,13 +57,22 @@ load-bearing claim the package's design exists to make true.
 
 - **The boot API.** `startAcpAgent` plus `AcpTransport` /
   `StartAcpAgentOptions`. This is what 99% of hosts call.
-- **The toolkit.** Wire constants (`wire/`), the engine pieces
-  (`AcpAgentAdapter`, `assembleServices`, `AcpSessionRuntime`), the
-  service interfaces (`SessionStore`, `FeatureStore`, `McpToggleStore`,
-  `VolumeRegistry`, `LlmProvider`), the concrete `BodhiProvider`,
-  `InlineAgent` factory, MCP types, command types, bash-tool factory.
-  Hosts use these directly when they need to stand up the runtime in a
-  non-standard way (test harnesses, advanced bootstraps).
+- **The toolkit.** The `Bodhi*` wire constants and request/response
+  types (`wire/`), the assembly seam (`AcpAgentAdapter`,
+  `assembleServices`, `AssembleServicesOptions`,
+  `StreamOverridesRef`), the five service interfaces (`SessionStore`,
+  `FeatureStore`, `McpToggleStore`, `VolumeRegistry`, `LlmProvider`),
+  the concrete `BodhiProvider`, the `InlineAgent` factory + types,
+  MCP types + `McpConnectionPool`, command loaders + built-in
+  registry, the `bash` tool factory + `ZenfsVolumeRegistry`, and the
+  small `requestPermissionStub` + two pure wire helpers
+  (`toAvailableCommand`, `toolTitle`). Engine internals
+  (`AcpSessionRuntime`, `PromptTurnDriver`, `ExtMethodHost`,
+  `SessionState`, the per-handler ACP method modules under
+  `acp/handlers/`, the per-method `_bodhi/*` ext-method files,
+  `composeSystemPrompt`, `VolumeFileSystem`) are deliberately **not
+  re-exported** — they are private to the package even though tests
+  reach for them via relative paths.
 
 The boot function — see `bootstrap.ts:startAcpAgent`:
 
@@ -142,6 +151,17 @@ session. Today's keys: `bashEnabled` (gates bash-tool registration) and
 can force tool calls). `FEATURE_DEFAULTS` plus a layered merge means new
 keys roll out without a migration.
 
+The wire surface for these flags is **native ACP**:
+`Agent.setSessionConfigOption` plus the `configOptions` array on
+`NewSessionResponse` / `LoadSessionResponse`, mapped via
+`acp/feature-config.ts:FEATURE_CONFIG_ENTRIES`
+(`_bodhi/features/{bashEnabled,forceToolCall}` config ids ↔
+`FeatureKey`). The `_bodhi/features/list` and `_bodhi/features/set`
+extension methods that previously carried this surface have been
+retired (ACP 0.21 compliance migration). DEV-only enforcement of
+`forceToolCall` sits in the `setSessionConfigOption` handler — a
+non-DEV host that tries to enable it gets JSON-RPC error `-32004`.
+
 ### Seam 4 — `McpToggleStore` (per-session MCP enable/disable)
 
 File: `storage/mcp-toggle-store.ts`. Two-level toggles: per-server slug
@@ -149,7 +169,10 @@ and per-tool. Defaults are **on** — absent keys mean "not explicitly
 disabled" — so a newly-discovered server/tool opts in automatically.
 The store interface is independent of the MCP catalog itself; the
 catalog comes from upstream Bodhi or a host-side fetch and is composed
-with the toggles via `wire-utils.ts:filterHttpServers`.
+with the toggles via the internal `wire-utils.ts:filterHttpServers`
+helper. Mutations ride the surviving `_bodhi/mcp/toggles/set`
+extension method (one of only four `_bodhi/*` ext-methods left
+post-ACP-0.21 — see § 1.4).
 
 ### Seam 5 — `VolumeRegistry` (filesystem mounts)
 
@@ -172,25 +195,34 @@ detail.
 
 Everything below the five seams. Concretely:
 
-| Folder                           | Responsibility                                                                          |
-| -------------------------------- | --------------------------------------------------------------------------------------- |
-| `acp/agent-adapter.ts`           | ACP `Agent` implementation (wire shim — dispatches to engine, no business logic)        |
-| `acp/engine/session-runtime.ts`  | Per-session lifecycle, MCP pool wiring, command loading                                 |
-| `acp/engine/prompt-driver.ts`    | One prompt-turn end-to-end (built-in dispatch → LLM stream → tool calls → finalisation) |
-| `acp/engine/builtin-dispatch.ts` | `/help` `/version` `/copy` `/session` `/mcp` handlers                                   |
-| `acp/engine/ext-methods/`        | Per-file `_bodhi/*` extension method handlers                                           |
-| `acp/engine/services.ts`         | `assembleServices()` factory — the deps bag the adapter consumes                        |
-| `acp/wire-utils.ts`              | Pure helpers (`extractSessionMeta`, `filterHttpServers`, builtin envelope builders)     |
-| `wire/`                          | `_bodhi/*` method-name constants + typed request/response shapes                        |
-| `agent/inline-agent.ts`          | Thin `Agent` wrapper from `pi-agent-core` (set/get/prompt/cancel/restoreMessages)       |
-| `agent/bodhi-provider.ts`        | `LlmProvider` impl for BodhiApp + catalog flattening                                    |
-| `agent/stream-fn.ts`             | `createStreamFn(provider)` — bridges pi-agent-core → pi-ai's `streamSimple`             |
-| `agent/system-prompt.ts`         | Composes the system prompt (volume descriptors, etc.)                                   |
-| `agent/commands/`                | Vault-sourced slash commands + built-ins surface                                        |
-| `agent/mcp/`                     | `McpConnectionPool`, `createMcpClient`, MCP-tool-to-AgentTool adapter                   |
-| `agent/tools/bash-tool.ts`       | `just-bash`-backed `bash` AgentTool                                                     |
-| `agent/volume-registry.ts`       | Multi-mount ZenFS registry                                                              |
-| `mcp/url-canonical.ts`           | Shared MCP URL canonicalisation (also used by hosts)                                    |
+| Folder / file                                                            | Responsibility                                                                                                                                                                            |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acp/agent-adapter.ts`                                                   | ACP `Agent` implementation — pure dispatch shim; constructs `AcpSessionRuntime` + `PromptTurnDriver` + a shared `AcpAdapterContext` and routes each SDK callback at a per-method handler  |
+| `acp/handlers/adapter-context.ts`                                        | `AcpAdapterContext` deps bag + model-resolution helpers (`tryEnsureModels`, `buildModelState`, `resolveSeededModelId`)                                                                    |
+| `acp/handlers/initialize.ts`                                             | `Agent.initialize` + `Agent.authenticate` handlers (capability advertisement, `bodhi-token` auth method, `agentInfo`)                                                                     |
+| `acp/handlers/session-crud.ts`                                           | `newSession` / `loadSession` / `listSessions` / `closeSession` / `unstable_setSessionModel` / `setSessionConfigOption` / `cancel` handlers — all native ACP, no `_bodhi/*` ride           |
+| `acp/feature-config.ts`                                                  | Maps `FeatureKey` ↔ ACP config IDs (`_bodhi/features/{bashEnabled,forceToolCall}`); builds the `configOptions` array stamped on `newSession`/`loadSession` responses                      |
+| `acp/engine/session-runtime.ts`                                          | Per-session state owner — session map, MCP pool refcounts, command loading, model-catalog cache, runtime dispose                                                                          |
+| `acp/engine/prompt-driver.ts`                                            | One prompt-turn end-to-end (built-in dispatch → LLM stream → tool calls → finalisation), abort-if-active                                                                                  |
+| `acp/engine/builtin-dispatch.ts`                                         | Built-in slash-command intercept used by the prompt driver — `/help` `/version` `/info` `/copy` `/mcp`                                                                                    |
+| `acp/engine/replay.ts`                                                   | Shared replay walker over `SessionEntry[]` for `loadSession`                                                                                                                              |
+| `acp/engine/ext-methods/`                                                | The four surviving `_bodhi/*` handlers — `volumes/list`, `session/get` (+ `bodhi/getSession` legacy alias for one release), `mcp/toggles/set`, `sessions/delete` — plus Zod schemas       |
+| `acp/engine/services.ts`                                                 | `assembleServices()` — deps bag the adapter consumes                                                                                                                                      |
+| `acp/wire-utils.ts`                                                      | Pure helpers — re-exports `toAvailableCommand`, `toolTitle`; internal helpers (`extractSessionMeta`, `filterHttpServers`, builtin envelope builders) used by handlers / engine            |
+| `acp/permissions.ts`                                                     | `requestPermissionStub` — current placeholder that returns `cancelled` (permission bridge is deferred per `ai-docs/web-acp/milestones/deferred.md`)                                       |
+| `wire/`                                                                  | Method-name constants for built-in (`bodhi-token`) + four `_bodhi/*` ext-methods + two `_bodhi/*` notifications, plus typed request/response/notification shapes                          |
+| `agent/inline-agent.ts`                                                  | Thin wrapper around `pi-agent-core`'s `Agent` (`setModel`, `subscribe`, `prompt`, `cancel`, `restoreMessages`)                                                                            |
+| `agent/bodhi-provider.ts`                                                | `LlmProvider` interface + `BodhiProvider` impl (BodhiApp catalog fetch + alias flattening + bearer-token forwarding); `LlmAuthCredential` rotation envelope                               |
+| `agent/stream-fn.ts`                                                     | `createStreamFn(provider, consumeOverrides)` — bridges pi-agent-core's `StreamFn` to pi-ai's `streamSimple`; threads per-turn `toolChoice` overrides for `forceToolCall`                   |
+| `agent/system-prompt.ts`                                                 | `composeSystemPrompt(volumes)` — assembles the agent's system prompt with mounted-volume descriptors                                                                                      |
+| `agent/commands/`                                                        | Vault-sourced slash commands + prompt-templates loader / expander / front-matter parser / canonical naming                                                                                |
+| `agent/commands/builtins/`                                               | Per-file built-in command handlers (`help`, `version`, `info`, `copy`, `mcp`) + the `BUILTIN_COMMANDS` registry                                                                           |
+| `agent/mcp/`                                                             | `McpConnectionPool` (refcounted), `createMcpClient` (Streamable HTTP), `createMcpAgentTool` (MCP tool ↔ pi-agent-core `AgentTool` adapter)                                                |
+| `agent/tools/bash-tool.ts`                                               | `just-bash`-backed single LLM-facing `bash` tool                                                                                                                                          |
+| `agent/tools/volume-filesystem.ts`                                       | `IFileSystem` adapter over the ZenFS-mounted volume set (private — not on the public barrel)                                                                                              |
+| `agent/volume-registry.ts`                                               | `VolumeRegistry` interface + `ZenfsVolumeRegistry` (multi-mount at `/mnt/<name>`)                                                                                                         |
+| `mcp/url-canonical.ts`                                                   | Shared MCP URL canonicalisation (`canonicalizeMcpUrl`, `deriveSlugFromUrl`) — also used by hosts                                                                                          |
+| `storage/{session-store,feature-store,mcp-toggle-store}.ts`              | Host-implementable interfaces + shape types + helpers (`deriveTitle`, `FEATURE_DEFAULTS`, `isFeatureKey`, `isServerEnabled`, `isToolEnabled`, `EMPTY_MCP_TOGGLES`)                         |
 
 The package's hard constraints (verified by grep in CI) are:
 
@@ -217,10 +249,10 @@ sequenceDiagram
     Host->>SA: startAcpAgent({readable,writable}, services, options)
     SA->>Conn: new AgentSideConnection(toAgent, ndJsonStream(...))
     Conn->>Adapter: new AcpAgentAdapter(conn, services, options)
-    Adapter->>Engine: new AcpSessionRuntime + new PromptTurnDriver
+    Adapter->>Engine: new AcpSessionRuntime + new PromptTurnDriver + AcpAdapterContext
     Note over Adapter: services.inline + bodhi + mcpPool + commandsFs <br/> + optional store/registry/features/mcpToggles
-    Host-->>Adapter: ACP wire: initialize, authenticate, session/new, prompt
-    Adapter->>Engine: dispatch
+    Host-->>Adapter: ACP wire: initialize, authenticate, session/new, <br/> setSessionModel, setSessionConfigOption, prompt, ...
+    Adapter->>Engine: route via per-method handler in acp/handlers/
     Engine->>Inline: setModel + prompt(text)
     Inline->>Provider: getApiKeyAndHeaders / streamSimple
     Provider-->>Inline: streamed deltas
@@ -296,16 +328,48 @@ plus the transport adapter.
 
 ### Notes / questions surfaced while drafting
 
-- **Extraction is now complete on both hosts** (commit `f6fd1859`,
+- **Extraction is complete on both hosts** (commit `f6fd1859`,
   "clean up/decoupling of web-acp agent/client"). The browser worker's
   duplicate copies of `acp/{agent-adapter,engine/*,wire-utils}`,
   `agent/{bodhi-provider,inline-agent,stream-fn,system-prompt,
   session-store,commands,mcp,tools,volume-mount,volume-channel}`, plus
   `features/`, `mcp/toggle-store`, `transport/{worker-stream,
-  volume-control}` are deleted. Everything below the transport now
-  lives only in `@bodhiapp/web-acp-agent`. `web-acp/src/agent/`
-  contains exactly one file — `agent-worker.ts` — and it calls
+  volume-control}` are deleted. Everything below the transport lives
+  only in `@bodhiapp/web-acp-agent`. `web-acp/src/agent/` contains
+  exactly one file — `agent-worker.ts` — and it calls
   `startAcpAgent(...)` directly, same as `cli-acp-client`.
+- **ACP 0.21 compliance migration has landed inside the agent
+  package.** The wire surface has been pulled towards native ACP and
+  away from `_bodhi/*` extensions:
+  - **Native now:** `Agent.listSessions`, `Agent.closeSession`,
+    `Agent.unstable_setSessionModel` (+ `SessionModelState`),
+    `Agent.setSessionConfigOption` (+ `configOptions[]` on
+    `NewSessionResponse` / `LoadSessionResponse`), `agentInfo` on
+    `InitializeResponse`, explicit reducer arms for all 11
+    `SessionUpdate` kinds.
+  - **Retired `_bodhi/*` ext-methods:** `bodhi/listModels`,
+    `bodhi/listSessions`, `_bodhi/features/list`,
+    `_bodhi/features/set`. These were one-shot RPC methods that
+    duplicated capabilities ACP now ships natively.
+  - **Surviving `_bodhi/*` ext-methods (4):** `_bodhi/volumes/list`,
+    `_bodhi/session/get` (with `bodhi/getSession` accepted as a
+    deprecated alias for one release; one-time `console.warn` on
+    first use), `_bodhi/mcp/toggles/set`, `_bodhi/sessions/delete`
+    (the user-visible "delete" gesture; `Agent.closeSession` only
+    frees in-memory state). All use Zod schemas and live as
+    per-method files under `acp/engine/ext-methods/`.
+  - **Side-channel notifications:** `_bodhi/mcp/state` (MCP
+    lifecycle) and `_bodhi/builtin/action` (built-in command
+    actions) ride `extNotification` — same `_`-prefixed namespacing
+    rule. Per `milestones/index.md`, the planned `bodhi/getSession`
+    collapse (M5 of the migration) is **deferred** because the
+    incremental replay path turned out to be incomplete; see
+    `packages/web-acp/TECHDEBT.md` § "M5 deferred".
+- **Adapter is even thinner now.** `acp/agent-adapter.ts` is a pure
+  dispatch shim — every ACP method delegates to a per-handler module
+  under `acp/handlers/` (initialize, session-crud) sharing an
+  `AcpAdapterContext` deps bag. The shim's only resident state is
+  the runtime + driver + ctx triple it constructs.
 - The volume seam in the browser host has a small **two-layer twist**:
   `web-acp/src/runtime/volumes-fsa/` defines `HostVolumeInit` (FSA
   handle | dev seed) that travels across the worker `init` postMessage

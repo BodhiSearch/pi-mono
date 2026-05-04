@@ -1,19 +1,3 @@
-/**
- * Tiny HTTP server hosting the OAuth callback the user's browser is
- * redirected to. Bound to 127.0.0.1:5173 (port fixed by the Keycloak
- * client registration on APP_CLIENT_ID).
- *
- * The login flow is two-phase:
- *   1. Bodhi review UI → /callback?id=<access-request-id>&bodhi_flow=...
- *      We respond with a 302 to Keycloak's authorize URL.
- *   2. Keycloak → /callback?code=<...>&state=<...>
- *      We respond with a small "you can close this tab" page.
- *
- * `awaitNext()` resolves once the next callback arrives. The caller
- * decides how to respond — keeping the response open while it does
- * async work (status fetch, building the authorize URL).
- */
-
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -36,8 +20,7 @@ export interface CallbackServer {
 }
 
 export async function startCallbackServer(port: number): Promise<CallbackServer> {
-	type Pending = (cb: PendingCallback) => void;
-	const waiters: Pending[] = [];
+	const waiters: Array<(cb: PendingCallback) => void> = [];
 	const queued: PendingCallback[] = [];
 
 	function deliver(cb: PendingCallback): void {

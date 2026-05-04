@@ -132,6 +132,7 @@ export {
   BODHI_GET_SESSION_METHOD_LEGACY,
   BODHI_MCP_STATE_NOTIFICATION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
+  BODHI_SERVER_INFO_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
 } from './wire';
@@ -153,6 +154,7 @@ export type {
   BodhiMcpTogglesSetRequest,
   BodhiMcpTogglesSetResponse,
   BodhiMcpUrlParams,
+  BodhiServerInfoResponse,
   BodhiSessionInfoMeta,
   BodhiSessionMeta,
   BodhiSessionsDeleteRequest,

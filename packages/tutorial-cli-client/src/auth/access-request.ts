@@ -1,17 +1,3 @@
-/**
- * BodhiApp access-request endpoints.
- *
- * Two calls:
- *   1. POST /bodhi/v1/apps/request-access — submits a consent request,
- *      returns { id, status: "draft", review_url }.
- *   2. GET  /bodhi/v1/apps/access-requests/<id>?app_client_id=...
- *      — once the user approves at review_url and Bodhi has bounced
- *      the browser back, we fetch the status to read
- *      access_request_scope.
- *
- * Both endpoints are anonymous (no Authorization header).
- */
-
 import { APP_CLIENT_ID } from "./config";
 
 export type UserScope = "scope_user_user" | "scope_user_power_user";
@@ -44,8 +30,7 @@ export async function requestAccess(opts: RequestAccessOptions): Promise<Request
 	const body = {
 		app_client_id: APP_CLIENT_ID,
 		flow_type: "redirect" as const,
-		// `bodhi_flow=access_request` makes Bodhi's review UI bounce back
-		// with `?id=<request-id>` instead of a generic error.
+		// `bodhi_flow=access_request` makes the review UI bounce back with `?id=<request-id>`.
 		redirect_url: appendQuery(opts.redirectUri, "bodhi_flow", "access_request"),
 		requested_role: opts.requestedRole ?? "scope_user_user",
 		requested: { version: "1" as const },

@@ -1,20 +1,3 @@
-/**
- * Output abstraction for the CLI.
- *
- * Two modes:
- *
- * - `plain` (default, interactive): writes `text + '\n'` to the output stream
- *   and renders the prompt verbatim. What a human reads on a TTY.
- * - `test`: writes one JSON line per emit (`{"text":"...",...extras}\n`) and
- *   suppresses the prompt entirely. The Playwright harness parses stdout
- *   line by line and matches on either the `text` field or any extra (e.g.
- *   `login_url`).
- *
- * Every CLI output goes through {@link Emitter.emit}. The dispatcher and
- * the auth flow do NOT write to the output stream directly — that keeps
- * the test parser stable across new commands.
- */
-
 export type EmitterMode = "plain" | "test";
 
 export interface EmitPayload {
@@ -42,9 +25,7 @@ export function createEmitter(opts: CreateEmitterOptions): Emitter {
 			emit(payload) {
 				opts.output.write(`${JSON.stringify(payload)}\n`);
 			},
-			prompt() {
-				// Suppressed in test mode — JSON-line consumers don't need it.
-			},
+			prompt() {},
 		};
 	}
 	return {

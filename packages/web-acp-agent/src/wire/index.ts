@@ -34,6 +34,20 @@ export const BODHI_MCP_TOGGLES_SET_METHOD = '_bodhi/mcp/toggles/set';
 // drops the persisted row for the user-visible "delete" gesture.
 export const BODHI_SESSIONS_DELETE_METHOD = '_bodhi/sessions/delete';
 
+// Hosts call this after `authenticate` to confirm the agent can reach
+// BodhiApp under the supplied token. The agent forwards the call to
+// `${baseUrl}/bodhi/v1/info` with the bearer token and returns the
+// response body verbatim (snake_case fields preserved).
+export const BODHI_SERVER_INFO_METHOD = '_bodhi/server/info';
+
+/** Verbatim shape of BodhiApp's `/bodhi/v1/info` response (snake_case). */
+export interface BodhiServerInfoResponse extends Record<string, unknown> {
+  version: string;
+  status: string;
+  url: string;
+  client_id?: string;
+}
+
 export interface BodhiVolumeDescriptor {
   mountName: string;
   description?: string;

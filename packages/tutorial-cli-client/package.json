@@ -17,11 +17,15 @@
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "test:e2e": "playwright test --reporter=list",
     "ci:test:e2e": "cross-env CI=true playwright test",
     "check": "tsc --noEmit && tsc -p tsconfig.e2e.json --noEmit"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.21.0",
+    "@bodhiapp/web-acp-agent": "*",
+    "@mariozechner/pi-agent-core": "^0.67.3",
+    "@mariozechner/pi-ai": "^0.67.3"
   },
   "devDependencies": {
     "@bodhiapp/app-bindings": "0.0.42",
@@ -31,7 +35,6 @@
     "dotenv": "^17.2.3",
     "playwright": "^1.57.0",
     "tsx": "^4.20.3",
-    "typescript": "^5.9.2",
-    "vitest": "^4.0.16"
+    "typescript": "^5.9.2"
   }
 }

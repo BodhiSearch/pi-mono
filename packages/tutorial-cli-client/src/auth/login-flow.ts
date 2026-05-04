@@ -1,21 +1,3 @@
-/**
- * Two-phase BodhiApp access-request + Keycloak OAuth 2.1 PKCE login.
- *
- *   1. Bind a local callback server.
- *   2. POST /bodhi/v1/apps/request-access; receive review_url.
- *   3. Open the browser at review_url (or in --test mode, emit it
- *      so the Playwright harness can navigate Chromium there).
- *   4. After user approves, Bodhi redirects to /callback?id=<id>.
- *      We fetch the access-request status to read access_request_scope.
- *   5. We respond to the still-open browser request with a 302 to
- *      Keycloak's /protocol/openid-connect/auth carrying the PKCE
- *      challenge + the dynamic access_request:<id> scope.
- *   6. Keycloak's SSO cookie is fresh, so it bounces straight back to
- *      /callback?code=...&state=...
- *   7. We exchange the code for tokens and serve a "you can close this
- *      tab" page.
- */
-
 import type { Emitter } from "../emitter";
 import { getAccessRequestStatus, requestAccess } from "./access-request";
 import { type PendingCallback, startCallbackServer } from "./callback-server";
@@ -171,8 +153,6 @@ function buildAuthorizeUrl(opts: BuildAuthorizeUrlOptions): string {
 }
 
 async function tryOpenBrowser(url: string, emitter: Emitter): Promise<void> {
-	// Fire-and-forget: failure is non-fatal, the user can copy the URL
-	// from the message we already emitted.
 	const { exec } = await import("node:child_process");
 	const platform = process.platform;
 	const cmd =

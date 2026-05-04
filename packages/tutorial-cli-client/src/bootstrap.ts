@@ -1,7 +1,8 @@
 import * as readline from "node:readline";
+import { createEmbeddedAgent, type EmbeddedAgent } from "./agent/embed";
 import { runAuthIfNeeded } from "./auth";
 import { dispatch } from "./dispatcher";
-import { createEmitter, type EmitterMode } from "./emitter";
+import { createEmitter, type Emitter, type EmitterMode } from "./emitter";
 
 export interface BootstrapOptions {
 	input: NodeJS.ReadableStream;
@@ -10,10 +11,7 @@ export interface BootstrapOptions {
 	cwd: string;
 	mode?: EmitterMode;
 	bodhiUrl: string;
-	/** When false, the OAuth review URL is emitted instead of opened. */
 	openBrowser?: boolean;
-	/** Skip the auth flow entirely. Used by the /quit unit e2e. */
-	skipAuth?: boolean;
 	prompt?: string;
 }
 
@@ -24,22 +22,22 @@ export async function bootstrapCli(opts: BootstrapOptions): Promise<void> {
 		prompt: opts.prompt,
 	});
 
-	if (!opts.skipAuth) {
-		await runAuthIfNeeded({
-			cwd: opts.cwd,
-			bodhiUrl: opts.bodhiUrl,
-			openBrowser: opts.openBrowser ?? emitter.mode === "plain",
-			emitter,
-		});
-	}
+	const tokens = await runAuthIfNeeded({
+		cwd: opts.cwd,
+		bodhiUrl: opts.bodhiUrl,
+		openBrowser: opts.openBrowser ?? emitter.mode === "plain",
+		emitter,
+	});
+	const agent = await startAgent({ emitter, tokens });
 
 	const rl = readline.createInterface({ input: opts.input, terminal: false });
 	emitter.prompt();
 
 	return new Promise<void>((resolve) => {
 		rl.on("line", async (raw) => {
-			const result = await dispatch(raw.trim(), { emitter, cwd: opts.cwd });
+			const result = await dispatch(raw.trim(), { emitter, cwd: opts.cwd, agent });
 			if (result.exit) {
+				await agent.close().catch(() => {});
 				opts.exit();
 				rl.close();
 				return;
@@ -48,4 +46,19 @@ export async function bootstrapCli(opts: BootstrapOptions): Promise<void> {
 		});
 		rl.on("close", () => resolve());
 	});
+}
+
+async function startAgent(args: {
+	emitter: Emitter;
+	tokens: { accessToken: string; bodhiUrl: string };
+}): Promise<EmbeddedAgent> {
+	const agent = await createEmbeddedAgent();
+	await agent.initialize();
+	await agent.authenticate({ token: args.tokens.accessToken, baseUrl: args.tokens.bodhiUrl });
+	const info = await agent.serverInfo();
+	args.emitter.emit({
+		text: `BodhiApp ${info.status} at ${info.url} (version ${info.version})`,
+		...info,
+	});
+	return agent;
 }

@@ -1,10 +1,3 @@
-/**
- * On-disk token persistence under $cwd/.tutorial-cli-client/tokens.json.
- *
- * `readTokens` returns null when the file is missing or unreadable;
- * everything else throws.
- */
-
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { STORAGE_DIR_NAME, TOKEN_FILE_NAME } from "./config";
@@ -37,7 +30,6 @@ export async function writeTokens(cwd: string, tokens: StoredTokens): Promise<vo
 	await writeFile(tokenFilePath(cwd), `${JSON.stringify(tokens, null, 2)}\n`, "utf-8");
 }
 
-/** Tokens are considered usable if they have at least 30 seconds of life left. */
 export function isTokenFresh(tokens: StoredTokens): boolean {
 	return tokens.expiresAt - Date.now() > 30_000;
 }

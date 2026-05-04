@@ -1,20 +1,4 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "types": ["node", "vitest/globals"],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "moduleDetection": "force",
-    "esModuleInterop": true,
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
-  },
-  "include": ["src", "test", "playwright.config.ts", "vitest.config.ts"]
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }]
 }

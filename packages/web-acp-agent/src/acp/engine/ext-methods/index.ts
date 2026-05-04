@@ -2,6 +2,7 @@ import {
   BODHI_GET_SESSION_METHOD,
   BODHI_GET_SESSION_METHOD_LEGACY,
   BODHI_MCP_TOGGLES_SET_METHOD,
+  BODHI_SERVER_INFO_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
 } from '../../../wire';
@@ -9,6 +10,7 @@ import type { ExtMethodHost } from '../types';
 import { getSession } from './get-session';
 import { mcpTogglesSet } from './mcp-toggles-set';
 import { EXT_METHOD_SCHEMAS } from './schemas';
+import { serverInfo } from './server-info';
 import { sessionsDelete } from './sessions-delete';
 import { volumesList } from './volumes-list';
 
@@ -24,6 +26,7 @@ const HANDLERS: Record<string, ExtMethodHandler> = {
   [BODHI_GET_SESSION_METHOD_LEGACY]: getSession,
   [BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSet,
   [BODHI_SESSIONS_DELETE_METHOD]: sessionsDelete,
+  [BODHI_SERVER_INFO_METHOD]: serverInfo,
 };
 
 const legacyMethodWarned = new Set<string>();

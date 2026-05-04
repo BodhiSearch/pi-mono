@@ -1,11 +1,3 @@
-/**
- * OAuth 2.1 PKCE token endpoint glue against Keycloak.
- *
- * Slim version: only the initial code-for-token exchange. Refresh /
- * revoke are deferred — when tokens.json expires, the next launch
- * runs the full browser flow again.
- */
-
 import { APP_CLIENT_ID } from "./config";
 
 export interface ExchangeCodeOptions {

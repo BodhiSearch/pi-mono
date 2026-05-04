@@ -132,6 +132,7 @@ host):
   `BODHI_VOLUMES_LIST_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
   `BODHI_SESSIONS_DELETE_METHOD`,
+  `BODHI_SERVER_INFO_METHOD`,
   `BODHI_MCP_STATE_NOTIFICATION_METHOD`,
   `BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD`,
   `BODHI_FEATURE_BASH_ENABLED_CONFIG_ID`,
@@ -143,6 +144,7 @@ host):
   `BodhiMcpToggleSnapshot`,
   `BodhiMcpTogglesSetRequest/Response`,
   `BodhiSessionsDeleteRequest/Response`,
+  `BodhiServerInfoResponse`,
   `BodhiMcpStateNotificationParams`,
   `BodhiBuiltinActionNotificationParams`,
   `BodhiBuiltinAction<K, P>` family
@@ -192,13 +194,14 @@ packages/web-acp-agent/src/
 │       ├── builtin-dispatch.ts    # tryHandleBuiltin (early-return before LLM)
 │       ├── replay.ts              # walkEntries(entries, callbacks) — shared replay walker
 │       ├── types.ts               # SessionState, ExtMethodHost
-│       └── ext-methods/           # five _bodhi/* + legacy bodhi/getSession
+│       └── ext-methods/           # six _bodhi/* + legacy bodhi/getSession
 │           ├── index.ts           # dispatchExtMethod(method, params, host)
-│           ├── schemas.ts         # Zod validators for the five methods
+│           ├── schemas.ts         # Zod validators
 │           ├── get-session.ts     # _bodhi/session/get + bodhi/getSession (legacy alias)
 │           ├── volumes-list.ts    # _bodhi/volumes/list
 │           ├── mcp-toggles-set.ts # _bodhi/mcp/toggles/set
-│           └── sessions-delete.ts # _bodhi/sessions/delete
+│           ├── sessions-delete.ts # _bodhi/sessions/delete
+│           └── server-info.ts     # _bodhi/server/info — passes through GET /bodhi/v1/info
 ├── agent/
 │   ├── inline-agent.ts            # createInlineAgent — pi-agent-core wrapper
 │   ├── bodhi-provider.ts          # BodhiProvider (LlmProvider impl)

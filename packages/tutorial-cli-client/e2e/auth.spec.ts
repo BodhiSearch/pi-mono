@@ -67,6 +67,16 @@ test("OAuth login round-trip stores tokens and /token surfaces JWT claims", asyn
 			expect((claims.scope as string).split(" ")).toContain("openid");
 		});
 
+		await test.step("/bodhiapp:status proxies through the embedded agent", async () => {
+			harness.send("/bodhiapp:status");
+			const statusEvent = await harness.waitFor(
+				(ev) => typeof ev.status === "string" && typeof ev.url === "string",
+			);
+			expect(statusEvent.status).toBe("ready");
+			expect(statusEvent.url).toBe(state.bodhiServerUrl);
+			expect(typeof statusEvent.version).toBe("string");
+		});
+
 		await test.step("/quit reports application exited", async () => {
 			harness.send("/quit");
 			const exited = await harness.waitFor(/application exited/, 10_000);
