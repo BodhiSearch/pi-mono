@@ -16,6 +16,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { walkEntries } from '../engine/replay';
+import { writeFeature } from '../../agent/internal/feature-prefs';
 import { type BodhiLoadSessionMeta, type BodhiSessionInfoMeta } from '../../wire';
 import { buildFeatureConfigOptions, configIdToFeatureKey } from '../feature-config';
 import { extractSessionMeta, filterHttpServers, toWireMcpToggles } from '../wire-utils';
@@ -56,7 +57,7 @@ export async function handleNewSession(
   const modelState = buildModelState(models, defaultModelId);
   if (modelState) response.models = modelState;
   const featureSnapshot = await ctx.runtime.readFeatures(sessionId);
-  response.configOptions = buildFeatureConfigOptions(featureSnapshot, ctx.isDev);
+  response.configOptions = buildFeatureConfigOptions(featureSnapshot);
   return response;
 }
 
@@ -122,7 +123,7 @@ export async function handleLoadSession(
   const modelState = buildModelState(models, seededModelId);
   if (modelState) response.models = modelState;
   const featureSnapshot = await ctx.runtime.readFeatures(params.sessionId);
-  response.configOptions = buildFeatureConfigOptions(featureSnapshot, ctx.isDev);
+  response.configOptions = buildFeatureConfigOptions(featureSnapshot);
   const toggles = await ctx.runtime.readMcpToggles(params.sessionId);
   const meta: BodhiLoadSessionMeta = {
     title: row.title,
@@ -196,13 +197,8 @@ export async function handleSetSessionConfigOption(
   if (!featureKey) {
     throw new Error(`setSessionConfigOption: unknown configId '${params.configId}'`);
   }
-  if (featureKey === 'forceToolCall' && !ctx.isDev) {
-    const err = new Error('forceToolCall is DEV-only');
-    (err as unknown as { code: number }).code = -32004;
-    throw err;
-  }
-  if (!ctx.services.features) {
-    throw new Error('setSessionConfigOption: feature store unavailable');
+  if (!ctx.services.preferences) {
+    throw new Error('setSessionConfigOption: preference store unavailable');
   }
   // Accept stable-schema 'on'/'off' and legacy boolean from older clients.
   const value = params.value;
@@ -218,8 +214,8 @@ export async function handleSetSessionConfigOption(
       `setSessionConfigOption: configId '${params.configId}' value must be 'on' | 'off' (or legacy boolean)`
     );
   }
-  const next = await ctx.services.features.set(params.sessionId, featureKey, nextBool);
-  const options = buildFeatureConfigOptions(next, ctx.isDev);
+  const next = await writeFeature(ctx.services.preferences, params.sessionId, featureKey, nextBool);
+  const options = buildFeatureConfigOptions(next);
   await ctx.runtime.emitConfigOptionUpdate(params.sessionId, options);
   return { configOptions: options };
 }

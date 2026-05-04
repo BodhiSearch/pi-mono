@@ -100,10 +100,9 @@ export function createStoreFromDb(db: SessionStoreDb): SessionStore {
     },
 
     async deleteSession(id) {
-      await db.transaction('rw', db.sessions, db.entries, db.features, db.mcpToggles, async () => {
+      await db.transaction('rw', db.sessions, db.entries, db.preferences, async () => {
         await db.entries.where('sessionId').equals(id).delete();
-        await db.features.delete(id);
-        await db.mcpToggles.delete(id);
+        await db.preferences.where('sessionId').equals(id).delete();
         await db.sessions.delete(id);
       });
     },

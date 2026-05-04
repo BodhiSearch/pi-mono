@@ -39,8 +39,6 @@ import {
 } from './handlers/session-crud';
 
 export interface AcpAgentAdapterOptions {
-  /** True when the host runtime is built in development mode (gates DEV-only features like `forceToolCall`). */
-  isDev: boolean;
   /** Build version string of the host runtime; reported by `/version` and `agentInfo`. */
   buildVersion: string;
   /** Version of the `@agentclientprotocol/sdk` package the host bundles; reported by `/version`. */
@@ -73,13 +71,11 @@ export class AcpAgentAdapter implements Agent {
       runtime: this.#runtime,
       buildVersion: options.buildVersion,
       acpSdkVersion: options.acpSdkVersion,
-      isDev: options.isDev,
     });
     this.#ctx = {
       services,
       runtime: this.#runtime,
       driver: this.#driver,
-      isDev: options.isDev,
       buildVersion: options.buildVersion,
     };
   }
@@ -138,12 +134,10 @@ export class AcpAgentAdapter implements Agent {
       bodhi: this.#services.bodhi,
       store: this.#services.store,
       registry: this.#services.registry,
-      features: this.#services.features,
-      mcpToggles: this.#services.mcpToggles,
+      preferences: this.#services.preferences,
       mcpPool: this.#services.mcpPool,
       inline: this.#services.inline,
       sessions: runtime.sessions,
-      isDev: this.#ctx.isDev,
       getModels: () => runtime.getModels(),
       setModels: m => runtime.setModels(m),
       getActiveInlineSessionId: () => runtime.getActiveInlineSessionId(),

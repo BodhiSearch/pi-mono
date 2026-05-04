@@ -61,12 +61,13 @@ export async function handleAuthenticate(
   if (!meta.token || !meta.baseUrl) {
     throw new Error('authenticate: _meta must include { token, baseUrl }');
   }
-  ctx.services.bodhi.setAuthToken?.({
+  const providerInfo = await ctx.services.bodhi.setAuthToken?.({
     provider: 'bodhi',
     token: meta.token,
     baseUrl: meta.baseUrl,
   });
+  ctx.services.lastProviderInfo = providerInfo;
   ctx.runtime.setModels([]);
   ctx.services.inline.clearMessages();
-  return {};
+  return providerInfo !== undefined ? { _meta: { bodhi: { providerInfo } } } : {};
 }

@@ -1,11 +1,12 @@
 import type { McpServerHttp } from '@agentclientprotocol/sdk';
 import type { Api, Model } from '@mariozechner/pi-ai';
-import type { BodhiProvider } from '../../agent/bodhi-provider';
+import type { LlmProvider } from '../../agent/bodhi-provider';
 import type { InlineAgent } from '../../agent/inline-agent';
 import type { McpConnectionPool } from '../../agent/mcp';
 import type { VolumeRegistry } from '../../agent/volume-registry';
-import type { FeatureSnapshot, FeatureStore } from '../../storage/feature-store';
-import type { McpToggleSnapshot, McpToggleStore } from '../../storage/mcp-toggle-store';
+import type { FeatureSnapshot } from '../../storage/feature-defaults';
+import type { McpToggleSnapshot } from '../../storage/mcp-toggle-shape';
+import type { PreferenceStore } from '../../storage/preference-store';
 import type { SessionStore } from '../../storage/session-store';
 import type { BodhiMcpInstanceDescriptor } from '../../wire';
 
@@ -21,15 +22,13 @@ export interface SessionState {
 
 // Narrow facade so handler files don't depend on the adapter class.
 export interface ExtMethodHost {
-  readonly bodhi: BodhiProvider;
+  readonly bodhi: LlmProvider;
   readonly store: SessionStore | undefined;
   readonly registry: VolumeRegistry | undefined;
-  readonly features: FeatureStore | undefined;
-  readonly mcpToggles: McpToggleStore | undefined;
+  readonly preferences: PreferenceStore | undefined;
   readonly mcpPool: McpConnectionPool;
   readonly inline: InlineAgent;
   readonly sessions: Map<string, SessionState>;
-  readonly isDev: boolean;
   getModels(): Model<Api>[];
   setModels(models: Model<Api>[]): void;
   getActiveInlineSessionId(): string | null;

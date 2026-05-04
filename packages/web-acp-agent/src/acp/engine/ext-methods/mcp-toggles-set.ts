@@ -3,6 +3,7 @@ import {
   type BodhiMcpTogglesSetRequest,
   type BodhiMcpTogglesSetResponse,
 } from '../../../wire';
+import { setMcpServerToggle, setMcpToolToggle } from '../../../agent/internal/mcp-toggle-prefs';
 import { deriveSlugFromUrl } from '../../../mcp/url-canonical';
 import { toWireMcpToggles } from '../../wire-utils';
 import type { ExtMethodHost } from '../types';
@@ -11,8 +12,8 @@ export async function mcpTogglesSet(
   params: unknown,
   host: ExtMethodHost
 ): Promise<BodhiMcpTogglesSetResponse> {
-  if (!host.mcpToggles) {
-    throw new Error(`${BODHI_MCP_TOGGLES_SET_METHOD}: mcp toggle store unavailable`);
+  if (!host.preferences) {
+    throw new Error(`${BODHI_MCP_TOGGLES_SET_METHOD}: preference store unavailable`);
   }
   const req = params as BodhiMcpTogglesSetRequest;
   // Redundant with dispatcher schema; kept for direct-invoke callers.
@@ -27,8 +28,14 @@ export async function mcpTogglesSet(
     );
   }
   const next = req.toolName
-    ? await host.mcpToggles.setTool(req.sessionId, req.serverSlug, req.toolName, req.value)
-    : await host.mcpToggles.setServer(req.sessionId, req.serverSlug, req.value);
+    ? await setMcpToolToggle(
+        host.preferences,
+        req.sessionId,
+        req.serverSlug,
+        req.toolName,
+        req.value
+      )
+    : await setMcpServerToggle(host.preferences, req.sessionId, req.serverSlug, req.value);
   // Server-off forces pool eviction across refcounts — forgotten sessions
   // can hold stale refs that keep the connection alive globally. Live
   // sessions sharing the entry reconnect on next `session/load`. Per-tool

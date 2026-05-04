@@ -7,8 +7,8 @@
 │  Host app (React, main thread)                                   │
 │  ├─ <WebAcpProvider>                                             │
 │  ├─ useAcp() — session state, stream events, sendPrompt, cancel  │
-│  ├─ ACP client — renders session/update, serves fs/* as the      │
-│  │   IDE-integration seam, mediates permission prompts           │
+│  ├─ ACP client — renders session/update, ext-notifications      │
+│  │   (`_bodhi/mcp/state`, `_bodhi/builtin/action`)              │
 │  ├─ FSA directory picker UX                                      │
 │  └─ ZenFS /sessions, /extensions (app-owned, IndexedDB)          │
 ├──────────────────────────────────────────────────────────────────┤
@@ -209,10 +209,13 @@ hand-rolled tools the original plan enumerated (`read`,
   `forceToolCall` (DEV-only, default `false`) passes
   `tool_choice: 'required'` to pi-ai so e2e can drive tool
   calls deterministically.
-- **`fs/*` advertised, not used by built-ins.** Client handlers
-  implemented against the same ZenFS mounts so any ACP-
-  compliant agent can still read / write mounted volumes
-  through us. The default bash tool does not use `fs/*`.
+- **`fs/*` not advertised.** Removed in the "adaptive plum"
+  simplification — `clientCapabilities` is `{}`. The default
+  bash tool talks to mounted volumes directly through the
+  agent's `VolumeFileSystem`; no `fs/read_text_file` /
+  `fs/write_text_file` round-trip exists. External ACP agents
+  needing IDE-integration reads through us would have to opt
+  back in at a future milestone.
 
 The structural argument against routing bash through `fs/*`:
 just-bash's `IFileSystem` interface
@@ -257,9 +260,10 @@ directory-picker UX.
   `MountableFs` the `bash` tool sees. Default `cwd` is the
   first mounted volume; if none are mounted, the `bash` tool
   is not registered.
-- The main thread keeps duplicate handles so the M2.3 `fs/*`
-  client handlers can serve IDE-integration reads/writes
-  against the same bytes.
+- The main thread used to keep duplicate handles for an
+  `fs/*` IDE-integration seam (M2.3); removed in the
+  "adaptive plum" simplification along with the duplicate
+  main-thread `MainZenfs` mount.
 
 ### `/sessions` and `/extensions` — main-thread, app-owned
 
@@ -287,18 +291,18 @@ a new decision entry explaining what changed.
 - **Agent owns `/mnt/<name>` I/O.** The bash tool calls
   `IFileSystem` methods directly against ZenFS inside the
   worker. Zero ACP wire traffic for mounted-volume bulk ops.
-- **`fs/*` is an advertised seam.** `clientCapabilities.fs.readTextFile`
-  and `writeTextFile` both advertise `true` from M2.3 onward.
-  Client handlers validate paths against the mounted volume
-  set and read/write through the same ZenFS store. The default
-  bash tool does not use them; external ACP agents connecting
-  to the same client can.
+- **`fs/*` is not advertised.** `clientCapabilities` is `{}`.
+  Removed in the "adaptive plum" simplification (the default
+  bash tool never used `fs/*`; the duplicate main-thread
+  ZenFS mirror that backed the seam was a real concurrency
+  hazard). Re-add deliberately if a future external ACP agent
+  needs to read mounted volumes through us.
 - **Remote-agent future.** When the agent eventually runs
   server-side, `/mnt/<name>` volumes don't live in the user's
   browser. Options for that deployment (decided at M8):
   cloud-mounted volumes, user-uploaded volumes, or text-only
-  mode with `fs/*` as the sole FS surface. Do not design for
-  this in M2–M7.
+  mode (re-introducing `fs/*` if the agent loses local FS
+  access). Do not design for this in M2–M7.
 
 ## Permission flow
 

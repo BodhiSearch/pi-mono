@@ -17,6 +17,12 @@ import { toAvailableCommand } from '../wire-utils';
 import type { AcpAdapterServices } from './services';
 import type { AcpSessionRuntime } from './session-runtime';
 
+function extractServerUrl(providerInfo: unknown): string | null {
+  if (!providerInfo || typeof providerInfo !== 'object') return null;
+  const url = (providerInfo as { url?: unknown }).url;
+  return typeof url === 'string' ? url : null;
+}
+
 export interface BuiltinDispatchArgs {
   conn: AgentSideConnection;
   services: AcpAdapterServices;
@@ -42,7 +48,7 @@ export async function tryHandleBuiltin(args: BuiltinDispatchArgs): Promise<Promp
   const ctx: BuiltinHandlerCtx = {
     sessionId,
     modelId: session?.currentModelId ?? null,
-    serverUrl: services.bodhi.getBaseUrl?.() ?? null,
+    serverUrl: extractServerUrl(services.lastProviderInfo),
     sessionStats: await runtime.sessionStatsFor(sessionId),
     mcpServersConnected: runtime.mcpConnectedFor(sessionId),
     mcpInstances: session?.mcpInstances ?? [],

@@ -43,7 +43,6 @@ export class PromptTurnDriver {
   readonly #runtime: AcpSessionRuntime;
   readonly #buildVersion: string;
   readonly #acpSdkVersion: string;
-  readonly #isDev: boolean;
 
   #cancelled = false;
   #turnAbort: AbortController | undefined;
@@ -58,14 +57,12 @@ export class PromptTurnDriver {
     runtime: AcpSessionRuntime;
     buildVersion: string;
     acpSdkVersion: string;
-    isDev: boolean;
   }) {
     this.#conn = args.conn;
     this.#services = args.services;
     this.#runtime = args.runtime;
     this.#buildVersion = args.buildVersion;
     this.#acpSdkVersion = args.acpSdkVersion;
-    this.#isDev = args.isDev;
   }
 
   async run(params: PromptRequest): Promise<PromptResponse> {
@@ -144,10 +141,9 @@ export class PromptTurnDriver {
     const systemPrompt = composeSystemPrompt(volumes);
     this.#services.inline.setModel(model, { tools, systemPrompt });
 
-    // `forceToolCall` is DEV-only and meaningless without a tool.
+    // `forceToolCall` is meaningless without a tool registered.
     if (this.#services.streamOverrides) {
-      const toolChoice =
-        featureSnapshot.forceToolCall && this.#isDev && tools.length > 0 ? 'required' : undefined;
+      const toolChoice = featureSnapshot.forceToolCall && tools.length > 0 ? 'required' : undefined;
       this.#services.streamOverrides.current = toolChoice ? { toolChoice } : {};
     }
 

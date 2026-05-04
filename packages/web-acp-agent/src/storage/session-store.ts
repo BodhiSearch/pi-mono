@@ -79,39 +79,6 @@ export function deriveTitle(userText: string): string {
   return `${single.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
 }
 
-/**
- * Per-session feature toggle row (Dexie `features` table).
- * See `feature-store.ts` / `features.md` for wrapper + wire shape.
- */
-export interface FeatureRow {
-  sessionId: string;
-  flags: Record<string, boolean>;
-  updatedAt: number;
-}
-
-/**
- * Per-session MCP toggle row — per-server overrides plus per-tool overrides
- * keyed by server slug. See `mcp-toggle-store.ts` and `specs/web-acp-agent/mcp.md`
- * for the wire shape on `bodhi/getSession` and `_bodhi/mcp/toggles/set`.
- *
- * Semantics:
- * - **Absent keys mean "default on".** We never materialise a
- *   `true` entry just to mirror the default — that way the ACP wire
- *   shape stays compact and newly-discovered servers/tools opt in
- *   automatically.
- * - `servers[slug] === false` → skip server in the composed
- *   `McpServerHttp[]` passed to `session/load`.
- * - `tools[slug][toolName] === false` → server stays registered but
- *   that specific tool is filtered from the adapter's `setModel`
- *   registration.
- */
-export interface McpTogglesRow {
-  sessionId: string;
-  servers: Record<string, boolean>;
-  tools: Record<string, Record<string, boolean>>;
-  updatedAt: number;
-}
-
 export interface SessionStore {
   createSession(id: string, at?: number): Promise<void>;
   recordNotification(id: string, notification: SessionNotification, at?: number): Promise<void>;

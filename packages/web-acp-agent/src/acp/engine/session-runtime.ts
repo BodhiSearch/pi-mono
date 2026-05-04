@@ -15,8 +15,10 @@ import {
 } from '../../agent/commands';
 import { builtinAvailableCommands } from '../../agent/commands/builtins';
 import { createMcpAgentTool, type McpPoolEvent, type McpToolDetails } from '../../agent/mcp';
-import { FEATURE_DEFAULTS, type FeatureSnapshot } from '../../storage/feature-store';
-import { isToolEnabled, type McpToggleSnapshot } from '../../storage/mcp-toggle-store';
+import { readFeatureSnapshot } from '../../agent/internal/feature-prefs';
+import { readMcpToggles } from '../../agent/internal/mcp-toggle-prefs';
+import { FEATURE_DEFAULTS, type FeatureSnapshot } from '../../storage/feature-defaults';
+import { isToolEnabled, type McpToggleSnapshot } from '../../storage/mcp-toggle-shape';
 import {
   BODHI_MCP_STATE_NOTIFICATION_METHOD,
   type BodhiMcpStateNotificationParams,
@@ -129,11 +131,11 @@ export class AcpSessionRuntime {
   }
 
   async readFeatures(sessionId: string): Promise<FeatureSnapshot> {
-    if (!this.#services.features) {
+    if (!this.#services.preferences) {
       return { ...FEATURE_DEFAULTS };
     }
     try {
-      return await this.#services.features.get(sessionId);
+      return await readFeatureSnapshot(this.#services.preferences, sessionId);
     } catch (err) {
       console.error('[acp-session-runtime] failed to load features:', err);
       return { ...FEATURE_DEFAULTS };
@@ -141,9 +143,9 @@ export class AcpSessionRuntime {
   }
 
   async readMcpToggles(sessionId: string): Promise<McpToggleSnapshot> {
-    if (!this.#services.mcpToggles) return { servers: {}, tools: {} };
+    if (!this.#services.preferences) return { servers: {}, tools: {} };
     try {
-      return await this.#services.mcpToggles.get(sessionId);
+      return await readMcpToggles(this.#services.preferences, sessionId);
     } catch (err) {
       console.error('[acp-session-runtime] failed to load mcp toggles:', err);
       return { servers: {}, tools: {} };

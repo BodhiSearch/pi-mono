@@ -1,5 +1,5 @@
 import * as readline from "node:readline";
-import { createEmbeddedAgent, type EmbeddedAgent } from "./agent/embed";
+import { createEmbeddedAgent, type EmbeddedAgent, readBodhiServerInfo } from "./agent/embed";
 import { runAuthIfNeeded } from "./auth";
 import { dispatch } from "./dispatcher";
 import { createEmitter, type Emitter, type EmitterMode } from "./emitter";
@@ -54,11 +54,16 @@ async function startAgent(args: {
 }): Promise<EmbeddedAgent> {
 	const agent = await createEmbeddedAgent();
 	await agent.initialize();
-	await agent.authenticate({ token: args.tokens.accessToken, baseUrl: args.tokens.bodhiUrl });
-	const info = await agent.serverInfo();
-	args.emitter.emit({
-		text: `BodhiApp ${info.status} at ${info.url} (version ${info.version})`,
-		...info,
+	const authResp = await agent.authenticate({
+		token: args.tokens.accessToken,
+		baseUrl: args.tokens.bodhiUrl,
 	});
+	const info = readBodhiServerInfo(authResp);
+	if (info) {
+		args.emitter.emit({
+			text: `BodhiApp ${info.status} at ${info.url} (version ${info.version})`,
+			...info,
+		});
+	}
 	return agent;
 }

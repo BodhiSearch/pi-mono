@@ -24,9 +24,11 @@ M8). Today it ships as the reference app.
   `AcpRuntime` singleton, the pure `streamingReducer`, the new
   `panelsReducer` for cross-turn UI state (commands, MCP
   state, configOptions), the host-side `dispatchBuiltinAction`,
-  the `fs/*` IDE-integration handlers, the deferred
-  `requestPermissionStub`, plus the frozen empty sentinels and
-  the feature-key ↔ configId mapping.
+  plus the frozen empty sentinels and the feature-key ↔ configId
+  mapping. The deferred permission stub and the `fs/*`
+  IDE-integration handlers were removed in the "adaptive plum"
+  simplification — see
+  `ai-docs/plans/some-thoughts-on-the-adaptive-plum.md`.
 - **The Worker boot shim** at `agent/agent-worker.ts` — opens
   Dexie, builds the FSA volume registry, constructs the
   `BodhiProvider` + inline agent + Dexie stores, and calls
@@ -44,8 +46,8 @@ M8). Today it ships as the reference app.
     `createVolumeControl` client for the volume-control
     raw-postMessage sidechannel.
 - **The vault layer** at `vault/` — `idb-keyval`-backed FSA
-  handle persistence + a duplicate `MainZenfs` mount on the
-  main thread (the `fs/*` IDE-integration seam).
+  handle persistence. The duplicate main-thread `MainZenfs`
+  mount was removed when `fs/*` was dropped.
 - **The MCP main-thread surface** at `mcp/` — Bodhi catalog
   fetching (`useMcpInstances`), the pure
   `compose-mcp-servers` join, the requested-MCPs IDB
@@ -174,8 +176,7 @@ barrel rather than directly from `@bodhiapp/web-acp-agent`.
   inline `useAcp` features slice.
 - `acp/builtin-dispatch.ts` — `dispatchBuiltinAction`,
   `dispatchCopyAction`.
-- `acp/permissions.ts` — `requestPermissionStub`.
-- `acp/{message-shape,session-meta,fs-handlers}.ts` —
+- `acp/{message-shape,session-meta}.ts` —
   host-side helpers (one-liners listed in
   [`acp.md`](./acp.md)). Lower-level wire helpers come from
   `@bodhiapp/web-acp-agent`; there is no host-side
@@ -208,8 +209,6 @@ packages/web-acp/src/
 │   ├── streaming-reducer.ts   # per-turn reducer (messages, cursor, selectedModel, inFlight)
 │   ├── panels-reducer.ts      # cross-turn reducer (availableCommands, mcpStates, configOptions)
 │   ├── builtin-dispatch.ts    # dispatchBuiltinAction (copy / mcp-add / mcp-remove) + dispatchCopyAction
-│   ├── fs-handlers.ts         # main-thread fs/readTextFile / fs/writeTextFile handlers
-│   ├── permissions.ts         # session/request_permission stub (deferred)
 │   ├── message-shape.ts       # parseMcpStateParams, parseBuiltinActionParams, message helpers
 │   └── session-meta.ts        # authKeyOf, composeSessionMeta
 │                                # (lower-level wire helpers come from @bodhiapp/web-acp-agent — no host-side wire-utils.ts / methods.ts)
@@ -239,7 +238,6 @@ packages/web-acp/src/
 │   └── McpPanel.tsx           # status chips + per-server/per-tool toggle UI (checkboxes)
 ├── vault/
 │   ├── fsa-handle-store.ts    # idb-keyval-backed FSA handle persistence + permission re-grant
-│   └── main-zenfs.ts          # main-thread ZenFS duplicate-mount manager (fs/* IDE seam)
 ├── hooks/
 │   ├── useAcp.ts              # Thin facade composing the slice hooks + inline features memo
 │   ├── useAcpRuntime.ts       # ensureRuntime + useVolumes wrapper
@@ -271,7 +269,7 @@ host-runtime becomes its own package at M8.
 ## Global guarantees & invariants
 
 1. **One worker per tab.** `acp/runtime.ts:ensureRuntime`
-   holds the worker, client, `MainZenfs`, and `initialize`
+   holds the worker, client, `volumeControl`, and `initialize`
    promise at module scope; StrictMode's double-mount and React
    fast-refresh both re-enter the effect but never spawn a
    second worker. Detail in [`hooks.md`](./hooks.md).
@@ -315,10 +313,10 @@ host-runtime becomes its own package at M8.
 | File | Scope |
 | --- | --- |
 | [`transport.md`](./transport.md) | `runtime/transport/worker-stream.ts:createMessagePortStream` (MessagePort ↔ stream bridge) + the worker-control sidechannel rationale + `agent/agent-worker.ts` boot wiring. |
-| [`acp.md`](./acp.md) | Host-side ACP wire/engine split — `acp/client.ts:AcpClient` (including `setSessionModel`, `setSessionConfigOption`, `extNotification` registry), `acp/runtime.ts:ensureRuntime` (`useMemo` initialiser, model-update + init-response accessors), `acp/streaming-reducer.ts:streamingReducer`, `acp/panels-reducer.ts:panelsReducer`, `acp/empty-sentinels.ts`, `acp/feature-keys.ts`, `acp/builtin-dispatch.ts:dispatchBuiltinAction`, `acp/fs-handlers.ts:buildFsHandlers`, plus the helpers under `acp/{message-shape,session-meta,permissions,index}.ts`. |
+| [`acp.md`](./acp.md) | Host-side ACP wire/engine split — `acp/client.ts:AcpClient`, `acp/runtime.ts:ensureRuntime`, `acp/streaming-reducer.ts`, `acp/panels-reducer.ts`, `acp/empty-sentinels.ts`, `acp/feature-keys.ts`, `acp/builtin-dispatch.ts`, plus helpers under `acp/{message-shape,session-meta,index}.ts`. The `requestPermission` field on the `Client` handler is a one-line cancelled-outcome stub inlined in `runtime.ts` (no shared module). The `fs/*` IDE-integration seam was removed — `clientCapabilities: {}`. |
 | [`hooks.md`](./hooks.md) | `hooks/useAcp.ts` (facade with inline features memo) + the seven slice hooks (`useAcp{Runtime,Auth,Models,Mcp,Session,Streaming}`, `useVolumes`). StrictMode/HMR invariants. |
 | [`storage-dexie.md`](./storage-dexie.md) | `runtime/storage-dexie/db.ts:SessionStoreDb` + `createStoreFromDb`, `createFeatureStore`, `createMcpToggleStore`. Schema v3, migration discipline. |
-| [`volumes.md`](./volumes.md) | `runtime/volumes-fsa/{types,backends,volume-channel,volume-control}.ts` + `vault/{fsa-handle-store,main-zenfs}.ts` + `hooks/useVolumes.ts`. The FSA handle ↔ agent `VolumeInit` conversion + the `MainZenfs` IDE-integration seam. Dev-seed test pattern. |
+| [`volumes.md`](./volumes.md) | `runtime/volumes-fsa/{types,backends,volume-channel,volume-control}.ts` + `vault/fsa-handle-store.ts` + `hooks/useVolumes.ts`. FSA handle ↔ agent `VolumeInit` conversion + worker-side mount/unmount sidechannel. The duplicate main-thread `MainZenfs` mount that mirrored the worker's ZenFS for `fs/*` was removed. Dev-seed test pattern unchanged. |
 | [`mcp.md`](./mcp.md) | `mcp/{types,useMcpInstances,compose-mcp-servers,requested-mcps-store,url-canonical}.ts` + `mcp/McpPanel.tsx`. Main-thread catalog + composer + `_bodhi/mcp/state` extNotification routing + UI checkboxes. Worker-side runtime lives in the agent package. |
 | [`commands.md`](./commands.md) | `components/chat/CommandPicker.tsx` (palette UI) + `lib/builtin-format.ts` (markdown rendering for built-in replies) + the `_meta.bodhi.builtin` envelope consumed in `streamingReducer` + the `_bodhi/builtin/action` extNotification → `dispatchBuiltinAction` route. |
 | [`features.md`](./features.md) | The inline `useAcp` features memo over `panelsState.configOptions` + `setFeature` calling `client.setSessionConfigOption` + `components/features/FeaturePanel.tsx` (UI). DEV gate (`import.meta.env.DEV`) for `forceToolCall` paired with the agent-side `isDev` enforcement. |

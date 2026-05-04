@@ -5,10 +5,19 @@
 ## Purpose
 
 Browser-host concrete implementations of the agent-package
-storage interfaces (`SessionStore`, `FeatureStore`,
-`McpToggleStore`). Backed by a single Dexie database
-(`SessionStoreDb`, schema v3) with four tables: `sessions`,
-`entries`, `features`, `mcpToggles`.
+storage interfaces (`SessionStore`, `PreferenceStore`). Backed
+by a single Dexie database (`SessionStoreDb`, schema v4) with
+three tables: `sessions`, `entries`, `preferences` (compound
+key `[sessionId+key]`, value `unknown`).
+
+> **Post-`provider-agnostic-embed-simplification` callout.**
+> Schema bumped v3 → v4: legacy `features` and `mcpToggles`
+> tables dropped; unified `preferences` table replaces both.
+> No data migration — per-session toggles reset to defaults on
+> first load post-upgrade (acceptable for a dev-only package).
+> Body text below predates the refactor; canonical impl lives
+> at `runtime/storage-dexie/preference-store.ts`. See
+> `ai-docs/plans/provider-agnostic-embed-simplification.md`.
 
 ## `SessionStoreDb` schema — `runtime/storage-dexie/db.ts`
 

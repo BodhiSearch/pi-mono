@@ -63,7 +63,7 @@ gate file lands with the first real milestone if the rules diverge.
 | Tool execution       | Agent executes; reports via `session/update (tool_call)`      | Agent executes; single `bash` tool registered with the LLM (M2)        | compliant |
 | Tool reporting       | `session/update (tool_call)` + `tool_call_update`             | Same; CommandCollector maps bash sub-commands when useful              | compliant |
 | Permission           | `session/request_permission`                                  | Bridge from destructive bash commands is **deferred** to post-M2; see [deferred.md](deferred.md) | **deferred (see deferred.md)** |
-| Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` advertised but unused by built-ins (M2) | **divergent (documented)** |
+| Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `fs/*` not advertised — `clientCapabilities: {}` (post-"adaptive plum" simplification) | **divergent (documented)** |
 | MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; Streamable HTTP only; JWT in `McpServerHttp.headers` (M3 shipped) | compliant |
 | Provider-native tools | Reported as standard `tool_call` notifications                | **Deferred** — M3 ships MCP only; provider-native passthrough parked to a later milestone (see [deferred.md](deferred.md)) | **deferred (see deferred.md)** |
 | Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands expand **agent-side** in `prompt()` (M4 phase A, shipped); vault prompt templates (`<mount>/.pi/prompts/**/*.md`) ride the same loader + expander + advertisement (M4.2 first slice, shipped — commands win on canonical-name collisions with a `[prompts]` warning); built-in commands `/help` `/version` `/info` `/copy` `/mcp` intercepted before the LLM and replied with the `command` tag on `agent_message_chunk._meta.bodhi.builtin`. **Action ride moved to `extNotification("_bodhi/builtin/action")` post-ACP-0.21 migration M6.** All ride the same `available_commands_update` advertisement | compliant |
@@ -121,9 +121,11 @@ advertising `fs/*` as a future IDE-integration seam.
   `packages/web-acp-agent/src/`. The package depends on
   `@zenfs/core` (not `@zenfs/dom`) and exposes a single
   `startAcpAgent(transport, services)` bootstrap that takes a
-  byte-stream transport pair plus service interfaces
-  (`SessionStore`, `FeatureStore`, `McpToggleStore`,
-  `VolumeRegistry`, `LlmProvider`). `web-acp` keeps the browser
+  byte-stream transport pair plus service interfaces.
+  Post-`provider-agnostic-embed-simplification` the surface is
+  `SessionStore` + `PreferenceStore` (unifies the legacy
+  `FeatureStore` + `McpToggleStore`) + `LlmProvider`; volumes
+  flow as `VolumeInit[]` not a registry. `web-acp` keeps the browser
   adapters under `packages/web-acp/src/runtime/{storage-dexie,
   volumes-fsa,transport}/` and a thin `agent-worker.ts` shim
   wires them together. Wire surface unchanged. Future Node /

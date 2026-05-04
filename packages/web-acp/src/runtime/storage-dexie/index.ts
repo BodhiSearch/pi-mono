@@ -3,7 +3,7 @@ export {
   SessionStoreDb,
   openSessionDb,
   type OpenSessionDbOptions,
+  type PreferenceRow,
 } from './db';
 export { createSessionStore, createStoreFromDb } from './session-store';
-export { createFeatureStore } from './feature-store';
-export { createMcpToggleStore } from './mcp-toggle-store';
+export { createPreferenceStore } from './preference-store';

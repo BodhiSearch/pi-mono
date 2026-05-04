@@ -1,12 +1,9 @@
 import { ClientSideConnection, ndJsonStream } from '@agentclientprotocol/sdk';
 import type { Client, InitializeResponse, SessionNotification } from '@agentclientprotocol/sdk';
 import { AcpClient } from '@/acp/client';
-import { buildFsHandlers } from '@/acp/fs-handlers';
-import { requestPermissionStub } from '@/acp/permissions';
 import type { HostVolumeInit } from '@/runtime/volumes-fsa';
 import { createMessagePortStream } from '@/runtime/transport/worker-stream';
 import { createVolumeControl, type VolumeControl } from '@/runtime/volumes-fsa';
-import { MainZenfs } from '@/vault/main-zenfs';
 
 // Module-scope singleton so we spawn exactly one agent worker per tab
 // (StrictMode double-mount must not create a second worker).
@@ -15,7 +12,6 @@ export interface AcpRuntime {
   worker: Worker;
   client: AcpClient;
   volumeControl: VolumeControl;
-  mainZenfs: MainZenfs;
   initialize: Promise<void>;
   resolveInit: (volumes: HostVolumeInit[]) => void;
 }
@@ -26,7 +22,6 @@ let _authKey: string | null = null;
 let _authPromise: Promise<void> | null = null;
 let _session: string | null = null;
 let _sessionPromise: Promise<string> | null = null;
-// Backs `useSyncExternalStore` for the active session id.
 const _sessionListeners = new Set<() => void>();
 // Awaited by `sendMessage` so a model swap can't race the next prompt.
 let _modelUpdatePromise: Promise<void> | null = null;
@@ -41,14 +36,10 @@ export function ensureRuntime(): AcpRuntime {
   // worker isn't asked to dispatch requests before the agent is constructed.
   let resolveInit!: (volumes: HostVolumeInit[]) => void;
   let initPosted = false;
-  const mainZenfs = new MainZenfs();
   const initPromise = new Promise<void>(resolve => {
     resolveInit = (volumes: HostVolumeInit[]) => {
       if (initPosted) return;
       initPosted = true;
-      // Duplicate-mount on the main thread for the fs/* handler seam;
-      // worker is authoritative so we don't block init on this.
-      void mainZenfs.mountAll(volumes);
       worker.postMessage({ type: 'init', agentPort: channel.port2, volumes }, [channel.port2]);
       resolve();
     };
@@ -57,20 +48,17 @@ export function ensureRuntime(): AcpRuntime {
   const stream = ndJsonStream(writable, readable);
 
   const holder: { client?: AcpClient } = {};
-  const fsHandlers = buildFsHandlers({ view: { list: () => mainZenfs.list() } });
   const handler: Client = {
-    requestPermission: requestPermissionStub,
+    // SDK requires `requestPermission` on the Client surface but our agent
+    // never invokes it (no permission flow yet — see deferred.md).
+    async requestPermission() {
+      return { outcome: { outcome: 'cancelled' } };
+    },
     async sessionUpdate(params: SessionNotification) {
       holder.client?.dispatchSessionUpdate(params);
     },
     async extNotification(method: string, params: Record<string, unknown>) {
       holder.client?.dispatchExtNotification(method, params);
-    },
-    async readTextFile(params) {
-      return fsHandlers.readTextFile(params);
-    },
-    async writeTextFile(params) {
-      return fsHandlers.writeTextFile(params);
     },
   };
   const conn = new ClientSideConnection(() => handler, stream);
@@ -82,12 +70,12 @@ export function ensureRuntime(): AcpRuntime {
     .then(resp => {
       _initResponse = resp;
     });
-  const volumeControl = wrapVolumeControl(createVolumeControl(worker), mainZenfs);
-  _runtime = { worker, client, volumeControl, mainZenfs, initialize, resolveInit };
+  const volumeControl = createVolumeControl(worker);
+  _runtime = { worker, client, volumeControl, initialize, resolveInit };
 
   // Best-effort tab-close hook so the agent can release MCP refcounts and
   // abort in-flight work. `pagehide` covers close/nav/bfcache; `beforeunload`
-  // is the legacy fallback. Fire-and-forget — the message may not round-trip.
+  // is the legacy fallback. Fire-and-forget.
   if (typeof window !== 'undefined') {
     const onUnload = () => {
       const sessionId = _session;
@@ -101,40 +89,9 @@ export function ensureRuntime(): AcpRuntime {
   return _runtime;
 }
 
-/**
- * Mirror worker-side mount/unmount onto the main-thread ZenFS so the
- * `fs/*` handlers stay in sync with the volume registry. Worker-side
- * mount is authoritative — main-thread failures are logged but never
- * surfaced to the caller since the handler falls through to a
- * membership check anyway.
- */
-function wrapVolumeControl(inner: VolumeControl, mainZenfs: MainZenfs): VolumeControl {
-  return {
-    async mount(init) {
-      await inner.mount(init);
-      try {
-        await mainZenfs.mount(init);
-      } catch (err) {
-        console.warn('[acp/runtime] main-zenfs mount failed:', err);
-      }
-    },
-    async unmount(mountName) {
-      await inner.unmount(mountName);
-      try {
-        await mainZenfs.unmount(mountName);
-      } catch (err) {
-        console.warn('[acp/runtime] main-zenfs unmount failed:', err);
-      }
-    },
-    dispose() {
-      inner.dispose();
-    },
-  };
-}
-
 // Accessor surface for the per-tab session and auth state. Module-scope
-// `let`s rather than a class so Hot Module Reload boundaries stay clean
-// and StrictMode-driven double effects observe the same identity.
+// `let`s rather than a class so HMR boundaries stay clean and StrictMode
+// double effects observe the same identity.
 
 export function getSession(): string | null {
   return _session;
@@ -143,7 +100,6 @@ export function getSession(): string | null {
 export function setSession(id: string | null): void {
   if (_session === id) return;
   _session = id;
-  // Snapshot the set so a listener that unsubscribes itself doesn't disturb the loop.
   for (const listener of [..._sessionListeners]) {
     try {
       listener();
@@ -153,7 +109,6 @@ export function setSession(id: string | null): void {
   }
 }
 
-/** Subscribe form for `useSyncExternalStore`; pair with {@link getSession}. */
 export function subscribeToSession(listener: () => void): () => void {
   _sessionListeners.add(listener);
   return () => {

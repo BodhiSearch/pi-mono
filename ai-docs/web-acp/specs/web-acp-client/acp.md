@@ -7,9 +7,15 @@
 The browser host's half of the ACP boundary: a
 `ClientSideConnection` wrapper, the per-tab runtime singleton,
 the streaming-state reducer, the panels reducer for cross-turn
-UI state, the host-side built-in action dispatcher, the `fs/*`
-IDE-integration handlers, plus the wire constants the host
-exports for downstream consumers.
+UI state, the host-side built-in action dispatcher, plus the
+wire constants the host exports for downstream consumers.
+
+The `fs/*` IDE-integration handlers and the dedicated
+`requestPermissionStub` module were both removed in the
+"adaptive plum" simplification — see
+`ai-docs/plans/some-thoughts-on-the-adaptive-plum.md`. The
+SDK still requires `Client.requestPermission` so `runtime.ts`
+inlines a one-line cancelled-outcome stub.
 
 This is **not** the engine — the engine ships with
 `@bodhiapp/web-acp-agent`. This file documents only the
@@ -29,8 +35,6 @@ packages/web-acp/src/acp/
 ├── streaming-reducer.ts # per-turn slice (messages, cursor, toolCalls)
 ├── panels-reducer.ts    # cross-turn slice (availableCommands, mcpStates, configOptions)
 ├── builtin-dispatch.ts  # dispatchBuiltinAction (copy / mcp-add / mcp-remove) + dispatchCopyAction
-├── fs-handlers.ts       # fs/readTextFile + fs/writeTextFile handlers (IDE seam)
-├── permissions.ts       # session/request_permission stub (deferred)
 ├── message-shape.ts     # parseMcpStateParams, parseBuiltinActionParams, message helpers
 └── session-meta.ts      # authKeyOf, composeSessionMeta
                          # (low-level wire helpers re-imported from @bodhiapp/web-acp-agent — no host-side wire-utils.ts / methods.ts)
@@ -49,7 +53,7 @@ Constructor takes a `ClientSideConnection`. Members:
 | --- | --- | --- |
 | `signal` | `:46` | Forwards `conn.signal` for callers that want to react to disconnect. |
 | `closed` | `:50` | Forwards `conn.closed`. |
-| `initialize()` | `:54` | Calls `conn.initialize` with `protocolVersion: PROTOCOL_VERSION` and `clientCapabilities.fs = { readTextFile: true, writeTextFile: true }`. The `fs` capability advertises the IDE-integration seam; built-in `bash` never uses it. Logs a `console.warn` when the agent advertises a different protocol version. |
+| `initialize()` | `:54` | Calls `conn.initialize` with `protocolVersion: PROTOCOL_VERSION` and `clientCapabilities: {}`. Architecture is agent-owned filesystem (volumes mount inside the worker); the `fs/*` IDE seam was dropped. Logs a `console.warn` when the agent advertises a different protocol version. |
 | `authenticate({ token, baseUrl })` | `:73` | `conn.authenticate({ methodId: BODHI_AUTH_METHOD_ID, _meta: { token, baseUrl } })`. |
 | `setSessionModel(sessionId, modelId)` | `:80` | Wraps `conn.unstable_setSessionModel({ sessionId, modelId })`. The agent updates `SessionState.currentModelId` (see agent's [`acp.md`](../web-acp-agent/acp.md) § handlers). |
 | `listSessions()` | `:85` | Wraps SDK's `Agent.listSessions({})` and **flattens** each `SessionInfo` + `_meta.bodhi` into a `SessionInfoView` with numeric timestamps (`updatedAt = Date.parse(info.updatedAt)`, `createdAt`/`turnCount`/`lastModelId` read from `_meta.bodhi`). The picker UI consumes the flat shape. |
@@ -95,7 +99,6 @@ interface AcpRuntime {
     worker: Worker;
     client: AcpClient;
     volumeControl: VolumeControl;
-    mainZenfs: MainZenfs;
     initialize: Promise<void>;
     resolveInit: (volumes: HostVolumeInit[]) => void;
 }
@@ -116,26 +119,24 @@ interface AcpRuntime {
    that hasn't built the agent yet.
 5. Wrap `port1` via `createMessagePortStream`. Frame with
    `ndJsonStream`.
-6. Build the `Client` handler (`:61`) with the holder pattern.
+6. Build the `Client` handler with the holder pattern.
    The handler exposes:
-   - `requestPermission: requestPermissionStub`.
+   - `requestPermission` — one-line cancelled-outcome stub
+     (SDK requires the field; agent never invokes it).
    - `sessionUpdate(params)` →
      `holder.client?.dispatchSessionUpdate(params)`.
    - `extNotification(method, params)` →
      `holder.client?.dispatchExtNotification(method, params)`.
-   - `readTextFile`/`writeTextFile` from
-     `acp/fs-handlers.ts:buildFsHandlers({ view: { list: () =>
-     mainZenfs.list() } })` — the *main thread* ZenFS mirror is
-     the source of truth for IDE-integration reads.
 7. Construct `ClientSideConnection(() => handler, stream)` and
    the `AcpClient` wrapper.
 8. Chain `initialize = initPromise.then(() =>
    client.initialize()).then(resp => { _initResponse = resp;
    })` so the `InitializeResponse` is available globally for
    any reader that needs `agentCapabilities`.
-9. Build the `volumeControl` via `wrapVolumeControl(createVolumeControl(worker),
-   mainZenfs)` — the wrapper mirrors mount/unmount onto
-   `MainZenfs` so `fs/*` handlers stay in sync.
+9. Build the `volumeControl` via `createVolumeControl(worker)`
+   — forwards FSA-handle-bearing mount/unmount requests to the
+   worker over a raw-postMessage sidechannel (FSA handles aren't
+   JSON-serialisable so they can't ride the ACP wire).
 10. Cache + return `_runtime`.
 11. **Tab-close hook** (`:91`) — best-effort `pagehide` +
     `beforeunload` listener that fires
@@ -173,15 +174,11 @@ Each accessor is a one-line getter/setter against a `let` —
 keeps the API testable while preserving reference identity
 across re-renders.
 
-`wrapVolumeControl` (`:111`) is the host-side decorator that
-forwards every mount/unmount to the worker (authoritative)
-*and* to `MainZenfs` (mirror). Worker-side mount errors fail
-the call; main-thread mount errors are logged but never
-surfaced — the handler falls back to the membership check
-inside `fs-handlers.ts` on every call. `dispose()` proxies
-through to the inner `createVolumeControl`'s `dispose` (which
-detaches the `MessagePort` listener and rejects every pending
-mount/unmount).
+`volumeControl` is the host-side `createVolumeControl(worker)`
+client for the worker's mount/unmount sidechannel.
+`dispose()` detaches the `MessagePort` listener and rejects
+every pending mount/unmount. Mount errors propagate to the
+caller; the previous `MainZenfs` mirror layer was removed.
 
 ## Empty sentinels — `acp/empty-sentinels.ts`
 
@@ -395,48 +392,18 @@ Promise<void>`. The host hook closes over `useBodhi`'s
 `login` / `logout` pair and injects the trigger so the
 dispatcher stays React-free + testable.
 
-## `buildFsHandlers` — `acp/fs-handlers.ts:55`
+## fs/* and permissions — removed
 
-Host-side handlers for ACP's `fs/readTextFile` and
-`fs/writeTextFile`. Advertised as the **IDE-integration seam**:
-the built-in `bash` tool never calls these (it talks to the
-agent's `VolumeFileSystem` directly); the handlers exist for
-*external* ACP agents that want to reach the same mounted
-bytes through the protocol.
-
-Path safety (mirrors OS-level checks):
-
-1. **Absolute under `/mnt/`.** Anything else rejects.
-2. **Mount membership.** First segment after `/mnt/` must
-   match a registered mount.
-3. **POSIX normalisation.** `..` resolved against the mount
-   root via `posixResolve` (`:181`); reject if the result
-   escapes the mount.
-4. **Symlink canonicalisation.** `fs.promises.realpath`
-   collapses symlinks; reject if the canonical path leaves
-   the mount.
-
-Deps: `view: VolumeRegistryView` (a `list()` projection of
-the mount registry) and an injectable `fsImpl: FsLike`
-(defaults to the shared `@zenfs/core` module singleton —
-the `MainZenfs` mirror).
-
-Returns `Required<Pick<Client, 'readTextFile' |
-'writeTextFile'>>` — the handler pair `ensureRuntime` plugs
-into the SDK's `Client` callback. `readTextFile` additionally
-applies a `(line, limit)` slice via `applyLineWindow` (`:195`)
-when the request includes window parameters.
-
-## `permissions.ts:requestPermissionStub`
-
-Re-export of the agent-side stub. Returns
-`{ outcome: { outcome: 'cancelled' } }` per the ACP
-`tool-calls.mdx` spec — gives an externally-connected ACP
-agent speaking the same wire surface a spec-conforming refusal
-instead of an opaque JSON-RPC error. The M0 permission bridge
-itself is not implemented; the bash tool runs without invoking
-it. See [`../web-acp-agent/acp.md`](../web-acp-agent/acp.md) §
-permissions for the deferred plan.
+`fs-handlers.ts` (the `fs/readTextFile` + `fs/writeTextFile`
+IDE-integration seam) and `permissions.ts` (the
+`requestPermissionStub` re-export) were both deleted in the
+"adaptive plum" simplification. `clientCapabilities` is now
+`{}` — the architecture is agent-owned filesystem (volumes
+mount inside the worker; the bash tool reads/writes through
+them directly), and the deferred permission bridge will return
+as a coherent end-to-end feature when product-ready. See
+`ai-docs/plans/some-thoughts-on-the-adaptive-plum.md` and
+`ai-docs/web-acp/milestones/deferred.md`.
 
 ## Constants + types — `acp/index.ts`
 

@@ -20,13 +20,13 @@ this file links into it at the moment the agent takes over.
 | `ChatDemo` | main | `components/chat/ChatDemo.tsx` | Calls `useAcp()`. |
 | `useAcp` (facade) | main | `hooks/useAcp.ts` | Composes the seven slice hooks + the inline features memo. |
 | `useAcp{Runtime,Auth,Models,Mcp,Session,Streaming}` + `useMcpInstances` | main | `hooks/useAcp*.ts`, `mcp/useMcpInstances.ts` | Per-concern slices — see [`hooks.md`](./hooks.md). There is no `useAcpFeatures`; features ride a memo + callback inlined in `useAcp.ts`. |
-| `AcpRuntime` singleton | main | `acp/runtime.ts` | Worker, `AcpClient`, `MainZenfs`, `volumeControl`, init promise, auth + session + model-update mutexes. |
+| `AcpRuntime` singleton | main | `acp/runtime.ts` | Worker, `AcpClient`, `volumeControl`, init promise, auth + session + model-update mutexes. |
 | `streamingReducer` + `panelsReducer` | main | `acp/streaming-reducer.ts`, `acp/panels-reducer.ts` | Per-turn vs cross-turn slices over `session/update` + `extNotification`. |
 | `AcpClient` | main | `acp/client.ts` | Typed wrapper over `ClientSideConnection`. |
 | `MessageChannel` (`port1`, `port2`) | shared | (browser) | Transport primitive. |
 | `createMessagePortStream` | either | `runtime/transport/worker-stream.ts` | Byte-stream wrapper around a `MessagePort`. |
 | `ndJsonStream` (`@agentclientprotocol/sdk`) | either | (dep) | NDJSON framing. |
-| Worker boot shim | worker | `agent/agent-worker.ts` | Receives `init`, calls `startAcpAgent`. |
+| Worker boot shim | worker | `agent/agent-worker.ts` | Receives `init`, calls `startAgent`. |
 | Bodhi server | remote | — | OAuth, `/bodhi/v1/models`, LLM streaming endpoints. |
 
 The worker side then runs the host-neutral agent flow at
@@ -86,13 +86,15 @@ double render is safe.
 
 ```ts
 const holder: { client?: AcpClient } = {};
-const fsHandlers = buildFsHandlers({ view: { list: () => mainZenfs.list() } });
 const handler: Client = {
-  requestPermission: requestPermissionStub,
+  // SDK requires `requestPermission`; agent never invokes it.
+  async requestPermission() {
+    return { outcome: { outcome: 'cancelled' } };
+  },
   async sessionUpdate(params) { holder.client?.dispatchSessionUpdate(params); },
-  async extNotification(params) { holder.client?.dispatchExtNotification(params); },
-  async readTextFile(params) { return fsHandlers.readTextFile(params); },
-  async writeTextFile(params) { return fsHandlers.writeTextFile(params); },
+  async extNotification(method, params) {
+    holder.client?.dispatchExtNotification(method, params);
+  },
 };
 const conn = new ClientSideConnection(() => handler, stream);
 const client = new AcpClient(conn);
@@ -108,15 +110,12 @@ holder.client = client;
    re-fetching.
 8. **Wraps `volumeControl`.** `createVolumeControl(worker)`
    gives the main thread a typed mount/unmount client over
-   the raw-postMessage volume sidechannel. The wrap layer
-   `wrapVolumeControl(inner, mainZenfs)` mirrors every mount/unmount
-   onto the `MainZenfs` mirror so `fs/*` handlers stay in
-   sync.
+   the raw-postMessage volume sidechannel.
 9. **Registers a tab-close hook.** `window.addEventListener('beforeunload',
    () => worker.terminate())` so a hard navigation doesn't
    leave the worker orphaned.
 10. Caches `_runtime = { worker, client, volumeControl,
-    mainZenfs, initialize, resolveInit }`. Returns it.
+    initialize, resolveInit }`. Returns it.
 
 ## Phase 2 — Volume resolution + init post
 
@@ -142,7 +141,6 @@ boot effect (see [`volumes.md`](./volumes.md)):
 resolveInit = (volumes) => {
   if (initPosted) return;
   initPosted = true;
-  void mainZenfs.mountAll(volumes);          // mirror on main thread
   worker.postMessage(
     { type: 'init', agentPort: channel.port2, volumes },
     [channel.port2],
@@ -151,14 +149,7 @@ resolveInit = (volumes) => {
 };
 ```
 
-Two things land at this moment:
-
-- The **MainZenfs mirror** starts mounting volumes
-  asynchronously on the main thread (for the `fs/*`
-  IDE-integration seam). `fs-handlers.ts` does a defensive
-  membership check on every call so a slow mount doesn't
-  cause races.
-- The Worker's `init` message lands. Inside the worker:
+The Worker's `init` message lands. Inside the worker:
 
 ## Phase 3 — Worker `init` handler
 
@@ -166,36 +157,31 @@ Two things land at this moment:
 On the first `init`:
 
 1. Reads `__WEB_ACP_DEV__` / `__WEB_ACP_VERSION__` /
-   `__ACP_SDK_VERSION__` Vite-injected globals.
-2. Calls `startAgent(msg.agentPort, msg.volumes ?? [])`.
+   `__WEB_ACP_VERSION__` Vite-injected globals (the previous
+   `__ACP_SDK_VERSION__` global is no longer needed — the
+   agent package pins its own SDK version).
+2. Calls `boot(msg.agentPort, msg.volumes ?? [])`.
 
-`startAgent`:
+`boot`:
 
-1. `transport = createMessagePortStream(port)`.
-2. `provider = new BodhiProvider()`.
-3. `streamOverrides = { current: {} }` — per-turn override
-   holder threaded between the engine and `createStreamFn`.
-4. `inline = createInlineAgent(createStreamFn(provider, ...))`.
-5. `db = openSessionDb()` — Dexie `SessionStoreDb`.
-6. `registry = new ZenfsVolumeRegistry()`.
-7. `attachVolumeChannel(scope, registry)` — wires the
+1. `db = openSessionDb()` — Dexie `SessionStoreDb`.
+2. `registry = new ZenfsVolumeRegistry()`.
+3. `attachVolumeChannel(scope, registry)` — wires the
    raw-postMessage sidechannel for runtime mount/unmount.
-8. `initialVolumes = await Promise.all(hostVolumes.map(toAgentVolumeInit))`
+4. `await registry.mountAll(await Promise.all(hostVolumes.map(toAgentVolumeInit)))`
    — converts each `HostVolumeInit { handle | seed }` into
-   the agent's `VolumeInit { fs, initialize? }`.
-9. `await registry.mountAll(initialVolumes)` — synchronous
-   re: ACP wire boot; mounts complete *before*
-   `startAcpAgent` returns so the first `prompt` already sees
-   them.
-10. `services = assembleServices({ inline, bodhi: provider,
-    store: createStoreFromDb(db), registry,
-    features: createFeatureStore(db),
-    mcpToggles: createMcpToggleStore(db), streamOverrides })`.
-11. `startAcpAgent(transport, services, { isDev, buildVersion,
-    acpSdkVersion })`. The agent is now ready to receive ACP
-    requests.
+   the agent's `VolumeInit { fs, initialize? }` and mounts
+   them before the agent boots.
+5. `startAgent({ transport: createMessagePortStream(port),
+   provider: new BodhiProvider(), registry,
+   sessions: createStoreFromDb(db),
+   features: createFeatureStore(db),
+   mcpToggles: createMcpToggleStore(db),
+   isDev: IS_DEV, buildVersion: BUILD_VERSION })`. The agent
+   package handles inline-agent + stream-fn + service-bag
+   assembly internally.
 
-The whole worker boot is ~97 lines (`agent/agent-worker.ts`).
+The whole worker boot is ~50 lines (`agent/agent-worker.ts`).
 Everything beyond this point is the host-neutral agent flow
 documented at
 [`../web-acp-agent/startup-sequence.md`](../web-acp-agent/startup-sequence.md).
@@ -206,11 +192,11 @@ The host-side promise chain `client.initialize()` was
 deferred until the worker `init` post completed. Once both
 sides connect:
 
-1. `AcpClient.initialize()` (`:54`) sends `initialize({
-   protocolVersion: 1, clientCapabilities: { fs: {
-   readTextFile: true, writeTextFile: true } } })`. The `fs`
-   capability advertises the IDE-integration seam; built-in
-   `bash` doesn't use it, but external ACP agents could.
+1. `AcpClient.initialize()` sends `initialize({
+   protocolVersion: 1, clientCapabilities: {} })`. The
+   architecture is agent-owned filesystem (volumes mount
+   inside the worker); the `fs/*` IDE seam was dropped in
+   the "adaptive plum" simplification.
 2. The agent responds (see
    [`../web-acp-agent/startup-sequence.md`](../web-acp-agent/startup-sequence.md)
    § Phase 2). The response is cached on the runtime as

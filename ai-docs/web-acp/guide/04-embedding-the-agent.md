@@ -1,10 +1,10 @@
-# Chapter 4 — Embedding the agent (both sides)
+# Chapter 4 — Embedding the agent
 
-> Goal: see what `@bodhiapp/web-acp-agent` actually needs to run, and
-> what a host (the tutorial CLI) has to bring to make it run. The
-> chapter is split into the two halves explicitly: **agent-side
-> runtime requirements** and **client-side host requirements**, with
-> the wire that joins them in the middle.
+> Goal: show what `@bodhiapp/web-acp-agent` needs to run and what a
+> host (the tutorial CLI) has to bring to make it run. After the
+> "adaptive plum" simplification the boot surface is one verb:
+> `startAgent({ transport, provider, ... })`. Embedded hosts also
+> use `createInMemoryDuplex()` to wire a paired client connection.
 
 ## 4.1 The two halves of an embedded ACP setup
 
@@ -13,86 +13,95 @@
 │                                                                       │
 │  CLIENT SIDE                                          AGENT SIDE      │
 │  ───────────                                          ──────────      │
-│  ClientSideConnection ◄── ndJsonStream ──► AgentSideConnection        │
+│  ClientSideConnection ◄── ndJsonStream ──► startAgent({transport})    │
 │       │                       │                       │               │
-│  Client handler:         in-memory duplex        AcpAgentAdapter      │
-│  • sessionUpdate()       (TransformStream         (the engine)        │
-│  • requestPermission     pair: client↔agent)          │               │
-│       │                                          AcpAdapterServices   │
-│  EmbeddedAgent                                   (the services bag)   │
-│  facade:                                              │               │
-│  • initialize                                    BodhiProvider ───► HTTPS BodhiApp
-│  • authenticate                                  InlineAgent (pi-agent-core)
-│  • serverInfo                                    McpConnectionPool
-│  • close                                         CommandsFs           │
-│                                                  ZenfsVolumeRegistry  │
+│  Client handler:         in-memory duplex        (engine, internal)   │
+│  • sessionUpdate()       (TransformStream             │               │
+│  • requestPermission     pair: client↔agent)     BodhiProvider ───► BodhiApp
+│       │                                          (setAuthToken pings  │
+│  EmbeddedAgent facade:                            /bodhi/v1/info,     │
+│  • initialize                                     return rides        │
+│  • authenticate (returns server info in _meta)    AuthenticateResponse│
+│  • close                                          ._meta.bodhi.       │
+│                                                   providerInfo)       │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-Same Node process, two named halves. The transport between them is a
-WHATWG `TransformStream` pair (no socket, no Worker). The exact same
-client and agent code work over a network transport — see
-`agent-client-protocol/docs/protocol/transports.mdx` for the
-generalised model.
+Same Node process, two halves, joined by an in-memory byte-stream
+duplex. Same code runs over a `MessagePort` (browser worker) or any
+other byte-stream transport — see
+`agent-client-protocol/docs/protocol/transports.mdx` for the wire
+contract.
 
-## 4.2 Agent-side: what the runtime needs
+## 4.2 Agent-side: what `startAgent` needs
 
-`startAcpAgent(transport, services, options)` from
-`packages/web-acp-agent/src/bootstrap.ts` is the single boot call. To
-satisfy it the host has to supply two things: a byte-stream transport
-and a `services` bag.
-
-### 4.2.1 The services bag
-
-Defined as `AcpAdapterServices` at
-`packages/web-acp-agent/src/acp/engine/services.ts`. The host
-constructs it via `assembleServices(...)` (same file). Required vs
-optional:
-
-| Field             | Type                           | Required? | What it powers                              |
-|-------------------|--------------------------------|-----------|---------------------------------------------|
-| `inline`          | `InlineAgent` (pi-agent-core)  | yes       | The LLM turn loop (`prompt` request)        |
-| `bodhi`           | `LlmProvider` impl             | yes       | Auth + model catalog + `_bodhi/server/info` |
-| `mcpPool`         | `McpConnectionPool`            | defaults  | MCP server connections                      |
-| `commandsFs`      | `CommandsFs`                   | defaults  | Vault `.pi/commands/` + `.pi/prompts/`      |
-| `store`           | `SessionStore`                 | optional  | Persisted sessions (loadSession)            |
-| `registry`        | `VolumeRegistry`               | optional  | The `bash` tool + `_bodhi/volumes/list`     |
-| `features`        | `FeatureStore`                 | optional  | Per-session feature flags                   |
-| `mcpToggles`      | `McpToggleStore`               | optional  | Per-session MCP enable bits                 |
-| `streamOverrides` | `StreamOverridesRef`           | optional  | Per-turn `tool_choice` overrides            |
-
-What the tutorial CLI passes (see
-`packages/tutorial-cli-client/src/agent/embed.ts:createEmbeddedAgent`):
+The whole boot is a single call. From
+`packages/tutorial-cli-client/src/agent/embed.ts`:
 
 ```ts
-const services = assembleServices({
-  inline,
-  bodhi: provider,
-  registry: new ZenfsVolumeRegistry(),  // empty — no mounted volumes
+const duplex = createInMemoryDuplex();
+const { dispose } = startAgent({
+  transport: duplex.agent,
+  provider: new BodhiProvider(),
 });
 ```
 
-Just `inline`, `bodhi`, and an empty volume registry. Everything else
-takes the default or is omitted. Consequences:
+Two required fields, four optional. Full surface from
+`packages/web-acp-agent/src/api/types.ts`:
 
-- **No `store`** — sessions are in-memory; `Agent.listSessions` /
-  `loadSession` won't return persisted rows. Fine: we never call them.
-- **Empty `registry`** — the `bash` tool finds zero volumes and stays
-  unregistered in the agent's tool catalog. Fine: we never call
-  `prompt`, so no tools are invoked.
-- **No `features` / `mcpToggles`** — feature config and per-session
-  MCP enable bits stay at defaults; we don't surface them.
-- **Defaulted `mcpPool` / `commandsFs`** — empty pool, empty commands
-  filesystem; harmless.
+| Field | Required? | What it powers |
+|-------|-----------|----------------|
+| `transport` | yes | byte-stream pair carrying ACP JSON-RPC frames |
+| `provider` | yes | `LlmProvider` impl (auth + model catalog; default `BodhiProvider`) |
+| `volumes` | no | initial `VolumeInit[]` mounted before the first prompt; runtime mount/unmount via `handle.mount`/`unmount` |
+| `sessions` | no | per-session transcript store; default is in-memory |
+| `preferences` | no | unified per-session prefs (feature toggles, MCP toggles); default is in-memory |
+| `buildVersion` | no | reported via `/version` (default `"0.0.0"`) |
 
-The minimal services bag is enough because we exercise only
-`initialize`, `authenticate`, and one extension method. Adding
-features (prompts, sessions, volumes) is additive — drop the
-implementation in.
+The tutorial CLI passes only the two required fields. Consequence:
+- Sessions live in memory; closing the process loses them.
+- Preferences live in memory.
+- No volumes mounted; the agent's `bash` tool doesn't register.
 
-### 4.2.2 The transport (`AcpTransport`)
+That's enough to exercise `initialize` and `authenticate` — which
+is all the tutorial needs. Persisting sessions or mounting a vault
+is purely additive: inject your own `SessionStore` /
+`PreferenceStore` / `volumes: VolumeInit[]`.
 
-Defined at `packages/web-acp-agent/src/bootstrap.ts:AcpTransport`:
+What `startAgent` does behind the call (the host never sees these):
+1. Wraps `transport` with `ndJsonStream`.
+2. Builds a `StreamOverridesRef` + `createStreamFn(provider, ...)`
+   + `createInlineAgent(streamFn)`.
+3. Constructs an internal `ZenfsVolumeRegistry` and mounts the
+   supplied `volumes`.
+4. Picks in-memory defaults for any store you didn't supply.
+5. Calls `assembleServices(...)` internally.
+6. Constructs `AgentSideConnection` with the engine
+   (`AcpAgentAdapter`) inside its synchronous factory.
+7. Returns `{ dispose, mount, unmount }`.
+
+### Connectivity probe — folded into `authenticate`
+
+`LlmProvider.setAuthToken` returns a `Promise<unknown>`. The agent
+calls it during `handleAuthenticate`, captures the return value,
+and surfaces it on `AuthenticateResponse._meta.bodhi.providerInfo`.
+For `BodhiProvider`, `setAuthToken` pings `/bodhi/v1/info` after
+storing credentials and returns the response payload — so the host
+gets connectivity info as a free side effect of authenticating, no
+separate `/server/info` call needed.
+
+```ts
+const authResp = await conn.authenticate({ methodId: BODHI_AUTH_METHOD_ID, _meta: { token, baseUrl } });
+const info = readBodhiServerInfo(authResp); // typed cast helper
+```
+
+Auth-fundamentally-invalid (401/403) errors propagate as
+`authenticate` failures. Transient connectivity errors are the
+provider's call — for a hard probe failure we propagate; for a
+soft warning the provider can return a discriminated shape and let
+the host decide.
+
+### Transport contract
 
 ```ts
 interface AcpTransport {
@@ -101,131 +110,120 @@ interface AcpTransport {
 }
 ```
 
-A pair of WHATWG byte streams. `startAcpAgent` wraps them in
-`ndJsonStream` and hands them to `AgentSideConnection`. The transport
-is the **only** thing the agent package knows about how it's
-reached — swap a different pair, and the same agent code runs over
-HTTP/SSE, a Worker `MessagePort`, stdio, or anything else that can
-carry bytes.
+Browser worker hosts adapt a `MessagePort` to this shape; embedded
+hosts use `createInMemoryDuplex()`; future HTTP/SSE hosts adapt an
+SSE response. The agent package's framing layer never sees the
+transport directly — only the stream pair.
 
-## 4.3 Client-side: what the host has to bring
+## 4.3 Client-side: what an embedded host writes
 
-The host needs four things on the client side. All four live in
-`packages/tutorial-cli-client/src/agent/embed.ts`.
+Three things, all standard ACP SDK use:
 
-### 4.3.1 An in-memory duplex (the byte-stream pair)
+### 4.3.1 An in-memory duplex
 
 ```ts
-// src/agent/duplex.ts
-const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
-const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
-return {
-  agent:  { readable: clientToAgent.readable, writable: agentToClient.writable },
-  client: { readable: agentToClient.readable, writable: clientToAgent.writable },
-};
+import { createInMemoryDuplex } from "@bodhiapp/web-acp-agent";
+const duplex = createInMemoryDuplex();
 ```
 
-Two `TransformStream`s, one per direction. Each side gets the
-*other's* writable as its readable. Together they satisfy the
-`AcpTransport` shape on both sides without leaving the process.
+`agent` goes to `startAgent({ transport })`; `client` goes to the
+SDK's `ndJsonStream`. The helper does not know which half hosts
+which side — that's the embedder's wiring choice.
 
-Why a function (not a constant): each embed needs its own pair so two
-parallel embeds don't share state. (Not relevant for the tutorial
-which only runs one, but the contract is reusable.)
-
-### 4.3.2 An ndJson-framed client-side stream
+### 4.3.2 An ndJson-framed client stream
 
 ```ts
 import { ndJsonStream } from "@agentclientprotocol/sdk";
-const clientStream = ndJsonStream(duplex.client.writable, duplex.client.readable);
+const stream = ndJsonStream(duplex.client.writable, duplex.client.readable);
 ```
 
-`ndJsonStream` from the SDK is the framing layer. It turns the byte
-streams into a `Stream<JSON-RPC message>`. The agent half is wrapped
-internally by `startAcpAgent`; the client half is wrapped here.
+> SDK types are imported directly from `@agentclientprotocol/sdk`,
+> not from `@bodhiapp/web-acp-agent`. The agent package
+> deliberately doesn't re-export them.
 
-> Note: SDK types are imported **directly from
-> `@agentclientprotocol/sdk`**, not from `@bodhiapp/web-acp-agent`.
-> The agent package deliberately doesn't re-export them
-> (`packages/web-acp-agent/src/index.ts` line 123 has the explicit
-> comment).
+### 4.3.3 A `Client` handler
 
-### 4.3.3 A `Client` handler object
-
-ACP is bidirectional: the agent calls back into the client for some
-things. The SDK requires a `Client` object on construction:
+ACP is bidirectional — the agent calls back into the client. The
+SDK requires a `Client` object on connection construction:
 
 ```ts
 import type { Client } from "@agentclientprotocol/sdk";
-import { requestPermissionStub } from "@bodhiapp/web-acp-agent";
 
 const handler: Client = {
-  requestPermission: requestPermissionStub,  // returns "cancelled"
-  async sessionUpdate() {},                  // ignore streaming
+  // SDK requires `requestPermission`; agent never invokes it.
+  async requestPermission() {
+    return { outcome: { outcome: "cancelled" } };
+  },
+  async sessionUpdate() {},
 };
 ```
 
-What we stub:
+Two fields:
+- `sessionUpdate(...)` — streamed chunks during a prompt turn.
+  This tutorial doesn't call `prompt`, so the no-op is safe.
+- `requestPermission(...)` — the SDK's `Client` interface
+  requires this field. The agent doesn't currently issue any
+  permission requests (the destructive-command bridge is deferred —
+  see `ai-docs/web-acp/milestones/deferred.md`), so a one-line
+  cancelled-outcome stub satisfies the type and the wire.
 
-- `sessionUpdate(...)` — streaming `agent_message_chunk` /
-  `tool_call_update` notifications during a prompt turn. We don't
-  call `prompt`, so nothing arrives; no-op is safe.
-- `requestPermission(...)` — agent asking the user "may I run this
-  destructive tool?". We use the agent package's exported stub which
-  always returns `cancelled`. Safe default.
-
-Two methods we don't even stub because the agent never calls them in
-the calls we make: `fs/read_text_file`, `fs/write_text_file`. The
-`Client` interface marks them optional, so omitting is fine.
+Two methods we don't even stub: `fs/read_text_file`,
+`fs/write_text_file`. The agent owns its own filesystem (volumes
+mount inside the runtime), so `clientCapabilities` advertises
+neither — see § 4.5.
 
 ### 4.3.4 A `ClientSideConnection`
 
 ```ts
 import { ClientSideConnection } from "@agentclientprotocol/sdk";
-const conn = new ClientSideConnection(() => handler, clientStream);
+const conn = new ClientSideConnection(() => handler, stream);
 ```
 
-The SDK's wrapper around an ACP client connection. Exposes
-`initialize`, `authenticate`, `extMethod`, `newSession`, `prompt`,
-etc. — all the methods we discussed in Chapter 2.
-
-The `() => handler` thunk is a holder pattern: `ClientSideConnection`
-calls it synchronously during construction to obtain its `Client`
-back-reference. Since our handler is created beforehand, the thunk
-just returns it.
+The SDK wrapper exposes `initialize`, `authenticate`, `extMethod`,
+`newSession`, `prompt`, and friends.
 
 ## 4.4 Putting it together
 
-`createEmbeddedAgent()` in `embed.ts` is ~80 lines. Read it as four
-ordered blocks:
+`createEmbeddedAgent()` in
+`packages/tutorial-cli-client/src/agent/embed.ts` is ~50 lines.
+The shape:
 
-1. **Build services bag** — `BodhiProvider`, `InlineAgent` via
-   `createInlineAgent(createStreamFn(provider, () => ({})))`,
-   `assembleServices({ inline, bodhi, registry })`.
-2. **Open duplex + start agent** — `createInMemoryDuplex()`,
-   `startAcpAgent(duplex.agent, services, { isDev: false,
-   buildVersion, acpSdkVersion, onAdapter })`. The `onAdapter`
-   callback captures the `AcpAgentAdapter` for `dispose()` later.
-3. **Wire client side** — `ndJsonStream(client.writable,
-   client.readable)`, build `Client` handler, construct
-   `ClientSideConnection`.
-4. **Return facade** — an `EmbeddedAgent` exposing only what the CLI
-   uses: `initialize`, `authenticate`, `serverInfo`, `close`. Each is
-   a thin wrapper over the underlying `conn` method (see Chapter 2
-   for which calls these are).
+1. **Build duplex + start agent** —
+   `createInMemoryDuplex()` then `startAgent({ transport, provider })`
+   captures `dispose` for teardown.
+2. **Wire client side** — `ndJsonStream(...)`, build the `Client`
+   handler, construct `ClientSideConnection`.
+3. **Return facade** — an `EmbeddedAgent` with `initialize`,
+   `authenticate`, `close`. `authenticate` returns the
+   `AuthenticateResponse`; the host reads
+   `_meta.bodhi.providerInfo` for connectivity info (see § 4.2
+   "Connectivity probe").
 
-The bootstrap glue is `packages/tutorial-cli-client/src/bootstrap.ts:startAgent`.
-After `runAuthIfNeeded` returns the JWT, it instantiates the
-`EmbeddedAgent`, walks `initialize → authenticate → serverInfo`, and
-emits the connectivity ack before the REPL prompt renders.
+The bootstrap glue is
+`packages/tutorial-cli-client/src/bootstrap.ts:startAgent` (the
+host's outer name, not the agent package's verb). After
+`runAuthIfNeeded` returns the JWT, it instantiates the
+`EmbeddedAgent`, walks `initialize → authenticate`, reads the
+provider info off the auth response, and emits the connectivity
+ack before the REPL prompt renders.
 
-## 4.5 The `vitest`-time alias (one footgun)
+## 4.5 Filesystem capabilities — agent-owned, not client-delegated
 
-Removed in the latest cleanup — the package no longer ships a vitest
-config. If a future unit test needs to import from
-`@bodhiapp/web-acp-agent`, it will trip on
-`@zenfs/core/vfs` (a known subpath-resolution gap). The alias used by
-`packages/cli-acp-client/vitest.config.ts` is the canonical workaround:
+Standard ACP delegates filesystem reads/writes to the client via
+`fs/read_text_file` and `fs/write_text_file`. We took a different
+posture: the agent owns its own filesystem (volumes mount inside
+the runtime; the bash tool reads/writes through them directly).
+Both hosts therefore advertise `clientCapabilities: {}` — no
+`fs/*` claims. The architectural rationale is in
+`ai-docs/web-acp/steering/02-architecture.md` § "ACP architectural
+postures".
+
+## 4.6 Test-time vitest alias
+
+The package no longer ships its own vitest config. If a future
+unit test imports from `@bodhiapp/web-acp-agent`, it may trip on
+`@zenfs/core/vfs` (subpath-resolution gap). The alias used by
+similar packages in this repo:
 
 ```ts
 "@zenfs/core/vfs": path.resolve(
@@ -233,50 +231,52 @@ config. If a future unit test needs to import from
 ),
 ```
 
-## 4.6 What scales when we extend
+## 4.7 What scales when we extend
 
-Each agent-side optional in §4.2.1 is the extension point for a
-future tutorial step:
+Each optional in §4.2 is the extension point for a future tutorial
+step:
 
-| Capability we want                           | Service to add        |
-|----------------------------------------------|-----------------------|
-| Persistent sessions, list / load / fork      | `store: SessionStore` |
-| `bash` tool over a `$cwd` mount              | `registry` (with mounts) |
-| Per-session feature flags (`forceToolCall`)  | `features`            |
-| Pre-approved MCP server toggles              | `mcpToggles`          |
+| Capability we want                          | Pass into `startAgent` |
+|---------------------------------------------|------------------------|
+| Persistent sessions across runs             | `sessions: SessionStore`   |
+| `bash` tool over a `$cwd` mount             | `volumes: [{ mountName, fs, … }]` |
+| Per-session feature flags (`forceToolCall`) | `preferences: PreferenceStore` (settable via `setSessionConfigOption`) |
+| Pre-approved MCP server toggles             | `preferences: PreferenceStore` (set via `_bodhi/mcp/toggles/set`) |
 
 On the client side, the additions are equally additive: implement
-`Client.sessionUpdate` to handle streaming chunks, expose
-`prompt(...)` on the `EmbeddedAgent` facade, and the next layer of
-features is on. None of these changes require touching the
-duplex / framing / connection plumbing.
+`Client.sessionUpdate` to render streaming chunks, expose
+`prompt(...)` on the `EmbeddedAgent` facade, and the next layer
+of features is on. None of these require touching the duplex /
+framing / connection plumbing.
 
-## 4.7 Reference
+## 4.8 Reference
 
 ACP submodule:
 
 - [`agent-client-protocol/docs/protocol/transports.mdx`](../../../agent-client-protocol/docs/protocol/transports.mdx) — wire framing and the byte-stream contract.
 - [`agent-client-protocol/docs/protocol/overview.mdx`](../../../agent-client-protocol/docs/protocol/overview.mdx) — connection lifecycle.
 
-Agent-side:
+Agent package:
 
-- `packages/web-acp-agent/src/bootstrap.ts:startAcpAgent`
-- `packages/web-acp-agent/src/acp/engine/services.ts:assembleServices`
-- `packages/web-acp-agent/src/acp/agent-adapter.ts:AcpAgentAdapter`
+- `packages/web-acp-agent/src/api/start-agent.ts:startAgent`
+- `packages/web-acp-agent/src/api/in-memory-duplex.ts:createInMemoryDuplex`
+- `packages/web-acp-agent/src/api/types.ts` — `StartAgentOptions`,
+  `StartAgentHandle`, `AcpTransport`, `InMemoryDuplex`
 
-Client-side (tutorial CLI):
+Test-only surface (subpath import `@bodhiapp/web-acp-agent/test-utils`):
 
-- `packages/tutorial-cli-client/src/agent/duplex.ts:createInMemoryDuplex`
+- `AcpAgentAdapter`, `assembleServices`, `createInlineAgent`,
+  `InlineAgent`, `createStreamFn`, `McpConnectionPool`,
+  `CommandsFs`, `createZenfsCommandsFs` — for tests that drive
+  the engine layer directly without going through `startAgent`.
+
+Embedded host:
+
 - `packages/tutorial-cli-client/src/agent/embed.ts:createEmbeddedAgent`
 - `packages/tutorial-cli-client/src/bootstrap.ts:startAgent`
 
-Reference (richer) embed:
+Browser worker host:
 
-- `packages/cli-acp-client/src/acp/embedded-host.ts` — same shape with
-  Sqlite stores + FSA volumes wired in. Use as a model when expanding
-  the tutorial in later milestones. (Note: this file currently has a
-  broken import — `ClientSideConnection` and `ndJsonStream` should
-  come from `@agentclientprotocol/sdk`, not `@bodhiapp/web-acp-agent`.
-  cli-acp-client's `tsc --noEmit` is a no-op due to the
-  `files: [] + references` shape, so the bug isn't surfaced by its
-  CI.)
+- `packages/web-acp/src/agent/agent-worker.ts` — same `startAgent`
+  call shape, with Dexie-backed stores and an FSA-backed volume
+  registry for persistence.

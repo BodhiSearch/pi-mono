@@ -16,9 +16,12 @@ The browser host owns:
 - The **volume-control sidechannel** that carries FSA handles
   between the main thread and the worker (the ACP NDJSON wire
   can't carry handles because they're not JSON-serialisable).
-- The **main-thread ZenFS mirror** that serves the `fs/*`
-  IDE-integration seam.
 - The **`useVolumes` React hook** that drives the picker UI.
+
+The duplicate main-thread `MainZenfs` mirror that backed the
+`fs/*` IDE-integration seam was removed in the "adaptive plum"
+simplification — the worker's `ZenfsVolumeRegistry` is now the
+only mount.
 
 Agent-side counterparts (interface + ZenFS-backed registry)
 live at [`../web-acp-agent/volumes.md`](../web-acp-agent/volumes.md).
@@ -129,10 +132,6 @@ dispose() }`. Implementation:
 - `dispose()` removes the listener and rejects every pending
   promise with `'volume-control disposed'`.
 
-The host's `acp/runtime.ts:wrapVolumeControl` decorates this
-with the `MainZenfs` mirror so the same calls also run on the
-main-thread ZenFS context.
-
 ## FSA handle persistence — `vault/fsa-handle-store.ts`
 
 `VolumeHandleRecord` (`:19`) — `{ handle, mountName,
@@ -166,46 +165,6 @@ Key functions:
   then appends `-1`, `-2`, … if needed. Once a volume is
   removed the name is free again — re-adding the same
   directory right after removing it keeps the original name.
-
-## Main-thread ZenFS mirror — `vault/main-zenfs.ts:MainZenfs`
-
-A *duplicate* ZenFS context on the main thread, mounting the
-**same** `FileSystemDirectoryHandle`s as the worker. Required
-because:
-
-- The worker owns the source-of-truth ZenFS VFS for the
-  agent's `bash` tool.
-- The M2.3 `fs/*` handlers on the main thread need to read /
-  write the same bytes (for external ACP agents that consume
-  the IDE-integration seam).
-- Round-tripping every `fs/*` call through the worker would
-  add latency + bottleneck the wire.
-- FSA handles are structured-cloneable and the underlying OS
-  storage is shared across realms, so two `WebAccess` backends
-  behind the same handle see the same bytes.
-
-`MainZenfs.mount(init: HostVolumeInit)` produces the same
-end-state as the worker side (an FSA-backed mount or an
-InMemory-backed seed at the same `/mnt/<name>` path) but the
-*mechanism* differs: the agent worker seeds an InMemory
-volume via `VolumeInit.initialize?.()` (the host wires this
-up in `runtime/volumes-fsa/backends.ts:toAgentVolumeInit`),
-while `MainZenfs.mount` calls `mount(...)` first and then
-invokes `seedInMemoryBackend(mountPath, init.seed)` inline.
-Tracked separately in a `Map<string, MainMountSnapshot>`
-(`#mounted`).
-
-`list()` is what `acp/fs-handlers.ts:buildFsHandlers` reads
-to validate mount membership before serving a `fs/*` request.
-
-**Caveat (carried in source comment):** two backends behind
-the same handle don't coordinate writes. The built-in `bash`
-tool never calls `fs/*`, so this is purely a seam for
-external ACP agents; concurrent writes from inside and
-outside the worker aren't expected until a later milestone
-introduces explicit coordination. In-memory seeds cannot be
-shared across realms; seed-mode volumes get their own
-`InMemory` instance seeded with identical content.
 
 ## React hook — `hooks/useVolumes.ts`
 
@@ -285,8 +244,9 @@ persisted handles into `initialMounts`.
   [`../web-acp-agent/volumes.md`](../web-acp-agent/volumes.md).
 - Worker boot that calls `attachVolumeChannel`:
   [`transport.md`](./transport.md).
-- IDE-integration `fs/*` handlers backed by `MainZenfs`:
-  [`acp.md`](./acp.md) § fs-handlers.
+<!-- IDE-integration fs/* handlers were removed in the
+"adaptive plum" simplification; see acp.md § "fs/* and
+permissions — removed". -->
 - React hook composition:
   [`hooks.md`](./hooks.md).
 - E2E priming via `useDevSeedBoot`:

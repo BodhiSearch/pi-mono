@@ -1,22 +1,21 @@
 /**
- * Worker-side control channel for runtime volume mount/unmount.
+ * Worker-side control channel for runtime volume mount/unmount. FSA
+ * `FileSystemDirectoryHandle`s are structured-cloneable but not
+ * JSON-serialisable, so they can't ride the ACP NDJSON wire — we use
+ * a dedicated raw-`postMessage` sidechannel on the worker global scope.
  *
- * FSA `FileSystemDirectoryHandle`s are structured-cloneable but not
- * JSON-serialisable, so they can't ride the ACP wire (which is
- * ndJson over a MessageChannel). We keep a dedicated raw-`postMessage`
- * side channel on the worker global scope for volume lifecycle events
- * that carry handles. The main thread sends `volumes/mount` /
- * `volumes/unmount`; the worker replies on the same channel with a
- * correlation id so the caller can await the result.
- *
- * The channel speaks the host-shaped `HostVolumeInit` (handle | seed)
- * on the wire; the worker bootstrap converts that into the agent's
- * transport-agnostic `VolumeInit` via `toAgentVolumeInit` before
- * mounting.
+ * The target is a `MountTarget` (matches `StartAgentHandle.mount`/
+ * `unmount`); the worker bootstrap converts host-shaped `HostVolumeInit`
+ * into the agent's transport-agnostic `VolumeInit` via
+ * `toAgentVolumeInit` before forwarding.
  */
-import type { VolumeRegistry } from '@bodhiapp/web-acp-agent';
 import { toAgentVolumeInit } from './backends';
 import type { HostVolumeInit } from './types';
+
+export interface MountTarget {
+  mount(init: import('@bodhiapp/web-acp-agent').VolumeInit): Promise<void>;
+  unmount(mountName: string): Promise<void>;
+}
 
 export interface VolumeMountRequest {
   type: 'volumes/mount';
@@ -49,14 +48,9 @@ export interface VolumeUnmountReply {
 export type VolumeControlRequest = VolumeMountRequest | VolumeUnmountRequest;
 export type VolumeControlReply = VolumeMountReply | VolumeUnmountReply;
 
-/**
- * Wire a `VolumeRegistry` to the worker's `message` events. Ignores
- * anything that isn't a volume-control message so it coexists with the
- * agent init handshake on the same worker scope.
- */
 export function attachVolumeChannel(
   scope: DedicatedWorkerGlobalScope,
-  registry: VolumeRegistry
+  target: MountTarget
 ): () => void {
   const listener = async (event: MessageEvent<unknown>): Promise<void> => {
     const msg = event.data as VolumeControlRequest | undefined;
@@ -64,7 +58,7 @@ export function attachVolumeChannel(
     if (msg.type === 'volumes/mount') {
       try {
         const agentInit = await toAgentVolumeInit(msg.init);
-        await registry.mount(agentInit);
+        await target.mount(agentInit);
         scope.postMessage(<VolumeMountReply>{
           type: 'volumes/mount:reply',
           id: msg.id,
@@ -84,7 +78,7 @@ export function attachVolumeChannel(
     }
     if (msg.type === 'volumes/unmount') {
       try {
-        await registry.unmount(msg.mountName);
+        await target.unmount(msg.mountName);
         scope.postMessage(<VolumeUnmountReply>{
           type: 'volumes/unmount:reply',
           id: msg.id,

@@ -7,7 +7,6 @@ export interface AcpAdapterContext {
   readonly services: AcpAdapterServices;
   readonly runtime: AcpSessionRuntime;
   readonly driver: PromptTurnDriver;
-  readonly isDev: boolean;
   readonly buildVersion: string;
 }
 

@@ -1,21 +1,17 @@
 // Public barrel for `@bodhiapp/web-acp-agent`.
 //
-// Two layers of consumer:
-//   - host runtimes (browser worker, Node CLI) call `startAcpAgent`
-//     with a transport + services bag and never touch the internals;
-//   - tests / advanced hosts may import `AcpAgentAdapter`,
-//     `assembleServices`, the wire constants, or the `*Provider` /
-//     `*Store` interfaces directly.
+// Hosts call `startAgent({ transport, provider, ... })` and (for
+// in-process embeds) `createInMemoryDuplex()`. Everything else
+// here is host-implementable surface (storage interfaces, providers,
+// volume registry) or wire constants for the `_bodhi/*` extensions.
+//
+// SDK types come from `@agentclientprotocol/sdk` directly; advanced
+// surface (AcpAgentAdapter, assembleServices, InlineAgent) lives
+// at `@bodhiapp/web-acp-agent/test-utils`.
 
-export { AcpAgentAdapter, type AcpAgentAdapterOptions } from './acp/agent-adapter';
-export {
-  type AcpAdapterServices,
-  type AssembleServicesOptions,
-  assembleServices,
-  type StreamOverridesRef,
-} from './acp/engine/services';
-export { requestPermissionStub } from './acp/permissions';
-export { toAvailableCommand, toolTitle } from './acp/wire-utils';
+export { startAgent, createInMemoryDuplex } from './api';
+export type { AcpTransport, InMemoryDuplex, StartAgentHandle, StartAgentOptions } from './api';
+
 export {
   apiFormatOfModel,
   BODHI_PROVIDER_TAG,
@@ -23,66 +19,7 @@ export {
   type LlmAuthCredential,
   type LlmProvider,
 } from './agent/bodhi-provider';
-export {
-  COMMANDS_DIR_RELPATH,
-  type CommandDef,
-  type CommandSource,
-  type CommandsFs,
-  type CommandsFsEntry,
-  type CommandsLoaderInput,
-  canonicalCommandName,
-  createZenfsCommandsFs,
-  type ExpansionResult,
-  expandCommand,
-  type FrontMatter,
-  loadCommandsFromVolumes,
-  loadPromptsFromVolumes,
-  type ParseResult,
-  PROMPTS_DIR_RELPATH,
-  parseFrontMatter,
-} from './agent/commands';
-export {
-  type BuiltinAction,
-  type BuiltinCommand,
-  type BuiltinHandlerCtx,
-  type BuiltinMcpInstance,
-  type BuiltinResult,
-  builtinAvailableCommands,
-  findBuiltin,
-  isBuiltinName,
-} from './agent/commands/builtins';
-export {
-  createInlineAgent,
-  type InlineAgent,
-  type InlineAgentSetModelOptions,
-} from './agent/inline-agent';
-export {
-  type CreateMcpClientResult,
-  createMcpAgentTool,
-  createMcpClient,
-  MCP_TOOL_NAME_SEPARATOR,
-  type McpAcquireResult,
-  McpConnectionPool,
-  type McpPoolEvent,
-  type McpPoolEventType,
-  type McpPoolListener,
-  type McpToolAdapterDeps,
-  type McpToolDescriptor,
-  type McpToolDetails,
-  mcpToolName,
-} from './agent/mcp';
-export {
-  createStreamFn,
-  type StreamOptionOverrides,
-  type StreamOverrideProvider,
-} from './agent/stream-fn';
-export {
-  BASH_OUTPUT_BYTE_LIMIT,
-  type BashToolDeps,
-  type BashToolDetails,
-  type BashToolInput,
-  createBashTool,
-} from './agent/tools/bash-tool';
+
 export {
   type VolumeInit,
   type VolumeRegistry,
@@ -90,28 +27,37 @@ export {
   type VolumeSnapshot,
   ZenfsVolumeRegistry,
 } from './agent/volume-registry';
-export { type AcpTransport, type StartAcpAgentOptions, startAcpAgent } from './bootstrap';
-export { canonicalizeMcpUrl, deriveSlugFromUrl } from './mcp/url-canonical';
+
+export {
+  COMMANDS_DIR_RELPATH,
+  type CommandDef,
+  type CommandSource,
+  canonicalCommandName,
+  type FrontMatter,
+  PROMPTS_DIR_RELPATH,
+} from './agent/commands';
+
+// Slash-command discovery surface for host UIs (e.g. CLI help screens).
+export { builtinAvailableCommands, isBuiltinName } from './agent/commands/builtins';
+
+// Storage interfaces — host implements when it wants persistence.
+export type { PreferenceStore } from './storage/preference-store';
 export {
   FEATURE_DEFAULTS,
   type FeatureDefaults,
   type FeatureKey,
   type FeatureSnapshot,
-  type FeatureStore,
   isFeatureKey,
-} from './storage/feature-store';
+} from './storage/feature-defaults';
 export {
   EMPTY_MCP_TOGGLES,
   isServerEnabled,
   isToolEnabled,
   type McpToggleSnapshot,
-  type McpToggleStore,
-} from './storage/mcp-toggle-store';
+} from './storage/mcp-toggle-shape';
 export {
   type BuiltinPayload,
   deriveTitle,
-  type FeatureRow,
-  type McpTogglesRow,
   type SessionEntry,
   type SessionEntryKind,
   type SessionRow,
@@ -120,8 +66,9 @@ export {
   type TurnPayload,
 } from './storage/session-store';
 
-// SDK types are intentionally not re-exported here — hosts import them
-// directly from `@agentclientprotocol/sdk`.
+export { canonicalizeMcpUrl, deriveSlugFromUrl } from './mcp/url-canonical';
+
+// `_bodhi/*` wire constants + request/response types.
 export {
   BODHI_AUTH_METHOD_ID,
   BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD,
@@ -132,13 +79,13 @@ export {
   BODHI_GET_SESSION_METHOD_LEGACY,
   BODHI_MCP_STATE_NOTIFICATION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
-  BODHI_SERVER_INFO_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
 } from './wire';
 export type {
   AnyBodhiBuiltinAction,
   BodhiAuthenticateMeta,
+  BodhiAuthenticateResponseMeta,
   BodhiBuiltinAction,
   BodhiBuiltinActionNotificationParams,
   BodhiBuiltinCopyAction,

@@ -1,11 +1,26 @@
-# MCP — client, pool, tool adapter, toggle store
+# MCP — client, pool, tool adapter, toggle storage
 
 **Source of truth (agent package):**
 `packages/web-acp-agent/src/agent/mcp/`,
-`packages/web-acp-agent/src/storage/mcp-toggle-store.ts`,
+`packages/web-acp-agent/src/storage/mcp-toggle-shape.ts`
+(`McpToggleSnapshot` shape + helpers),
+`packages/web-acp-agent/src/storage/preference-store.ts`
+(unified store interface),
+`packages/web-acp-agent/src/agent/internal/mcp-toggle-prefs.ts`
+(typed accessors over `PreferenceStore`),
 `packages/web-acp-agent/src/mcp/url-canonical.ts`,
 `packages/web-acp-agent/src/acp/engine/ext-methods/mcp-toggles-set.ts`,
 `packages/web-acp-agent/src/acp/engine/session-runtime.ts:broadcastMcpPoolEvent`.
+
+> **Post-`provider-agnostic-embed-simplification` callout.** The
+> dedicated `McpToggleStore` interface was deleted; per-session
+> MCP toggles now live in the unified `PreferenceStore` under key
+> `mcp:toggles` (value shape: `McpToggleSnapshot`). The wire
+> surface `_bodhi/mcp/toggles/set` is unchanged — only the
+> storage backend collapsed. Body text below predates the
+> refactor; canonical names live at the source-of-truth paths
+> above. See
+> `ai-docs/plans/provider-agnostic-embed-simplification.md`.
 
 ## Purpose
 

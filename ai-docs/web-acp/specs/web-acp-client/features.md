@@ -7,6 +7,14 @@ features memo + `setFeature`),
 `packages/web-acp/src/acp/panels-reducer.ts:37` (`config-options-init` case),
 `packages/web-acp/src/components/features/FeaturePanel.tsx`.
 
+> **Post-`provider-agnostic-embed-simplification` callout.**
+> The `isDev` gate on `forceToolCall` was removed from the
+> agent. `setSessionConfigOption('forceToolCall', 'on')` always
+> succeeds; whether the toggle is exposed in the UI is purely a
+> host policy decision. The agent-side `FeatureStore` interface
+> was also collapsed into `PreferenceStore`. See
+> `ai-docs/plans/provider-agnostic-embed-simplification.md`.
+
 ## Purpose
 
 Browser-host-side surface for the per-session feature

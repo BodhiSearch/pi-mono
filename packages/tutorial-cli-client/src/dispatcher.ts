@@ -1,5 +1,5 @@
 import { builtinAvailableCommands } from "@bodhiapp/web-acp-agent";
-import type { EmbeddedAgent } from "./agent/embed";
+import { type EmbeddedAgent, readBodhiServerInfo } from "./agent/embed";
 import { readTokens } from "./auth/token-store";
 import type { Emitter } from "./emitter";
 
@@ -92,7 +92,20 @@ function emitHelp(ctx: DispatchContext): void {
 }
 
 async function emitStatus(ctx: DispatchContext): Promise<void> {
-	const info = await ctx.agent.serverInfo();
+	const tokens = await readTokens(ctx.cwd);
+	if (!tokens) {
+		ctx.emitter.emit({ text: "no token stored — run login first" });
+		return;
+	}
+	const resp = await ctx.agent.authenticate({
+		token: tokens.accessToken,
+		baseUrl: tokens.bodhiUrl,
+	});
+	const info = readBodhiServerInfo(resp);
+	if (!info) {
+		ctx.emitter.emit({ text: "BodhiApp connectivity probe returned no info" });
+		return;
+	}
 	ctx.emitter.emit({
 		text: `BodhiApp ${info.status} at ${info.url} (version ${info.version})`,
 		...info,

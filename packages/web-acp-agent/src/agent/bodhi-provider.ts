@@ -35,21 +35,35 @@ export interface LlmProvider {
     model: Model<Api>
   ): Promise<{ apiKey: string; headers?: Record<string, string> }>;
   getAvailableModels(): Promise<Model<Api>[]>;
-  setAuthToken?(credential: LlmAuthCredential | null): void;
+  /**
+   * Apply credentials and (optionally) probe the upstream provider for
+   * connectivity / capability metadata. The agent passes the return
+   * value verbatim into `AuthenticateResponse._meta.bodhi.providerInfo`.
+   * Implementations should:
+   *   - throw when the credentials are fundamentally invalid (401/403);
+   *   - return a JSON-serialisable shape on success (or `undefined`
+   *     to signal "no info available");
+   *   - return a shaped error rather than throw for transient
+   *     connectivity issues if the host should still consider auth ok.
+   */
+  setAuthToken?(credential: LlmAuthCredential | null): Promise<unknown>;
 }
 
 export class BodhiProvider implements LlmProvider {
   private token: string | null = null;
   private baseUrl: string | undefined;
 
-  setAuthToken(credential: LlmAuthCredential | null): void {
+  async setAuthToken(
+    credential: LlmAuthCredential | null
+  ): Promise<BodhiServerInfoResponse | undefined> {
     if (!credential || credential.provider !== BODHI_PROVIDER_TAG) {
       this.token = null;
       this.baseUrl = undefined;
-      return;
+      return undefined;
     }
     this.token = credential.token;
     this.baseUrl = credential.baseUrl;
+    return this.fetchServerInfo() as Promise<BodhiServerInfoResponse>;
   }
 
   async getApiKeyAndHeaders(

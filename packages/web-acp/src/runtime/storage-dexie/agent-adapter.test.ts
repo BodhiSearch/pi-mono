@@ -16,8 +16,6 @@ import type {
   SessionNotification,
 } from '@agentclientprotocol/sdk';
 import {
-  AcpAgentAdapter,
-  assembleServices,
   BODHI_GET_SESSION_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
@@ -25,18 +23,21 @@ import {
   type BodhiMcpTogglesSetResponse,
   type BodhiProvider,
   type BodhiSessionsDeleteResponse,
-  type CommandsFs,
-  type CommandsFsEntry,
-  type InlineAgent,
   type SessionStore,
   type VolumeRegistry,
 } from '@bodhiapp/web-acp-agent';
+import {
+  AcpAgentAdapter,
+  assembleServices,
+  type CommandsFs,
+  type CommandsFsEntry,
+  type InlineAgent,
+} from '@bodhiapp/web-acp-agent/test-utils';
 import { SessionStoreDb } from './db';
+import { createPreferenceStore } from './preference-store';
 import { createStoreFromDb } from './session-store';
-import { createMcpToggleStore } from './mcp-toggle-store';
 
 const ADAPTER_OPTIONS = {
-  isDev: false,
   buildVersion: '0.0.0-test',
   acpSdkVersion: '0.21.0-test',
 };
@@ -76,14 +77,13 @@ describe('AcpAgentAdapter MCP toggle ext methods', () => {
   beforeEach(async () => {
     db = new SessionStoreDb(`web-acp-adapter-${crypto.randomUUID()}`);
     store = createStoreFromDb(db);
-    const toggles = createMcpToggleStore(db);
     adapter = new AcpAgentAdapter(
       fakeConn(),
       assembleServices({
         inline: fakeInline(),
         bodhi: fakeBodhi(),
         store,
-        mcpToggles: toggles,
+        preferences: createPreferenceStore(db),
       }),
       ADAPTER_OPTIONS
     );

@@ -1,10 +1,25 @@
-# Features — `setSessionConfigOption` + `FeatureStore`
+# Features — `setSessionConfigOption` + `PreferenceStore`
 
 **Source of truth (agent package):**
-`packages/web-acp-agent/src/storage/feature-store.ts`,
+`packages/web-acp-agent/src/storage/feature-defaults.ts`
+(shapes), `packages/web-acp-agent/src/storage/preference-store.ts`
+(unified store interface),
+`packages/web-acp-agent/src/agent/internal/feature-prefs.ts`
+(typed accessors over `PreferenceStore`),
 `packages/web-acp-agent/src/acp/feature-config.ts`,
 `packages/web-acp-agent/src/acp/handlers/session-crud.ts:handleSetSessionConfigOption`,
 `packages/web-acp-agent/src/wire/index.ts`.
+
+> **Post-`provider-agnostic-embed-simplification` callout.** The
+> dedicated `FeatureStore` interface was deleted; the agent now
+> reads/writes feature toggles via internal typed accessors over
+> `PreferenceStore`, keyed `feature:<key>`. The `isDev` gate on
+> `forceToolCall` was also removed — `setSessionConfigOption`
+> accepts the value unconditionally; host UI controls exposure.
+> Body text below predates that refactor and references the old
+> `FeatureStore` / `isDev` shapes; canonical names live at the
+> source-of-truth paths above. See
+> `ai-docs/plans/provider-agnostic-embed-simplification.md`.
 
 ## Purpose
 
