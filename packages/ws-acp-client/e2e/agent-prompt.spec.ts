@@ -77,7 +77,8 @@ test.describe('acp-ui ↔ ws-acp-client prompt round-trip', () => {
     });
 
     await test.step('Assistant bubble contains the sentinel', async () => {
-      // First user prompt is bubble 0; first assistant reply is bubble 1.
+      // The user prompt is bubble 0 (added locally by sendPrompt) and
+      // the assistant reply is bubble 1 (streamed via agent_message_chunk).
       await expect(chat.bubble(1, 'assistant')).toContainText('pong', {
         ignoreCase: true,
       });
