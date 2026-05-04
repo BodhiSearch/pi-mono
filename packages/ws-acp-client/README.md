@@ -41,7 +41,6 @@ Flags:
 - `--bind <host>` — interface to bind. Defaults to `127.0.0.1`.
 - `--cwd <path>` — agent's working directory + sqlite location.
   Defaults to `process.cwd()`.
-- `--dev` — enables verbose logging.
 
 The process traps `SIGTERM` / `SIGINT` and shuts the WebSocket server
 down cleanly, including closing the sqlite handle.
@@ -58,11 +57,13 @@ verbatim:
 | ------------- | -------------------------------------------------------------------------------- |
 | `sessions`    | `id`, `created_at`, `updated_at`, `title`, `turn_count`, `last_model_id`         |
 | `entries`     | composite-PK `(session_id, seq)`, `at`, `kind`, `payload` (JSON-encoded text)    |
-| `features`    | `session_id` (PK), `flags` JSON, `updated_at`                                    |
-| `mcp_toggles` | `session_id` (PK), `servers` JSON, `tools` JSON, `updated_at`                    |
+| `preferences` | composite-PK `(session_id, key)`, `value` (JSON-encoded text), `updated_at`      |
 
-All four stores live in one SQLite file. **Two browser tabs talking to
-the same `ws-acp-client` process see the same session list** — that is
+All three stores live in one SQLite file. The `preferences` table is
+the unified per-session keyed store backing both feature toggles
+(`feature:bashEnabled`, `feature:forceToolCall`) and MCP toggles
+(`mcp:toggles`). **Two browser tabs talking to the same
+`ws-acp-client` process see the same session list** — that is
 intentional for single-user laptop deployments. Multi-tenant
 hardening would require per-connection authentication-derived
 namespacing on `session_id`; not in scope today.
@@ -90,29 +91,41 @@ authenticate calls do not leak between concurrent connections.
 │   host     │ ───────────────────► │                                  │
 │ (acp-ui /  │                      │ ┌─ HostState (per process) ────┐ │
 │  web-acp)  │ ◄─────────────────── │ │ sqlite AppDb                  │ │
-└────────────┘                      │ │ ZenfsVolumeRegistry           │ │
-                                     │ │ + PassthroughFS($cwd)         │ │
+└────────────┘                      │ │   sessions (SessionStore)     │ │
+                                     │ │   preferences (PreferenceStore)│ │
+                                     │ │ ZenfsVolumeRegistry           │ │
+                                     │ │   /mnt/cwd → PassthroughFS    │ │
                                      │ └───────────────────────────────┘ │
-                                     │ ┌─ ConnectionServices (per WS) ┐ │
+                                     │ ┌─ Per WS connection ──────────┐ │
                                      │ │ BodhiProvider (token holder) │ │
                                      │ │ InlineAgent (turn loop)      │ │
                                      │ │ AcpAgentAdapter              │ │
+                                     │ │ → assembleServices points    │ │
+                                     │ │   at the shared registry +   │ │
+                                     │ │   stores                     │ │
                                      │ └──────────────────────────────┘ │
                                      └──────────────────────────────────┘
 ```
 
 - `src/server.ts` — HTTP server (for health checks) wrapped by
   `ws.WebSocketServer`. Each new socket → `WsTransportPair` →
-  `startAcpAgent(transport, services)`.
+  per-connection `BodhiProvider` + `InlineAgent` +
+  `assembleServices({ … registry, store, preferences })` →
+  `AcpAgentAdapter` driven by `AgentSideConnection`. The advanced
+  surface lives at `@bodhiapp/web-acp-agent/test-utils` because
+  multi-connection hosts need to share a single
+  `ZenfsVolumeRegistry` (ZenFS keeps a process-global mount table —
+  two registries would collide on `/mnt/cwd`).
 - `src/transport/ws-transport.ts` — adapts a `ws` socket to the
   WHATWG byte-stream pair `web-acp-agent` expects. Outbound chunks
   are sent as text frames (browsers' `WebSocket.onmessage` rejects
   binary frames in the acp-ui path).
-- `src/services/assemble.ts` — splits `HostState` (per process) from
-  `ConnectionServices` (per WS) so the per-connection BodhiProvider
-  can hold a per-user token without leaking.
+- `src/services/assemble.ts` — `createHostState` opens the sqlite
+  `AppDb` once per process and mounts the `$cwd` volume on the
+  shared `ZenfsVolumeRegistry`. Per-connection wiring lives in
+  `server.ts`.
 - `src/storage/*` — drizzle schema + better-sqlite3 opener +
-  `SessionStore`/`FeatureStore`/`McpToggleStore` impls.
+  `SessionStore` / `PreferenceStore` impls.
 
 ## Development
 

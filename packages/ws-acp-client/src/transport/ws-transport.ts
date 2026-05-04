@@ -1,7 +1,7 @@
 /**
  * Adapter from a `ws` WebSocket connection to the WHATWG byte-stream
  * pair (`ReadableStream<Uint8Array>` + `WritableStream<Uint8Array>`)
- * that `@bodhiapp/web-acp-agent`'s `startAcpAgent` consumes.
+ * that `@bodhiapp/web-acp-agent`'s `startAgent` consumes.
  *
  * NDJSON framing (one JSON-RPC message per line, terminated by `\n`)
  * is handled inside `ndJsonStream` in the agent SDK. This adapter is

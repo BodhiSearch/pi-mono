@@ -1,7 +1,5 @@
 export {
-	type ConnectionServices,
 	type CreateHostStateOptions,
-	createConnectionServices,
 	createHostState,
 	type HostState,
 } from "./assemble";

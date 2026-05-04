@@ -1,33 +1,24 @@
 /**
- * Service assembly for the WebSocket host.
+ * Process-wide host state for the WebSocket server.
  *
- * Two layers:
- *   1. `HostState` — shared across every WebSocket connection in the
- *      same process: the sqlite `AppDb` and the ZenFS `VolumeRegistry`
- *      (cwd PassthroughFS mount). Built once at process startup.
- *   2. `ConnectionServices` — one per accepted WebSocket: a fresh
- *      `BodhiProvider`, `InlineAgent`, and `streamOverrides` ref bag.
- *      The auth token from `authenticate(bodhi-token)` is per-
- *      connection, so the provider must not leak across users.
+ * Holds shared infrastructure that survives across WebSocket
+ * connections:
+ *   - the sqlite `AppDb` (sessions + preferences),
+ *   - a single `ZenfsVolumeRegistry` with the cwd `PassthroughFS`
+ *     volume mounted at `/mnt/cwd`. Sharing matters: ZenFS keeps a
+ *     process-global mount table, so each connection cannot bring up
+ *     its own registry without colliding on `/mnt/cwd`.
+ *
+ * Per-connection wiring lives in `server.ts`: each accepted
+ * WebSocket spins up its own `BodhiProvider` (auth tokens are
+ * per-user) and assembles a fresh `AcpAdapterServices` bag that
+ * points at the shared sessions / preferences / registry. Because
+ * we use the agent's "advanced" surface (`@bodhiapp/web-acp-agent/
+ * test-utils`), the registry can be shared by every connection.
  */
 
-import {
-	type AcpAdapterServices,
-	assembleServices,
-	BodhiProvider,
-	createInlineAgent,
-	createStreamFn,
-	type StreamOptionOverrides,
-	type VolumeInit,
-	ZenfsVolumeRegistry,
-} from "@bodhiapp/web-acp-agent";
-import {
-	type AppDb,
-	createSqliteFeatureStore,
-	createSqliteMcpToggleStore,
-	createSqliteSessionStore,
-	openAppDb,
-} from "../storage";
+import { type VolumeInit, ZenfsVolumeRegistry } from "@bodhiapp/web-acp-agent";
+import { type AppDb, openAppDb } from "../storage";
 import { createCwdVolumeInit } from "./cwd-volume";
 
 export interface CreateHostStateOptions {
@@ -78,33 +69,4 @@ export async function createHostState(opts: CreateHostStateOptions): Promise<Hos
 			}
 		},
 	};
-}
-
-export interface ConnectionServices {
-	services: AcpAdapterServices;
-	provider: BodhiProvider;
-}
-
-export function createConnectionServices(host: HostState): ConnectionServices {
-	const provider = new BodhiProvider();
-	const streamOverrides: { current: StreamOptionOverrides } = { current: {} };
-	const inline = createInlineAgent(
-		createStreamFn(provider, () => {
-			const snapshot = streamOverrides.current;
-			streamOverrides.current = {};
-			return snapshot;
-		}),
-	);
-
-	const services = assembleServices({
-		inline,
-		bodhi: provider,
-		store: createSqliteSessionStore(host.db),
-		registry: host.registry,
-		features: createSqliteFeatureStore(host.db),
-		mcpToggles: createSqliteMcpToggleStore(host.db),
-		streamOverrides,
-	});
-
-	return { services, provider };
 }

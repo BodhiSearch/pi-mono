@@ -1,19 +1,39 @@
 /**
  * WebSocket-fronted ACP host. Wraps a single shared `HostState`
- * (sqlite + cwd ZenFS mount) and accepts WS connections at a single
- * path (`/`). Each connection receives a fresh `BodhiProvider` and
- * `AcpAgentAdapter` wired over the WS transport.
+ * (sqlite db + cwd ZenFS mount) and accepts WS connections at a
+ * single path (`/`).
+ *
+ * Architecture rationale: a multi-connection WebSocket server can't
+ * use the simple `startAgent` boot path because that helper creates
+ * a fresh `ZenfsVolumeRegistry` per call and ZenFS keeps a global
+ * process-wide mount table — two registries collide on `/mnt/cwd`.
+ * Instead we drive the agent through `@bodhiapp/web-acp-agent/
+ * test-utils`'s "advanced" surface (`AcpAgentAdapter`,
+ * `assembleServices`, `createInlineAgent`, `createStreamFn`) and
+ * share the host's `ZenfsVolumeRegistry` across every accepted
+ * connection. Auth-bearing state (`BodhiProvider`,
+ * `streamOverrides`, `inline`) is constructed per-connection so
+ * concurrent users don't leak credentials.
  *
  * NDJSON-framed JSON-RPC is the wire — `@agentclientprotocol/sdk`'s
- * `ndJsonStream` does the framing, this file just adapts `ws` to the
- * WHATWG byte-stream contract.
+ * `ndJsonStream` does the framing; this file adapts `ws` to the
+ * WHATWG byte-stream contract via `transport/ws-transport.ts`.
  */
 
 import { createServer, type Server as HttpServer } from "node:http";
-import { type AcpAgentAdapter, type AcpTransport, startAcpAgent } from "@bodhiapp/web-acp-agent";
+import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+import { BodhiProvider } from "@bodhiapp/web-acp-agent";
+import {
+	AcpAgentAdapter,
+	assembleServices,
+	createInlineAgent,
+	createStreamFn,
+	type StreamOptionOverrides,
+} from "@bodhiapp/web-acp-agent/test-utils";
 import { type WebSocket, WebSocketServer } from "ws";
-import { createConnectionServices, type HostState } from "./services/assemble";
-import { wsToTransport } from "./transport/ws-transport";
+import type { HostState } from "./services/assemble";
+import { createSqlitePreferenceStore, createSqliteSessionStore } from "./storage";
+import { type WsTransportPair, wsToTransport } from "./transport/ws-transport";
 
 export interface WsAcpServerOptions {
 	host: HostState;
@@ -25,8 +45,6 @@ export interface WsAcpServerOptions {
 	buildVersion?: string;
 	/** ACP SDK version reported on the `/version` builtin. */
 	acpSdkVersion?: string;
-	/** Enable DEV-only features (forceToolCall, etc.). */
-	isDev?: boolean;
 	/** Logger; defaults to `console`. Tests pass a silent logger. */
 	logger?: Pick<Console, "log" | "warn" | "error">;
 }
@@ -44,8 +62,7 @@ export interface WsAcpServer {
 
 interface ConnectionRecord {
 	ws: WebSocket;
-	transport: AcpTransport;
-	closed: Promise<void>;
+	pair: WsTransportPair;
 	adapter?: AcpAgentAdapter;
 }
 
@@ -56,6 +73,11 @@ export async function startWsAcpServer(opts: WsAcpServerOptions): Promise<WsAcpS
 	const log = opts.logger ?? console;
 	const port = opts.port ?? 0;
 	const bindAddress = opts.bindAddress ?? "127.0.0.1";
+	const buildVersion = opts.buildVersion ?? DEFAULT_BUILD_VERSION;
+	const acpSdkVersion = opts.acpSdkVersion ?? DEFAULT_ACP_SDK_VERSION;
+
+	const sessions = createSqliteSessionStore(opts.host.db);
+	const preferences = createSqlitePreferenceStore(opts.host.db);
 
 	const httpServer: HttpServer = createServer((req, res) => {
 		if (req.url === "/healthz") {
@@ -74,22 +96,39 @@ export async function startWsAcpServer(opts: WsAcpServerOptions): Promise<WsAcpS
 		const remote = req.socket.remoteAddress ?? "unknown";
 		log.log(`[ws-acp-client] connection from ${remote}`);
 
-		const { transport, closed } = wsToTransport(ws);
-		const record: ConnectionRecord = { ws, transport, closed };
+		const pair = wsToTransport(ws);
+		const record: ConnectionRecord = { ws, pair };
 		connections.add(record);
 
-		const conn = createConnectionServices(opts.host);
 		try {
-			startAcpAgent(transport, conn.services, {
-				isDev: opts.isDev ?? false,
-				buildVersion: opts.buildVersion ?? DEFAULT_BUILD_VERSION,
-				acpSdkVersion: opts.acpSdkVersion ?? DEFAULT_ACP_SDK_VERSION,
-				onAdapter: (a) => {
-					record.adapter = a;
-				},
+			const provider = new BodhiProvider();
+			const streamOverrides: { current: StreamOptionOverrides } = { current: {} };
+			const inline = createInlineAgent(
+				createStreamFn(provider, () => {
+					const snapshot = streamOverrides.current;
+					streamOverrides.current = {};
+					return snapshot;
+				}),
+			);
+			const services = assembleServices({
+				inline,
+				bodhi: provider,
+				store: sessions,
+				registry: opts.host.registry,
+				preferences,
+				streamOverrides,
 			});
+			const stream = ndJsonStream(pair.transport.writable, pair.transport.readable);
+			new AgentSideConnection((conn) => {
+				const adapter = new AcpAgentAdapter(conn, services, {
+					buildVersion,
+					acpSdkVersion,
+				});
+				record.adapter = adapter;
+				return adapter;
+			}, stream);
 		} catch (err) {
-			log.error("[ws-acp-client] startAcpAgent failed:", err);
+			log.error("[ws-acp-client] connection setup failed:", err);
 			try {
 				ws.close(1011, "agent boot failed");
 			} catch {
@@ -99,9 +138,9 @@ export async function startWsAcpServer(opts: WsAcpServerOptions): Promise<WsAcpS
 			return;
 		}
 
-		closed.finally(() => {
+		pair.closed.finally(() => {
 			connections.delete(record);
-			void record.adapter?.dispose().catch((err) => {
+			void record.adapter?.dispose().catch((err: unknown) => {
 				log.warn("[ws-acp-client] adapter.dispose() failed:", err);
 			});
 		});
@@ -141,7 +180,7 @@ export async function startWsAcpServer(opts: WsAcpServerOptions): Promise<WsAcpS
 					// ignore
 				}
 			}
-			await Promise.allSettled(Array.from(connections, (rec) => rec.closed));
+			await Promise.allSettled(Array.from(connections, (rec) => rec.pair.closed));
 			await new Promise<void>((resolve) => {
 				wss.close(() => resolve());
 			});

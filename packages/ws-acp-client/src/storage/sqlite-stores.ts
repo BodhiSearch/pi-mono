@@ -1,22 +1,26 @@
 /**
  * Sqlite-backed implementations of the agent-package store interfaces.
  *
- * Mirrors `packages/cli-acp-client/src/storage/sqlite-stores.ts` and
- * the browser host's Dexie implementation (`packages/web-acp/src/
- * runtime/storage-dexie/*-store.ts`) shape-for-shape so the agent
- * sees identical persistence semantics regardless of host.
+ * Mirrors `packages/web-acp/src/runtime/storage-dexie/*.ts` shape-for-
+ * shape so the agent sees identical persistence semantics regardless
+ * of host. The agent writes to these synchronously per ACP turn;
+ * better-sqlite3 lets us keep the API async without paying for I/O
+ * thread hops.
+ *
+ * Two stores are exposed:
+ *
+ *   - `SessionStore` — sessions + entries (notifications, turns,
+ *     builtins). Owned by `@bodhiapp/web-acp-agent`.
+ *   - `PreferenceStore` — generic per-session keyed values. The agent
+ *     wraps known keys (`feature:bashEnabled`, `feature:forceToolCall`,
+ *     `mcp:toggles`, …) with typed accessors internally; this layer
+ *     just stores opaque JSON.
  */
 
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import {
 	deriveTitle,
-	EMPTY_MCP_TOGGLES,
-	FEATURE_DEFAULTS,
-	type FeatureSnapshot,
-	type FeatureStore,
-	isFeatureKey,
-	type McpToggleSnapshot,
-	type McpToggleStore,
+	type PreferenceStore,
 	type SessionEntry,
 	type SessionRow,
 	type SessionStore,
@@ -25,7 +29,7 @@ import {
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import type { AppDb } from "./db";
-import { entries, features, mcpToggles, sessions } from "./schema";
+import { entries, preferences, sessions } from "./schema";
 
 type SessionEntryKind = SessionEntry["kind"];
 type SessionEntryPayload = SessionEntry["payload"];
@@ -171,8 +175,7 @@ export function createSqliteSessionStore(db: AppDb): SessionStore {
 		async deleteSession(id: string): Promise<void> {
 			const tx = db.$sqlite.transaction(() => {
 				db.delete(entries).where(eq(entries.sessionId, id)).run();
-				db.delete(features).where(eq(features.sessionId, id)).run();
-				db.delete(mcpToggles).where(eq(mcpToggles.sessionId, id)).run();
+				db.delete(preferences).where(eq(preferences.sessionId, id)).run();
 				db.delete(sessions).where(eq(sessions.id, id)).run();
 			});
 			tx();
@@ -180,136 +183,55 @@ export function createSqliteSessionStore(db: AppDb): SessionStore {
 	};
 }
 
-export function createSqliteFeatureStore(db: AppDb): FeatureStore {
-	function readFlags(sessionId: string): Record<string, boolean> {
-		const row = db.select().from(features).where(eq(features.sessionId, sessionId)).get();
-		if (!row) return {};
-		try {
-			return JSON.parse(row.flags) as Record<string, boolean>;
-		} catch {
-			return {};
-		}
-	}
-
+export function createSqlitePreferenceStore(db: AppDb): PreferenceStore {
 	return {
-		async get(sessionId: string): Promise<FeatureSnapshot> {
-			return mergeFeatures(readFlags(sessionId));
+		async get(sessionId: string, key: string): Promise<unknown> {
+			const row = db
+				.select()
+				.from(preferences)
+				.where(sql`${preferences.sessionId} = ${sessionId} AND ${preferences.key} = ${key}`)
+				.get();
+			if (!row) return undefined;
+			try {
+				return JSON.parse(row.value) as unknown;
+			} catch {
+				return undefined;
+			}
 		},
 
-		async set(sessionId: string, key: string, value: boolean): Promise<FeatureSnapshot> {
-			if (!isFeatureKey(key)) {
-				throw new Error(`Unknown feature key '${key}'`);
-			}
-			const next = { ...readFlags(sessionId), [key]: value };
+		async set(sessionId: string, key: string, value: unknown): Promise<void> {
 			const at = Date.now();
-			db.insert(features)
-				.values({ sessionId, flags: JSON.stringify(next), updatedAt: at })
+			const json = JSON.stringify(value);
+			db.insert(preferences)
+				.values({ sessionId, key, value: json, updatedAt: at })
 				.onConflictDoUpdate({
-					target: features.sessionId,
-					set: { flags: JSON.stringify(next), updatedAt: at },
+					target: [preferences.sessionId, preferences.key],
+					set: { value: json, updatedAt: at },
 				})
 				.run();
-			return mergeFeatures(next);
 		},
 
-		async clear(sessionId: string): Promise<void> {
-			db.delete(features).where(eq(features.sessionId, sessionId)).run();
-		},
-	};
-}
-
-export function createSqliteMcpToggleStore(db: AppDb): McpToggleStore {
-	function readSnapshot(sessionId: string): McpToggleSnapshot {
-		const row = db.select().from(mcpToggles).where(eq(mcpToggles.sessionId, sessionId)).get();
-		if (!row) {
-			return {
-				servers: { ...EMPTY_MCP_TOGGLES.servers },
-				tools: {},
-			};
-		}
-		let parsedServers: Record<string, boolean> = {};
-		let parsedTools: Record<string, Record<string, boolean>> = {};
-		try {
-			parsedServers = JSON.parse(row.servers) as Record<string, boolean>;
-		} catch {
-			parsedServers = {};
-		}
-		try {
-			parsedTools = JSON.parse(row.tools) as Record<string, Record<string, boolean>>;
-		} catch {
-			parsedTools = {};
-		}
-		return { servers: parsedServers, tools: parsedTools };
-	}
-
-	function writeSnapshot(sessionId: string, snapshot: McpToggleSnapshot): McpToggleSnapshot {
-		const at = Date.now();
-		db.insert(mcpToggles)
-			.values({
-				sessionId,
-				servers: JSON.stringify(snapshot.servers),
-				tools: JSON.stringify(snapshot.tools),
-				updatedAt: at,
-			})
-			.onConflictDoUpdate({
-				target: mcpToggles.sessionId,
-				set: {
-					servers: JSON.stringify(snapshot.servers),
-					tools: JSON.stringify(snapshot.tools),
-					updatedAt: at,
-				},
-			})
-			.run();
-		return cloneSnapshot(snapshot);
-	}
-
-	return {
-		async get(sessionId: string): Promise<McpToggleSnapshot> {
-			return cloneSnapshot(readSnapshot(sessionId));
+		async delete(sessionId: string, key: string): Promise<void> {
+			db.delete(preferences)
+				.where(sql`${preferences.sessionId} = ${sessionId} AND ${preferences.key} = ${key}`)
+				.run();
 		},
 
-		async setServer(sessionId: string, serverSlug: string, value: boolean): Promise<McpToggleSnapshot> {
-			const current = readSnapshot(sessionId);
-			const next: McpToggleSnapshot = {
-				servers: { ...current.servers, [serverSlug]: value },
-				tools: cloneToolMap(current.tools),
-			};
-			return writeSnapshot(sessionId, next);
+		async list(sessionId: string): Promise<Record<string, unknown>> {
+			const rows = db.select().from(preferences).where(eq(preferences.sessionId, sessionId)).all();
+			const out: Record<string, unknown> = {};
+			for (const row of rows) {
+				try {
+					out[row.key] = JSON.parse(row.value) as unknown;
+				} catch {
+					// ignore malformed entries; treat as absent
+				}
+			}
+			return out;
 		},
 
-		async setTool(
-			sessionId: string,
-			serverSlug: string,
-			toolName: string,
-			value: boolean,
-		): Promise<McpToggleSnapshot> {
-			const current = readSnapshot(sessionId);
-			const serverTools = { ...(current.tools[serverSlug] ?? {}), [toolName]: value };
-			const nextTools = { ...cloneToolMap(current.tools), [serverSlug]: serverTools };
-			const next: McpToggleSnapshot = {
-				servers: { ...current.servers },
-				tools: nextTools,
-			};
-			return writeSnapshot(sessionId, next);
+		async clearSession(sessionId: string): Promise<void> {
+			db.delete(preferences).where(eq(preferences.sessionId, sessionId)).run();
 		},
-
-		async clear(sessionId: string): Promise<void> {
-			db.delete(mcpToggles).where(eq(mcpToggles.sessionId, sessionId)).run();
-		},
-	};
-}
-
-function mergeFeatures(flags: Record<string, boolean>): FeatureSnapshot {
-	return { ...FEATURE_DEFAULTS, ...flags };
-}
-
-function cloneToolMap(tools: Record<string, Record<string, boolean>>): Record<string, Record<string, boolean>> {
-	return Object.fromEntries(Object.entries(tools).map(([slug, m]) => [slug, { ...m }]));
-}
-
-function cloneSnapshot(snapshot: McpToggleSnapshot): McpToggleSnapshot {
-	return {
-		servers: { ...snapshot.servers },
-		tools: cloneToolMap(snapshot.tools),
 	};
 }

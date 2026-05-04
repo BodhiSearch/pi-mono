@@ -4,10 +4,9 @@ export {
 	type WsAcpServerOptions,
 } from "./server";
 export {
-	type ConnectionServices,
 	type CreateHostStateOptions,
-	createConnectionServices,
 	createHostState,
 	type HostState,
 } from "./services";
+export { CWD_VOLUME_NAME, type CwdVolumeOptions, createCwdVolumeInit } from "./services/cwd-volume";
 export { type WsTransportPair, wsToTransport } from "./transport/ws-transport";

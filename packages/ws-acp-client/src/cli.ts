@@ -17,7 +17,6 @@ interface CliArgs {
 	port: number;
 	cwd: string;
 	bindAddress: string;
-	isDev: boolean;
 }
 
 const DEFAULT_PORT = 8923;
@@ -26,7 +25,6 @@ function parseArgs(argv: string[]): CliArgs {
 	let port = DEFAULT_PORT;
 	let cwd = process.cwd();
 	let bindAddress = "127.0.0.1";
-	let isDev = false;
 
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -53,9 +51,6 @@ function parseArgs(argv: string[]): CliArgs {
 				bindAddress = next;
 				break;
 			}
-			case "--dev":
-				isDev = true;
-				break;
 			case "-h":
 			case "--help":
 				printUsage();
@@ -66,7 +61,7 @@ function parseArgs(argv: string[]): CliArgs {
 		}
 	}
 
-	return { port, cwd, bindAddress, isDev };
+	return { port, cwd, bindAddress };
 }
 
 function printUsage(): void {
@@ -77,7 +72,6 @@ function printUsage(): void {
 		"  --port <n>      Listen port (default 8923, 0 = ephemeral)",
 		"  --bind <addr>   Bind address (default 127.0.0.1)",
 		"  --cwd <path>    Agent working directory (default cwd)",
-		"  --dev           Enable DEV-only agent features",
 		"  -h, --help      Show this help",
 	];
 	console.log(lines.join("\n"));
@@ -91,7 +85,6 @@ async function main(): Promise<void> {
 		host,
 		port: args.port,
 		bindAddress: args.bindAddress,
-		isDev: args.isDev,
 		buildVersion: "0.0.0",
 	});
 

@@ -1,13 +1,20 @@
 /**
  * Drizzle schema for the WS host's persistent state at
  * `<cwd>/.ws-acp-client/state.db`. Tables mirror the agent-package
- * row shapes (`SessionRow`, `FeatureRow`, `McpTogglesRow`).
+ * row shapes (`SessionRow`, `PreferenceStore` keys).
  *
  * Single-tenant model: one db per cwd, shared across all WebSocket
  * connections served by the same `ws-acp-client` process.
+ *
+ * Schema notes:
+ *   - `sessions` / `entries` mirror the Dexie schema in
+ *     `packages/web-acp/src/runtime/storage-dexie/db.ts`.
+ *   - `preferences` is the unified per-session/per-key store that
+ *     replaces the legacy `features` and `mcp_toggles` tables.
+ *     Values are JSON-encoded text; callers own the schema for each
+ *     well-known key (`feature:bashEnabled`, `mcp:toggles`, …).
  */
 
-import { sql } from "drizzle-orm";
 import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const sessions = sqliteTable("sessions", {
@@ -33,15 +40,15 @@ export const entries = sqliteTable(
 	}),
 );
 
-export const features = sqliteTable("features", {
-	sessionId: text("session_id").primaryKey(),
-	flags: text("flags").notNull().default(sql`'{}'`),
-	updatedAt: integer("updated_at").notNull(),
-});
-
-export const mcpToggles = sqliteTable("mcp_toggles", {
-	sessionId: text("session_id").primaryKey(),
-	servers: text("servers").notNull().default(sql`'{}'`),
-	tools: text("tools").notNull().default(sql`'{}'`),
-	updatedAt: integer("updated_at").notNull(),
-});
+export const preferences = sqliteTable(
+	"preferences",
+	{
+		sessionId: text("session_id").notNull(),
+		key: text("key").notNull(),
+		value: text("value").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => ({
+		pk: primaryKey({ columns: [table.sessionId, table.key] }),
+	}),
+);

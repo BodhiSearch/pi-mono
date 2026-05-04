@@ -91,18 +91,21 @@ function runMigrations(sqlite: DatabaseType): void {
         );
         CREATE INDEX IF NOT EXISTS entries_session ON entries (session_id);
 
-        CREATE TABLE IF NOT EXISTS features (
-          session_id TEXT PRIMARY KEY,
-          flags TEXT NOT NULL DEFAULT '{}',
-          updated_at INTEGER NOT NULL
+        CREATE TABLE IF NOT EXISTS preferences (
+          session_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (session_id, key)
         );
-
-        CREATE TABLE IF NOT EXISTS mcp_toggles (
-          session_id TEXT PRIMARY KEY,
-          servers TEXT NOT NULL DEFAULT '{}',
-          tools TEXT NOT NULL DEFAULT '{}',
-          updated_at INTEGER NOT NULL
-        );
+        CREATE INDEX IF NOT EXISTS preferences_session ON preferences (session_id);
+      `,
+		},
+		{
+			version: 2,
+			sql: `
+        DROP TABLE IF EXISTS features;
+        DROP TABLE IF EXISTS mcp_toggles;
       `,
 		},
 	];
