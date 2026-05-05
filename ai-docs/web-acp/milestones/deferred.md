@@ -12,9 +12,39 @@ Sibling doc for historical context:
 items (extension sandboxing, full shell, multi-tab collab,
 RAG, voice).
 
+## Status at 2026-05-05 reset
+
+Two entries on this page have been **scheduled** onto the
+resequenced roadmap. They remain listed here for traceability
+but are no longer "deferred":
+
+- **Permission bridge + allow-always persistence** → now
+  **M10** ([`m10-permission-bridge.md`](m10-permission-bridge.md)).
+  The sections below are preserved as the historical carve-out
+  record.
+- **M0 hardening (second transport + worker-boundary e2e)** →
+  largely **closed** by the `packages/cli-acp-client/` host
+  that shipped during the post-M4 period (see
+  [`m5-extraction-and-compliance.md`](m5-extraction-and-compliance.md)
+  § "cli-acp-client — shelved"). The CLI is itself shelved for
+  roadmap purposes, but its existence proved the transport
+  boundary is real. The residual worker-boundary e2e assertion
+  is a cheap one-line addition to any browser-host e2e sweep
+  and can ride M6 or later without a dedicated ticket.
+
+Still genuinely deferred (post-v1 unless a concrete consumer
+surfaces):
+
+- **Provider-native tool passthrough** — scoped but parked; no
+  scheduled milestone. Re-enters on demand.
+- **`bodhi/*` → `_bodhi/*` extension-method rename** — mostly
+  absorbed by the M5 ACP 0.21 compliance sweep (the legacy
+  methods it targeted were **deleted**, not just renamed);
+  residual grep-clean audit is housekeeping, not a milestone.
+
 ---
 
-## Permission bridge — carved out of M2.3
+## Permission bridge — carved out of M2.3 (scheduled as M10)
 
 **What was deferred.** The pre-execution command classifier,
 ACP `session/request_permission` wiring from the bash tool,
@@ -50,15 +80,17 @@ gating granularity. The user running M2 operates entirely on
 their own disk through a browser they trust; a temporary
 "commands execute as-is" posture is not a new safety compromise.
 
-**When it re-enters.** At the milestone kickoff that follows
-M2 exit, once we've observed a few weeks of bash-tool usage.
-The re-entry ticket covers:
+**When it re-enters.** **Now scheduled as M10.** The re-entry
+ticket (tracked in [`m10-permission-bridge.md`](m10-permission-bridge.md))
+covers:
 
 1. Classifier plugin against the published `just-bash`
    `BashTransformPipeline` shape.
 2. ACP permission bridge (`session/request_permission` —
    stable method, already spec'd).
 3. Settings UI + reset.
+4. Uniform coverage of MCP + extension-registered tools (opt-in
+   via `destructiveHint: boolean`).
 
 **What has to exist before re-entry** (satisfied by M2 exit):
 
@@ -77,13 +109,13 @@ glance table in
 
 ---
 
-## Allow-always persistence — carved out of M2.3
+## Allow-always persistence — carved out of M2.3 (scheduled as M10)
 
 **What was deferred.** Per-session memory of
 `allow_always` permission decisions, persisted on the session
-record and surfaced via `bodhi/getSession` on reload. Settings
-UI exposing the session's current allow-always set + a reset
-button.
+record and surfaced on `LoadSessionResponse._meta.bodhi` on
+reload. Settings UI exposing the session's current allow-always
+set + a reset button.
 
 **Why deferred.** Follows the permission bridge — the data
 structure is meaningless without the bridge that writes to it.
@@ -91,15 +123,18 @@ Listed as a separate entry so when the bridge re-enters, the
 persistence layer is already scoped (session-local, no cross-
 session carry-over, reset on "new session").
 
-**When it re-enters.** Same milestone as the permission bridge,
-same ticket.
+**When it re-enters.** Same milestone as the permission bridge
+— **now M10** ([`m10-permission-bridge.md`](m10-permission-bridge.md)
+§ M10.2 "Allow-always persistence + settings panel").
 
-**What has to exist before re-entry** (satisfied by M2 exit):
+**What has to exist before re-entry** (satisfied post-M5):
 
 - `SessionStore` with persisted session records (M1).
-- `bodhi/getSession` snapshot for on-reload rehydration (M1).
-- Per-session feature record (`features` slot on the session —
-  M2.2) — the same persistence shape extends naturally to
+- `LoadSessionResponse._meta.bodhi` as the on-reload rehydration
+  surface (M5 compliance sweep — `_bodhi/session/get` removed,
+  transcript + toggles ride the envelope natively).
+- Per-session feature record (M2.2 + M5 unification) — the same
+  `PreferenceStore` shape extends naturally to
   `allowAlwaysCommands: string[]`.
 
 ---
@@ -141,28 +176,31 @@ the MCP toggle plumbing. The UI affordance is identical
 (`tool_call` in the transcript), so the passthrough piece is a
 small follow-up that does not reshape the shipped M3 wire.
 
-**When it re-enters.** At a milestone kickoff after M3 exit —
-typically alongside either M4 (commands + skills) or a dedicated
-short milestone if the permission bridge re-enters first. The
-re-entry ticket covers:
+**When it re-enters.** **Currently unscheduled** — stays
+deferred post-v1 unless a concrete consumer surfaces. The
+natural re-entry window is a short milestone after M11 publish,
+or folded into a future provider-capability pass. The re-entry
+ticket covers:
 
-1. `_bodhi/providers/nativeTools` request wiring in
-   `AcpAgentAdapter` + `AcpClient`.
-2. Per-model toggle UI — either a new panel or an extension of
-   the existing feature-toggle surface.
-3. Per-session persistence: extend `BodhiGetSessionResponse` with
-   `nativeTools` and hydrate on `loadSession`.
-4. Provider-side passthrough in `BodhiProvider` /
-   `InlineAgent` so tool-call events land as ACP notifications.
+1. `_bodhi/providers/nativeTools` request wiring in the ACP
+   agent + browser host (`AcpClient`).
+2. Per-model toggle UI — a panel layered on the M5-unified
+   `PreferenceStore` rather than a new store.
+3. Per-session persistence: extend `LoadSessionResponse._meta.bodhi`
+   with `nativeTools` and hydrate on `loadSession` (no separate
+   snapshot request — `_bodhi/session/get` was removed in M5).
+4. Provider-side passthrough in the agent's provider adapter so
+   tool-call events land as ACP notifications.
 
-**What has to exist before re-entry** (satisfied by M3 exit):
+**What has to exist before re-entry** (satisfied by M3 exit +
+M5 compliance sweep):
 
 - Tool registry composes MCP + `bash` through a single path
   (`InlineAgent.setModel({ tools })`) — native tools slot in the
   same way.
-- `bodhi/getSession` snapshot returns per-session state and
-  `session/load` rehydrates it — `nativeTools` extends the
-  existing shape without a schema churn.
+- `LoadSessionResponse._meta.bodhi` rehydrates per-session state
+  natively — `nativeTools` extends the envelope without a
+  schema churn.
 - `tool_call` / `tool_call_update` emission is fully exercised by
   the MCP path — native tools reuse it verbatim.
 
@@ -174,7 +212,7 @@ feature is not shipped.
 
 ---
 
-## M0 hardening — second transport + worker-boundary e2e
+## M0 hardening — second transport + worker-boundary e2e (closed by M5)
 
 **What was deferred.** Two items the original M0.b gate listed
 that the phase-D rework did not carry:
@@ -201,12 +239,18 @@ will). The two items are belt-and-braces, not blocking. M1's
 real consumer was a stronger swappability proof than a synthetic
 test-double would have been on the M0 timeline.
 
-**When it re-enters.** Opportunistically. The natural time is
-the milestone that introduces the second transport for real
-(e.g. an HTTP/SSE remote-agent path during M8 polish + extract,
-or a dedicated short milestone if a third-party consumer needs
-one earlier). The worker-boundary assertion can ride any
-Playwright sweep that touches `useAcp` boot.
+**Re-entry status (2026-05-05 reset).** The second-transport
+piece is **closed in practice**: `packages/cli-acp-client/`
+shipped during the post-M4 period as an in-process
+`TransformStream` duplex embedding `@bodhiapp/web-acp-agent`,
+proving the framing-layer boundary is real against a truly
+independent runtime. See
+[`m5-extraction-and-compliance.md`](m5-extraction-and-compliance.md)
+§ "cli-acp-client — shelved" for why the CLI itself is shelved
+for roadmap purposes even though its proof-of-transport value
+remains. The worker-boundary e2e assertion can ride any
+Playwright sweep that touches `useAcp` boot — no dedicated
+milestone needed.
 
 **What has to exist before re-entry** (already satisfied):
 
@@ -222,7 +266,7 @@ internal correctness scaffolding, not protocol surface.
 
 ---
 
-## `bodhi/*` → `_bodhi/*` extension-method rename
+## `bodhi/*` → `_bodhi/*` extension-method rename (largely absorbed by M5)
 
 **What was deferred.** Renaming the three M0/M1 extension
 methods that pre-date principle § 15 (`_`-prefixed, namespaced
@@ -233,48 +277,34 @@ extension methods) so the wire is consistent:
 - `bodhi/listSessions` → `_bodhi/sessions/list`.
 - `bodhi/getSession` → `_bodhi/sessions/get`.
 
-The newer M2/M3/M3.5 extension methods (`_bodhi/volumes/list`,
-`_bodhi/features/{list,set}`, `_bodhi/mcp/toggles/set`,
-`_bodhi/sessions/delete`) already follow the convention.
+**Re-entry status (2026-05-05 reset).** The ACP 0.21 compliance
+sweep in the post-M4 period (see
+[`m5-extraction-and-compliance.md`](m5-extraction-and-compliance.md))
+**deleted** all three methods rather than renaming them —
+`bodhi/listModels` migrated to native `session/load` model
+advertisement, `bodhi/listSessions` migrated to native
+`Agent.listSessions` with cursor pagination, and
+`bodhi/getSession` was dropped entirely in favour of
+`LoadSessionResponse._meta.bodhi` carrying the full transcript +
+toggle state natively.
 
-**Why deferred.** The unprefixed names predate the principle
-that codified the rule; they are wire-compatible with the
-current SDK and changing them is a breaking change to clients
-that may already snapshot the constants. The code at
-`packages/web-acp/src/acp/index.ts` flags this explicitly:
-
-> M2 extension methods use the spec-blessed `_`-prefix; the
-> older `bodhi/*` constants above stay unchanged to preserve
-> M1 client-side contracts (a rename is tracked as a deferred
-> cleanup item).
-
-We chose hygiene over churn at M2 kickoff and have not
-re-litigated since.
-
-**When it re-enters.** At the M8 library-extraction milestone,
-or earlier if an unrelated breaking change to the extension
-surface is already in flight. The migration ladder per
-principle § 15:
-
-1. Advertise both the old and new method names for one
-   release; route them to the same handler.
-2. Switch the in-tree client (and any consumer the library
-   gains) to the new names.
-3. Remove the legacy aliases in the next release after a
-   decision entry documenting the swap.
+What remains is housekeeping: a residual grep-clean audit to
+catch any lingering `bodhi/*` string constants in non-active
+paths (docs, comments, tests) — not a milestone. Any newer
+extension method introduced in M6+ (e.g. `_bodhi/extensions/list`,
+`_bodhi/skills/activate`) follows the `_bodhi/*` convention from
+first commit.
 
 **What has to exist before re-entry** (already satisfied):
 
-- Extension methods declared as constants in
-  `packages/web-acp/src/acp/index.ts` rather than inlined at
-  call sites — a single rename sweep covers every consumer.
-- A documented migration ladder in principle § 15.
+- All shipped extension methods are declared as constants in the
+  agent package's ACP module — any housekeeping rename is a
+  single sweep.
+- Principle § 15 remains in force for any new extension surface.
 
-**ACP-compliance note.** Compliance row "Extension methods" in
-[`index.md`](index.md) currently reads "compliant" because
-principle § 15 explicitly carries the legacy aliases as a
-documented carry-over. The rename closes that hedge cleanly
-without changing the row.
+**ACP-compliance note.** The "Extension methods" row in
+[`index.md`](index.md) is now **compliant with no hedge** — no
+legacy aliases remain on-wire.
 
 ---
 
