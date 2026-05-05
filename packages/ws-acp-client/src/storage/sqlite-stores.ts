@@ -25,6 +25,7 @@ import {
 	type SessionRow,
 	type SessionStore,
 	type SessionSummary,
+	type SessionSummaryPage,
 } from "@bodhiapp/web-acp-agent";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { asc, desc, eq, sql } from "drizzle-orm";
@@ -146,6 +147,34 @@ export function createSqliteSessionStore(db: AppDb): SessionStore {
 				turnCount: row.turnCount,
 				lastModelId: row.lastModelId,
 			}));
+		},
+
+		async listSummariesPage({ page, perPage }: { page: number; perPage: number }): Promise<SessionSummaryPage> {
+			// `Agent.listSessions` (post-refactor) requires this method. Page
+			// is 1-indexed; clamp to >= 1 so an off-by-one caller doesn't
+			// produce a negative offset. perPage is bounded the same way.
+			const safePage = Math.max(1, Math.floor(page));
+			const safePerPage = Math.max(1, Math.floor(perPage));
+			const offset = (safePage - 1) * safePerPage;
+			const rows = db
+				.select()
+				.from(sessions)
+				.orderBy(desc(sessions.updatedAt))
+				.limit(safePerPage)
+				.offset(offset)
+				.all();
+			const totalRow = db.select({ count: sql<number>`COUNT(*)` }).from(sessions).get();
+			return {
+				rows: rows.map((row) => ({
+					id: row.id,
+					title: row.title,
+					createdAt: row.createdAt,
+					updatedAt: row.updatedAt,
+					turnCount: row.turnCount,
+					lastModelId: row.lastModelId,
+				})),
+				total: totalRow?.count ?? 0,
+			};
 		},
 
 		async readEntries(id: string): Promise<SessionEntry[]> {

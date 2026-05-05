@@ -6,9 +6,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { chromium, type FullConfig } from '@playwright/test';
 import { BodhiServerManager } from './utils/bodhi-server-manager';
+import {
+  EverythingMcpManager,
+  EVERYTHING_MCP_PORT,
+  EVERYTHING_MCP_URL,
+} from './utils/everything-mcp-manager';
 import { startWsAcpServer, type WsServerHandle } from './utils/ws-server-manager';
 import { LoginPage } from './pages/admin/LoginPage';
 import { ApiModelsPage } from './pages/admin/ApiModelsPage';
+import { McpsPage } from './pages/admin/McpsPage';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +34,14 @@ export interface TestState {
   modelId: string;
   /** Display name (without prefix) — handy for ModelPicker option matching. */
   modelName: string;
+  /**
+   * User-facing slug for the seeded "everything" MCP instance on Bodhi.
+   * acp-ui matches against this in `_bodhi/mcp/state` notifications and
+   * the e2e asserts `mcp-server-<slug>` is rendered.
+   */
+  mcpEverythingSlug: string;
+  /** Streamable-HTTP URL of the local everything-mcp fixture (for `/mcp add`). */
+  mcpEverythingUrl: string;
 }
 
 export function getTestState(): TestState {
@@ -84,7 +98,7 @@ function isPortInUse(port: number): Promise<boolean> {
 }
 
 async function assertPortsFree(): Promise<void> {
-  const portsToCheck = [BODHI_SERVER_PORT, BODHI_DEFAULT_PORT];
+  const portsToCheck = [BODHI_SERVER_PORT, BODHI_DEFAULT_PORT, EVERYTHING_MCP_PORT];
   for (const port of portsToCheck) {
     if (await isPortInUse(port)) {
       throw new Error(
@@ -118,6 +132,14 @@ function buildUserAgent(): string {
 
 let bodhiServer: BodhiServerManager | null = null;
 let wsServer: WsServerHandle | null = null;
+let everythingMcp: EverythingMcpManager | null = null;
+
+// Bodhi-side server + instance names for the seeded reference MCP.
+// `MCP_EVERYTHING_INSTANCE_SLUG` is the slug the `/mcp add` flow + the
+// agent's MCP pool surface back to acp-ui via `_bodhi/mcp/state`.
+export const MCP_EVERYTHING_SERVER_NAME = 'ws-acp-everything';
+export const MCP_EVERYTHING_INSTANCE_NAME = 'Everything MCP';
+export const MCP_EVERYTHING_INSTANCE_SLUG = 'everything';
 
 async function globalSetup(_: FullConfig) {
   loadEnv({ path: path.join(E2E_DIR, '.env.test'), quiet: true });
@@ -149,6 +171,12 @@ async function globalSetup(_: FullConfig) {
 
   const serverUrl = await bodhiServer.start();
 
+  // Start the local "everything" MCP fixture before we attempt to
+  // register it on the Bodhi side — Bodhi probes the server URL on
+  // create. CI runs are noisier so we surface the child's stdout.
+  everythingMcp = new EverythingMcpManager({ logToStdout: !!process.env.CI });
+  await everythingMcp.start();
+
   // Provision the admin user against the booted server. Without this,
   // the server's `/bodhi/v1/info` reports "not in ready state" because
   // no resource-admin has authenticated yet — and bodhi-js refuses to
@@ -178,6 +206,23 @@ async function globalSetup(_: FullConfig) {
       getEnv('OPENAI_API_KEY'),
       API_MODEL_PREFIX,
       API_MODEL_NAME
+    );
+
+    // MCP bootstrap (Phase 10): register the local "everything" reference
+    // server on the Bodhi side so that when acp-ui's `/mcp add <url>`
+    // flow re-authenticates with the new scope, Bodhi already has a
+    // matching server + public instance to surface as Connected.
+    const mcpsPage = new McpsPage(page, serverUrl);
+    await mcpsPage.createMcpServer(
+      everythingMcp!.getUrl(),
+      MCP_EVERYTHING_SERVER_NAME,
+      'everything MCP reference server (e2e fixture)'
+    );
+    await mcpsPage.createMcpInstance(
+      MCP_EVERYTHING_SERVER_NAME,
+      MCP_EVERYTHING_INSTANCE_NAME,
+      MCP_EVERYTHING_INSTANCE_SLUG,
+      'Public everything MCP instance — seeded by ws-acp-client global-setup'
     );
   } catch (err) {
     setupFailed = true;
@@ -220,6 +265,8 @@ async function globalSetup(_: FullConfig) {
         cwd: wsServer.cwd,
         modelId: FULL_MODEL_ID,
         modelName: API_MODEL_NAME,
+        mcpEverythingSlug: MCP_EVERYTHING_INSTANCE_SLUG,
+        mcpEverythingUrl: EVERYTHING_MCP_URL,
       } satisfies TestState,
       null,
       2
@@ -235,6 +282,14 @@ async function globalSetup(_: FullConfig) {
         console.warn('[global-setup] ws-acp-client.stop() failed:', err);
       }
       wsServer = null;
+    }
+    if (everythingMcp) {
+      try {
+        await everythingMcp.stop();
+      } catch (err) {
+        console.warn('[global-setup] everything-mcp.stop() failed:', err);
+      }
+      everythingMcp = null;
     }
     if (bodhiServer) {
       await bodhiServer.stop();

@@ -6,6 +6,7 @@ import { ChatPage } from './pages/ChatPage';
 import { SessionsView } from './pages/SessionsView';
 import { SettingsPage } from './pages/SettingsPage';
 import { getTestState } from './global-setup';
+import { createPerSpecWsServer } from './utils/per-spec-ws';
 
 // Phase 4 gate: the broadest journey test in the suite. Drives the
 // post-Phase-3 stack through the workflows that aren't covered by
@@ -32,6 +33,18 @@ import { getTestState } from './global-setup';
 // makes ~5-6 LLM calls. Total runtime is ~60-90s; keep the global
 // timeout headroom in mind when iterating locally.
 test.describe('acp-ui ↔ ws-acp-client sessions + tools journey', () => {
+  // Phase 6: agent-driven sessions persist across the suite, so this
+  // spec spawns its own ws-acp-client to keep `expectCount(N)`
+  // assertions deterministic (the global-setup ws-acp-client is shared
+  // by simpler specs).
+  const ws = createPerSpecWsServer();
+  test.beforeAll(async () => {
+    await ws.start();
+  });
+  test.afterAll(async () => {
+    await ws.stop();
+  });
+
   test('multi-session + tool + cancel', async ({ page }) => {
     const state = getTestState();
     const auth = new AuthPage(page);
@@ -42,6 +55,7 @@ test.describe('acp-ui ↔ ws-acp-client sessions + tools journey', () => {
     const SENTINEL_A = 'WORDA42';
     const SENTINEL_B = 'WORDB99';
     const HELLO_BEACON = 'PHASE4_TOOL_BEACON_X92';
+    const AGENT_NAME = 'E2E-WS-TOOLS';
 
     await test.step('Setup: login, configure Bodhi server, add WS agent', async () => {
       await page.goto('/');
@@ -56,14 +70,14 @@ test.describe('acp-ui ↔ ws-acp-client sessions + tools journey', () => {
 
       await settings.open();
       await settings.addAgent({
-        name: 'E2E-WS',
+        name: AGENT_NAME,
         transport: 'websocket',
-        url: state.wsUrl,
+        url: ws.url,
       });
       await settings.close();
 
-      await chat.selectAgent('E2E-WS');
-      await chat.setCwd(state.cwd);
+      await chat.selectAgent(AGENT_NAME);
+      await chat.setCwd(ws.cwd);
     });
 
     await test.step('Session A: open + first prompt → idle, sentinel visible', async () => {
@@ -102,11 +116,11 @@ test.describe('acp-ui ↔ ws-acp-client sessions + tools journey', () => {
       // primary signal.
       await expect.soft(sessions.rows().nth(0)).toHaveAttribute(
         'data-test-agent',
-        'E2E-WS'
+        AGENT_NAME
       );
       await expect.soft(sessions.rows().nth(1)).toHaveAttribute(
         'data-test-agent',
-        'E2E-WS'
+        AGENT_NAME
       );
     });
 
@@ -129,8 +143,8 @@ test.describe('acp-ui ↔ ws-acp-client sessions + tools journey', () => {
     await test.step('Tool prompt: agent reads pre-seeded hello.txt via bash', async () => {
       // Pre-seed the agent's cwd with a deterministic beacon. The
       // ws-acp-client mounts $cwd at /mnt/cwd via PassthroughFS.
-      await mkdir(state.cwd, { recursive: true });
-      await writeFile(join(state.cwd, 'hello.txt'), `${HELLO_BEACON}\n`, 'utf8');
+      await mkdir(ws.cwd, { recursive: true });
+      await writeFile(join(ws.cwd, 'hello.txt'), `${HELLO_BEACON}\n`, 'utf8');
 
       await chat.send(
         `Use the bash tool to read the file /mnt/cwd/hello.txt and output its exact contents.`

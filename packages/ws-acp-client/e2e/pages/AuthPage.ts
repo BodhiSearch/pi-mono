@@ -5,6 +5,16 @@ export interface Credentials {
   password: string;
 }
 
+export interface LoginOptions {
+  /**
+   * URLs of the MCP servers the user wants approved on this access-request
+   * cycle. The review page renders one toggle row per requested URL; we
+   * flip the toggle on AND pick the first available instance from the
+   * combobox. URLs not in this set are explicitly toggled off.
+   */
+  acceptMcps?: string[];
+}
+
 // POM for the Bodhi auth flow as seen from acp-ui:
 //   1. Header "Login" button kicks off bodhi-js's redirect flow.
 //   2. We land on the Bodhi server's `/ui/login` (proxied login page),
@@ -69,19 +79,32 @@ export class AuthPage {
   // Cold login — first authentication of this browser context. Walks
   // the full path: BodhiApp `/ui/login` → Keycloak password screen →
   // access request review → app.
-  async login(credentials: Credentials): Promise<void> {
+  async login(credentials: Credentials, opts: LoginOptions = {}): Promise<void> {
     await this.loginButton.click();
     await this.completeKeycloakSignIn(credentials);
-    await this.approveAccessRequest();
+    await this.approveAccessRequest(opts);
     await this.expectReturnedToApp();
   }
 
   // Post-logout re-login. The OAuth logout clears BodhiApp's session
   // but the access-request review screen is always shown on every login
   // cycle, so a re-login still walks through it.
-  async reloginAfterLogout(): Promise<void> {
+  async reloginAfterLogout(opts: LoginOptions = {}): Promise<void> {
     await this.loginButton.click();
-    await this.approveAccessRequest();
+    await this.approveAccessRequest(opts);
+    await this.expectReturnedToApp();
+  }
+
+  /**
+   * Mid-session re-auth path used by `/mcp add` / `/mcp remove`. The
+   * built-in action triggers a `logout()` + `login(opts)` chain inside
+   * acp-ui's session store; the browser lands on the access-request
+   * review page (Keycloak SSO short-circuits the password prompt) and
+   * we approve with the requested MCP scopes selected. Mirrors
+   * `packages/web-acp/e2e/tests/pages/AuthPage.ts:reauthForMcpChange`.
+   */
+  async reauthForMcpChange(acceptMcps: string[] = []): Promise<void> {
+    await this.approveAccessRequest({ acceptMcps });
     await this.expectReturnedToApp();
   }
 
@@ -103,9 +126,28 @@ export class AuthPage {
     await this.page.click('#kc-login');
   }
 
-  private async approveAccessRequest(): Promise<void> {
+  private async approveAccessRequest({ acceptMcps = [] }: LoginOptions = {}): Promise<void> {
     await this.page.waitForURL(/\/access-requests\/review/);
     await this.approveButton.waitFor();
+    const accept = new Set(acceptMcps);
+    const toggleIds: string[] = await this.page
+      .locator('[data-testid^="review-mcp-toggle-"]')
+      .evaluateAll(els => els.map(el => el.getAttribute('data-testid') ?? ''));
+    for (const testid of toggleIds) {
+      const url = testid.replace(/^review-mcp-toggle-/, '');
+      const toggle = this.page.locator(`[data-testid="${testid}"]`);
+      const currentlyChecked = (await toggle.getAttribute('aria-checked')) === 'true';
+      const desired = accept.has(url);
+      if (currentlyChecked !== desired) {
+        await toggle.click();
+      }
+      if (desired) {
+        // Radix Select renders into a portal with role="option";
+        // the first option is the only seeded instance per global-setup.
+        await this.page.locator(`[data-testid="review-mcp-select-trigger-${url}"]`).click();
+        await this.page.locator('[role="option"]').first().click();
+      }
+    }
     await expect(this.approveButton).toBeEnabled();
     await this.approveButton.click();
   }

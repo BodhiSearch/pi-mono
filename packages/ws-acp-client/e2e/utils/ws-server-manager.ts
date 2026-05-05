@@ -15,6 +15,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+export interface WsServerVolume {
+  /** Mount name (becomes `/mnt/<name>` on the agent side). */
+  name: string;
+  /** Absolute host-side path to expose. The directory must exist before
+   * the CLI is spawned; use `mkdtempSync` or `mkdirSync` in the caller. */
+  path: string;
+}
+
 export interface WsServerOptions {
   /** Path to the ws-acp-client package root. */
   packageDir: string;
@@ -28,6 +36,9 @@ export interface WsServerOptions {
   verbose?: boolean;
   /** Max ms to wait for the ready line before failing. */
   startupTimeoutMs?: number;
+  /** Extra `--volume name=path` flags appended to the CLI invocation.
+   * Each name surfaces as a `_bodhi/volumes/list` row alongside `cwd`. */
+  volumes?: WsServerVolume[];
 }
 
 export interface WsServerHandle {
@@ -35,6 +46,10 @@ export interface WsServerHandle {
   url: string;
   /** Resolved working directory (the temp dir if mkdtemp'd). */
   cwd: string;
+  /** Resolved extra volumes (the same list passed in `opts.volumes`,
+   * echoed back so the test can address mount paths without duplicating
+   * the spec). */
+  volumes: WsServerVolume[];
   /** Stop the child process and remove the mkdtemp'd cwd. */
   stop(): Promise<void>;
 }
@@ -48,6 +63,7 @@ export async function startWsAcpServer(opts: WsServerOptions): Promise<WsServerH
   const cwd = opts.cwd ?? mkdtempSync(join(tmpdir(), 'ws-acp-e2e-'));
   const ownsCwd = !opts.cwd;
 
+  const volumes = opts.volumes ?? [];
   const args = [
     'src/cli.ts',
     '--port',
@@ -57,6 +73,9 @@ export async function startWsAcpServer(opts: WsServerOptions): Promise<WsServerH
     '--cwd',
     cwd,
   ];
+  for (const vol of volumes) {
+    args.push('--volume', `${vol.name}=${vol.path}`);
+  }
 
   const child: ChildProcess = spawn('npx', ['tsx', ...args], {
     cwd: opts.packageDir,
@@ -155,5 +174,5 @@ export async function startWsAcpServer(opts: WsServerOptions): Promise<WsServerH
     throw new Error('ws-acp-client: ready URL not captured');
   }
 
-  return { url, cwd, stop };
+  return { url, cwd, volumes, stop };
 }

@@ -31,7 +31,9 @@ NDJSON-of-JSON-RPC bytes exchanged inside the browser.
 npx tsx src/cli.ts \
   --port 8765 \
   --bind 127.0.0.1 \
-  --cwd /path/to/working/dir
+  --cwd /path/to/working/dir \
+  --volume notes=/Users/me/notes \
+  --volume code=/Users/me/code
 ```
 
 Flags:
@@ -40,7 +42,17 @@ Flags:
   port is printed on stdout in the line `ready: ws://host:port`.
 - `--bind <host>` — interface to bind. Defaults to `127.0.0.1`.
 - `--cwd <path>` — agent's working directory + sqlite location.
-  Defaults to `process.cwd()`.
+  Defaults to `process.cwd()`. Mounted as `/mnt/cwd` to the agent.
+- `--volume <name>=<path>` — repeatable. Mounts an additional host
+  directory as a ZenFS `PassthroughFS` volume at `/mnt/<name>`. The
+  `<name>` must match `[A-Za-z0-9_-]{1,63}` and cannot collide with
+  the reserved `cwd` mount or with another `--volume` name in the
+  same invocation. The agent surfaces the mounted set via the
+  `_bodhi/volumes/list` ext-method, which acp-ui renders in the
+  Volumes panel. Useful for letting an agent reach extra workspaces
+  (notes, project sources, scratch dirs) without changing `$cwd`,
+  and for seeding `.pi/{commands,prompts}/*.md` so vault `/wiki:*`
+  slash commands are discoverable from the chat.
 
 The process traps `SIGTERM` / `SIGINT` and shuts the WebSocket server
 down cleanly, including closing the sqlite handle.
@@ -62,11 +74,74 @@ verbatim:
 All three stores live in one SQLite file. The `preferences` table is
 the unified per-session keyed store backing both feature toggles
 (`feature:bashEnabled`, `feature:forceToolCall`) and MCP toggles
-(`mcp:toggles`). **Two browser tabs talking to the same
-`ws-acp-client` process see the same session list** — that is
-intentional for single-user laptop deployments. Multi-tenant
-hardening would require per-connection authentication-derived
-namespacing on `session_id`; not in scope today.
+(`mcp:toggles`).
+
+**Single-tenant carve-out**: two browser tabs talking to the same
+`ws-acp-client` process see the same session list, the same
+per-session feature toggles, and the same MCP toggle bitmap. The
+`_bodhi/sessions/delete` ext-method is destructive across browsers
+sharing one host — deleting a session in tab A also removes it from
+tab B's sidebar on next refresh. This is intentional for single-user
+laptop deployments. Multi-tenant hardening would require
+per-connection authentication-derived namespacing on `session_id`
+across the `sessions` / `entries` / `preferences` tables; see
+`packages/web-acp-agent/TECHDEBT.md` for the migration shape. Not in
+scope today.
+
+**The user's "requested MCPs" list is NOT stored here.** The list of
+URLs the user wants Bodhi to approve as MCP scopes lives per-browser
+in acp-ui's KVStore (`mcp-requested.json`). The `/mcp add <url>` /
+`/mcp remove <url>` commands mutate that browser-local list and
+re-trigger a Bodhi login with the updated `addMcpServer` scopes; the
+agent receives the result on `session/new` /  `session/load` via
+`_meta.bodhi.{requestedMcpUrls, mcpInstances}` and connects to each
+approved instance, surfacing per-server state through
+`_bodhi/mcp/state` notifications. Per-server toggles stay browser-
+local and round-trip through `_bodhi/mcp/toggles/set`. This mirrors
+the contract `packages/web-acp/` ships in
+`src/mcp/requested-mcps-store.ts`.
+
+## acp-ui surfaces driven by this host
+
+`ws-acp-client` is auth-agnostic and UI-less, but it ships hand-in-
+hand with `acp-ui/` (Vue 3) which renders all the agent surfaces over
+the wire. The combination supports the same user-visible feature set
+as `packages/web-acp/`:
+
+- **Sessions sidebar** — agent-driven via cursor-paginated
+  `Agent.unstable_listSessions`. Click-to-resume restores the
+  authoritative transcript via `LoadSessionResponse._meta.bodhi.messages`.
+  Delete is wired through the `_bodhi/sessions/delete` ext-method;
+  deleting the active session auto-creates a fresh empty session on
+  the same agent + cwd so the chat surface is never stranded on the
+  welcome screen.
+- **Built-in slash commands** — `/help`, `/version`, `/info`,
+  `/copy`, `/mcp` (and any vault-sourced `/wiki:*` commands) appear
+  in the `/` palette via `available_commands_update`. Built-in
+  replies render as muted bubbles with a "not sent to LLM" badge,
+  driven by the `_meta.bodhi.builtin.command` tag the agent stamps
+  on the assistant chunk. `/copy` rides an `_bodhi/builtin/action`
+  notification that the host dispatches into
+  `navigator.clipboard.writeText(renderConversationMarkdown(messages))`.
+- **Volumes panel** — read-only renderer of the host's mounted
+  volume set (`/mnt/cwd` plus every `--volume name=path`). Fed by
+  the `_bodhi/volumes/list` ext-method on connect.
+- **Features panel** — checkbox per `_bodhi/feature` entry the
+  agent advertises on `NewSessionResponse.configOptions` /
+  `LoadSessionResponse.configOptions`. Toggling fires
+  `session/set_config_option`; the agent echoes the full updated
+  snapshot which the store ingests verbatim. Reload-survival flows
+  through the agent's preference store.
+- **MCP panel + `/mcp add|remove`** — browser-local
+  `mcp-requested.json` tracks the URLs the user wants Bodhi to
+  approve. `/mcp add <url>` mutates the list and re-triggers a
+  Bodhi `login()` with the augmented scope chain (`addMcpServer`),
+  so the user lands on the access-request review page with a fresh
+  toggle for the new MCP. On return, the next `session/new` or
+  `session/load` sends `_meta.bodhi.{requestedMcpUrls, mcpInstances}`
+  and the agent connects to each approved instance, surfacing per-
+  server lifecycle through `_bodhi/mcp/state` notifications. `/mcp
+  remove <url>` is the symmetric flow.
 
 ## Authentication
 
@@ -82,6 +157,15 @@ token + base URL in `_meta` on the ACP `authenticate` request:
 flow, does not persist tokens, and does not log them. Each accepted
 WebSocket connection gets a fresh `BodhiProvider` instance, so
 authenticate calls do not leak between concurrent connections.
+
+**Disconnect-only logout contract**: on the acp-ui side, clicking
+"Logout" calls `acpClient.disconnect()` to drop the WebSocket bridge
++ wipes the local `bodhiAuth` token; it does NOT call
+`_bodhi/sessions/delete` and does NOT remove anything from
+`<cwd>/.ws-acp-client/state.db`. The next login + connect refetches
+the session list from the agent via `Agent.unstable_listSessions`,
+so logged-out + logged-back-in users see exactly the same sidebar
+they left behind. Pairs with the single-tenant assumption above.
 
 ## Architecture
 
@@ -122,9 +206,17 @@ authenticate calls do not leak between concurrent connections.
   are sent as text frames (browsers' `WebSocket.onmessage` rejects
   binary frames in the acp-ui path).
 - `src/services/assemble.ts` — `createHostState` opens the sqlite
-  `AppDb` once per process and mounts the `$cwd` volume on the
-  shared `ZenfsVolumeRegistry`. Per-connection wiring lives in
-  `server.ts`.
+  `AppDb` once per process and mounts the `$cwd` volume PLUS every
+  `--volume` flag on the shared `ZenfsVolumeRegistry`. Per-connection
+  wiring lives in `server.ts`.
+- `src/services/cwd-volume.ts` — `createCwdVolumeInit({ cwd, mountName })`
+  builds the `VolumeInit` for the always-mounted `cwd` volume; the CLI
+  re-uses the same factory (passing the user-supplied `mountName`) for
+  every `--volume name=path` flag, so all volumes go through one
+  PassthroughFS path.
+- `src/cli-args.ts` — `--volume name=path` parser, including the
+  `[A-Za-z0-9_-]{1,63}` name validation, duplicate-name check, and
+  the reserved-`cwd` collision check.
 - `src/storage/*` — drizzle schema + better-sqlite3 opener +
   `SessionStore` / `PreferenceStore` impls.
 

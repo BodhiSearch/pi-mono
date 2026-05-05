@@ -4,83 +4,32 @@
  * the current working directory as the agent's `$cwd`.
  *
  * Usage:
- *   ws-acp-client            # listens on 127.0.0.1:8923 (default)
- *   ws-acp-client --port 0   # ephemeral port (use for tests)
- *   ws-acp-client --cwd /path  # override the agent's working dir
+ *   ws-acp-client                            # listens on 127.0.0.1:8923 (default)
+ *   ws-acp-client --port 0                   # ephemeral port (use for tests)
+ *   ws-acp-client --cwd /path                # override the agent's working dir
+ *   ws-acp-client --volume code=/some/dir    # mount /mnt/code via PassthroughFS
+ *   ws-acp-client --volume a=/x --volume b=/y  # repeatable
+ *
+ * Argument parsing is in `cli-args.ts` so the unit tests can cover the
+ * wire-shape edge cases without spawning a child process.
  */
 
-import { resolve as resolvePath } from "node:path";
+import { parseArgs, printUsage } from "./cli-args";
 import { startWsAcpServer } from "./server";
 import { createHostState } from "./services/assemble";
-
-interface CliArgs {
-	port: number;
-	cwd: string;
-	bindAddress: string;
-}
-
-const DEFAULT_PORT = 8923;
-
-function parseArgs(argv: string[]): CliArgs {
-	let port = DEFAULT_PORT;
-	let cwd = process.cwd();
-	let bindAddress = "127.0.0.1";
-
-	for (let i = 0; i < argv.length; i++) {
-		const arg = argv[i];
-		switch (arg) {
-			case "--port": {
-				const next = argv[++i];
-				if (next === undefined) throw new Error("--port requires a value");
-				const parsed = Number(next);
-				if (!Number.isFinite(parsed) || parsed < 0) {
-					throw new Error(`--port: invalid number '${next}'`);
-				}
-				port = parsed;
-				break;
-			}
-			case "--cwd": {
-				const next = argv[++i];
-				if (!next) throw new Error("--cwd requires a path");
-				cwd = resolvePath(next);
-				break;
-			}
-			case "--bind": {
-				const next = argv[++i];
-				if (!next) throw new Error("--bind requires a value");
-				bindAddress = next;
-				break;
-			}
-			case "-h":
-			case "--help":
-				printUsage();
-				process.exit(0);
-				break;
-			default:
-				throw new Error(`Unknown arg: ${arg}`);
-		}
-	}
-
-	return { port, cwd, bindAddress };
-}
-
-function printUsage(): void {
-	const lines = [
-		"ws-acp-client — WebSocket host for @bodhiapp/web-acp-agent",
-		"",
-		"Options:",
-		"  --port <n>      Listen port (default 8923, 0 = ephemeral)",
-		"  --bind <addr>   Bind address (default 127.0.0.1)",
-		"  --cwd <path>    Agent working directory (default cwd)",
-		"  -h, --help      Show this help",
-	];
-	console.log(lines.join("\n"));
-}
+import { createCwdVolumeInit } from "./services/cwd-volume";
 
 async function main(): Promise<void> {
-	const args = parseArgs(process.argv.slice(2));
+	const argv = process.argv.slice(2);
+	if (argv.includes("-h") || argv.includes("--help")) {
+		printUsage();
+		process.exit(0);
+	}
+	const args = parseArgs(argv);
 
-	const host = await createHostState({ cwd: args.cwd });
+	const extraVolumes = args.volumes.map((v) => createCwdVolumeInit({ cwd: v.path, mountName: v.name }));
+
+	const host = await createHostState({ cwd: args.cwd, extraVolumes });
 	const server = await startWsAcpServer({
 		host,
 		port: args.port,
@@ -89,6 +38,9 @@ async function main(): Promise<void> {
 	});
 
 	console.log(`[ws-acp-client] cwd=${host.cwd}`);
+	for (const vol of args.volumes) {
+		console.log(`[ws-acp-client] volume /mnt/${vol.name}=${vol.path}`);
+	}
 	console.log(`[ws-acp-client] ready: ${server.url}`);
 
 	let shuttingDown = false;
