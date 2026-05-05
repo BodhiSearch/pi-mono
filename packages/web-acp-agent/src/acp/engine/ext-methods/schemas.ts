@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import {
+  BODHI_EXTENSIONS_ADD_METHOD,
+  BODHI_EXTENSIONS_LIST_METHOD,
+  BODHI_EXTENSIONS_RELOAD_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
@@ -16,11 +19,27 @@ const mcpTogglesSetParams = z
   })
   .passthrough();
 
+const extensionsReloadParams = z
+  .object({
+    disabled: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+const extensionsAddParams = z
+  .object({
+    spec: z.string().min(1),
+    registryUrl: z.string().url().optional(),
+  })
+  .passthrough();
+
 const empty = z.object({}).passthrough();
 
 // Wire-shape only; handlers own authorisation. Unlisted methods pass through.
 export const EXT_METHOD_SCHEMAS: Record<string, z.ZodType<unknown>> = {
   [BODHI_VOLUMES_LIST_METHOD]: empty,
+  [BODHI_EXTENSIONS_LIST_METHOD]: empty,
+  [BODHI_EXTENSIONS_RELOAD_METHOD]: extensionsReloadParams,
+  [BODHI_EXTENSIONS_ADD_METHOD]: extensionsAddParams,
   [BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSetParams,
   [BODHI_SESSIONS_DELETE_METHOD]: sessionIdParam,
 };

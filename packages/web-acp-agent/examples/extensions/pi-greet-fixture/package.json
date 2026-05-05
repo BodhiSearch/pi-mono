@@ -1,0 +1,11 @@
+{
+  "name": "pi-greet-fixture",
+  "version": "1.0.0",
+  "description": "Phase 13 install-flow fixture (not published to npm).",
+  "type": "module",
+  "module": "index.js",
+  "pi": {
+    "extensions": ["index.js"]
+  },
+  "license": "MIT"
+}

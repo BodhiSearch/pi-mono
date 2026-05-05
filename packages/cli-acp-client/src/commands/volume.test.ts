@@ -36,6 +36,7 @@ class FakeVolumeRegistry implements VolumeRegistry {
     this.snapshots.set(init.mountName, {
       mountName: init.mountName,
       description: init.description,
+      tags: init.tags ? [...init.tags] : [],
     });
   }
   async unmount(mountName: string): Promise<void> {
@@ -48,6 +49,12 @@ class FakeVolumeRegistry implements VolumeRegistry {
   }
   firstMountName(): string | undefined {
     return this.snapshots.keys().next().value;
+  }
+  findByTag(tag: string): VolumeSnapshot | undefined {
+    for (const snap of this.snapshots.values()) {
+      if (snap.tags.includes(tag)) return snap;
+    }
+    return undefined;
   }
   onChange(): () => void {
     return () => {};
@@ -139,8 +146,12 @@ describe('volume / list', () => {
 
   it('lists mounted volumes with /mnt/ prefix and a (transient) badge for unpersisted entries', async () => {
     const reg = new FakeVolumeRegistry();
-    reg.snapshots.set('cwd', { mountName: 'cwd', description: 'Mounted directory: ' + tmpRoot });
-    reg.snapshots.set('temp', { mountName: 'temp' });
+    reg.snapshots.set('cwd', {
+      mountName: 'cwd',
+      description: 'Mounted directory: ' + tmpRoot,
+      tags: [],
+    });
+    reg.snapshots.set('temp', { mountName: 'temp', tags: [] });
     // Persist only `cwd`.
     const { ctx, messages } = makeCtx({
       volumes: reg,
@@ -220,7 +231,7 @@ describe('volume / add', () => {
     const dir = join(tmpRoot, 'notes');
     mkdirSync(dir);
     const reg = new FakeVolumeRegistry();
-    reg.snapshots.set('notes', { mountName: 'notes' });
+    reg.snapshots.set('notes', { mountName: 'notes', tags: [] });
     const { ctx, messages } = makeCtx({
       volumes: reg,
       kv: makeKv(),
@@ -292,7 +303,7 @@ describe('volume / remove', () => {
 
   it('unmounts and drops kv entry; tolerates a /mnt/ prefix', async () => {
     const reg = new FakeVolumeRegistry();
-    reg.snapshots.set('notes', { mountName: 'notes' });
+    reg.snapshots.set('notes', { mountName: 'notes', tags: [] });
     const kv = makeKv({
       [KV_VOLUMES]: [
         { mountName: 'notes', path: '/tmp/notes' } satisfies PersistedVolume,

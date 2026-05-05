@@ -33,11 +33,15 @@ export interface VolumeInit {
    * without exposing the seeding logic to the agent.
    */
   initialize?: () => Promise<void>;
+  /** Well-known values in `WELL_KNOWN_VOLUME_TAGS`; extras are free-form. */
+  tags?: readonly string[];
 }
 
 export interface VolumeSnapshot {
   mountName: string;
   description?: string;
+  /** Empty array when no tags were declared. */
+  tags: readonly string[];
 }
 
 export type VolumeRegistryListener = (snapshot: VolumeSnapshot[]) => void;
@@ -48,6 +52,8 @@ export interface VolumeRegistry {
   unmount(mountName: string): Promise<void>;
   list(): VolumeSnapshot[];
   firstMountName(): string | undefined;
+  /** First match in insertion order. */
+  findByTag(tag: string): VolumeSnapshot | undefined;
   onChange(listener: VolumeRegistryListener): () => void;
 }
 
@@ -83,6 +89,7 @@ export class ZenfsVolumeRegistry implements VolumeRegistry {
     this.#volumes.set(init.mountName, {
       mountName: init.mountName,
       ...(init.description ? { description: init.description } : {}),
+      tags: dedupeTags(init.tags),
     });
     this.#notify();
   }
@@ -105,6 +112,13 @@ export class ZenfsVolumeRegistry implements VolumeRegistry {
   firstMountName(): string | undefined {
     const first = this.#volumes.values().next();
     return first.done ? undefined : first.value.mountName;
+  }
+
+  findByTag(tag: string): VolumeSnapshot | undefined {
+    for (const snapshot of this.#volumes.values()) {
+      if (snapshot.tags.includes(tag)) return snapshot;
+    }
+    return undefined;
   }
 
   onChange(listener: VolumeRegistryListener): () => void {
@@ -132,3 +146,18 @@ export class ZenfsVolumeRegistry implements VolumeRegistry {
     }
   }
 }
+
+function dedupeTags(input: readonly string[] | undefined): readonly string[] {
+  if (!input || input.length === 0) return EMPTY_TAGS;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tag of input) {
+    if (typeof tag !== 'string') continue;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out.length === 0 ? EMPTY_TAGS : Object.freeze(out);
+}
+
+const EMPTY_TAGS: readonly string[] = Object.freeze([]);

@@ -12,8 +12,11 @@ Wraps the LLM-driving runtime that the engine layer
   uses it for the per-turn prompt loop.
 - `BodhiProvider` — the default `LlmProvider` implementation,
   hand-rolled against the Bodhi `/bodhi/v1/models` catalog.
-- `createStreamFn(provider, consumeOverrides?)` — bridges
-  `LlmProvider` to `pi-ai`'s `streamSimple`.
+- `createStreamFn(provider, consumeOverrides?, getProviderHooks?,
+  getExtensionProvider?)` — bridges `LlmProvider` to `pi-ai`'s
+  `streamSimple`. The fourth arg lets `pi.registerProvider`
+  contributions (Phase 11) override `apiKey`/`headers`/`streamSimple`
+  on a per-model basis.
 - `composeSystemPrompt(volumes)` — builds the worker-owned
   system prompt before each turn.
 
@@ -160,37 +163,64 @@ Hosts that want a different LLM provider implement the same
 
 ## createStreamFn — `agent/stream-fn.ts`
 
-`agent/stream-fn.ts:createStreamFn(provider, consumeOverrides?)`
-(`:27`) is the bridge from `LlmProvider` to
-`@mariozechner/pi-ai`'s `streamSimple`. It returns a `StreamFn`
-(the type `pi-agent-core`'s `Agent` consumes via the `streamFn`
-option).
+`agent/stream-fn.ts:createStreamFn(provider, consumeOverrides?,
+getProviderHooks?, getExtensionProvider?)` is the bridge from
+`LlmProvider` to `@mariozechner/pi-ai`'s `streamSimple`. It
+returns a `StreamFn` (the type `pi-agent-core`'s `Agent` consumes
+via the `streamFn` option).
 
 Responsibilities per call:
 
-1. Pull `apiKey` + optional `headers` from
-   `provider.getApiKeyAndHeaders(model)`.
-2. Merge `auth.headers` with caller-supplied `options.headers`
-   via `mergeHeaders` (`:46`; caller wins on collision).
+1. Resolve the routing target via
+   `getExtensionProvider?.(model)`. When the model belongs to an
+   extension provider (Phase 11) the resolution carries the
+   `apiKey` / `headers` / `authHeader` / optional custom
+   `streamSimple` from `pi.registerProvider`. Otherwise fall
+   through to `provider.getApiKeyAndHeaders(model)`.
+2. Merge resolved headers with caller-supplied `options.headers`
+   via `mergeHeaders` (caller wins on collision). When
+   `authHeader: true` is set on an extension resolution, an
+   `Authorization: Bearer <apiKey>` line is injected.
 3. Read-and-clear per-turn overrides via
    `consumeOverrides?.()`.
-4. Call `streamSimple(model, context, { ...options,
-   ...overridesAsExtra, apiKey, headers })`.
+4. Read provider hooks via `getProviderHooks?.()` and forward
+   them as `streamSimple`'s `onPayload` / `onResponse` callbacks
+   (Phase 9).
+5. Pick the wire layer: `extResolution.streamSimple ?? streamSimple`
+   from `pi-ai`. Extension-provided `streamSimple` runs in place
+   of the built-in.
+6. Call `stream(model, context, { ...options,
+   ...overridesAsExtra, apiKey, headers, onPayload?, onResponse? })`.
 
-`StreamOptionOverrides` (`:21`): `{ toolChoice?: 'auto' |
-'required' | 'none' }`. `'required'` forces the model to emit
-a tool call on the next call. The driver pushes this DEV-only
-override when `forceToolCall` is on (see
-[features.md](./features.md)).
+`StreamOptionOverrides`: `{ toolChoice?: 'auto' | 'required' |
+'none' }`. `'required'` forces the model to emit a tool call on
+the next call. The driver pushes this DEV-only override when
+`forceToolCall` is on (see [features.md](./features.md)).
 
-**One-shot semantics.** `consumeOverrides` is called once per
-LLM request. The driver's `streamOverrides.current` ref pattern
-(see `acp/engine/services.ts:StreamOverridesRef`) sets the
-override **before** `inline.prompt(text)` and `pi-agent-core`'s
-loop only sees it on the first request — subsequent
-re-prompts within the same turn (e.g. after a tool call) use
-the model's discretion. Without one-shot semantics
-`forceToolCall` would be self-perpetuating.
+`StreamProviderHooks`: `{ onPayload?(payload), onResponse?(resp)
+}`. `start-agent.ts` builds the hooks bag from the
+`ExtensionRegistry` + a per-call `ActiveSessionRef`; the hooks
+delegate to `extensions.dispatchBeforeProviderRequest` /
+`extensions.dispatchAfterProviderResponse`. When no extension
+subscribes the hooks bag is `undefined` and `streamSimple` runs
+with no overhead.
+
+**One-shot semantics for overrides.** `consumeOverrides` is
+called once per LLM request. The driver's
+`streamOverrides.current` ref pattern (see
+`acp/engine/services.ts:StreamOverridesRef`) sets the override
+**before** `inline.prompt(text)` and `pi-agent-core`'s loop only
+sees it on the first request — subsequent re-prompts within the
+same turn (e.g. after a tool call) use the model's discretion.
+Without one-shot semantics `forceToolCall` would be
+self-perpetuating.
+
+**Provider hooks fire every request.** Unlike the override bag,
+`getProviderHooks` is consulted for every `streamSimple` call.
+Multi-step turns with tool calls fire the hooks multiple times.
+The hooks read `services.activeSession.current` (set by the
+prompt driver before each turn and cleared in `finally`), so
+extensions always see the right `sessionId`.
 
 ## composeSystemPrompt — `agent/system-prompt.ts`
 

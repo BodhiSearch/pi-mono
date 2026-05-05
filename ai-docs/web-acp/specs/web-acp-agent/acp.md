@@ -51,8 +51,8 @@ ACP method implementations:
 | --- | --- | --- | --- |
 | `initialize` | `:87` | `handlers/initialize.ts:handleInitialize` | Negotiates `protocolVersion` against `PROTOCOL_VERSION` from the SDK; advertises `agentInfo`, `agentCapabilities` (loadSession iff `services.store`, `mcpCapabilities.http=true/sse=false`, `promptCapabilities` all false, `sessionCapabilities.list = {}` iff store / `close = {}`), the single auth method `bodhi-token`. |
 | `authenticate` | `:91` | `handlers/initialize.ts:handleAuthenticate` | Validates `methodId === BODHI_AUTH_METHOD_ID`; reads `_meta` as `BodhiAuthenticateMeta { token, baseUrl }`; calls `services.bodhi.setAuthToken({ provider: 'bodhi', token, baseUrl })`. Resets `runtime.setModels([])` and `services.inline.clearMessages()` so the next session lazy-reloads under the new credential. |
-| `newSession` | `:95` | `handlers/session-crud.ts:handleNewSession` | Mints `sessionId = bodhi-${crypto.randomUUID()}`, filters MCP servers via `wire-utils.ts:filterHttpServers`, extracts `requestedMcpUrls` + `mcpInstances` via `wire-utils.ts:extractSessionMeta`, populates runtime state (with `currentModelId: null`), creates the store row, marks the inline session active, acquires MCP connections, refreshes the available-commands cache, lazy-loads models via `tryEnsureModels`, seeds `currentModelId` to the catalog's first id, and returns `{ sessionId, models?, configOptions }`. |
-| `loadSession` | `:99` | `handlers/session-crud.ts:handleLoadSession` | Validates the row exists, releases prior MCP connections under the old config (so the pool can re-key under new headers), reseeds `SessionState` with the row's `lastModelId` as `currentModelId`, replays persisted entries via `walkEntries` (notifications re-emitted through `runtime.sendRawNotification`; turn entries' `finalMessages` capture for inline reseed; built-in entries deferred to `bodhi/getSession` round-trip — see TODO in `session-crud.ts:93`), seeds inline history, acquires MCP connections, refreshes commands, ensures models, resolves the seeded model id (`resolveSeededModelId`), and returns `{ models?, configOptions, _meta.bodhi: { title, mcpToggles } }`. |
+| `newSession` | `:95` | `handlers/session-crud.ts:handleNewSession` | Mints `sessionId = bodhi-${crypto.randomUUID()}`, filters MCP servers via `wire-utils.ts:filterHttpServers`, extracts `requestedMcpUrls` + `mcpInstances` via `wire-utils.ts:extractSessionMeta`, populates runtime state (with `currentModelId: null`), creates the store row, marks the inline session active, acquires MCP connections, refreshes the available-commands cache, dispatches `extensions.dispatchSessionStart({ sessionId })` when configured, lazy-loads models via `tryEnsureModels`, seeds `currentModelId` to the catalog's first id, and returns `{ sessionId, models?, configOptions }`. |
+| `loadSession` | `:99` | `handlers/session-crud.ts:handleLoadSession` | Validates the row exists, releases prior MCP connections under the old config (so the pool can re-key under new headers), reseeds `SessionState` with the row's `lastModelId` as `currentModelId`, replays persisted entries via `walkEntries` (notifications re-emitted through `runtime.sendRawNotification`; turn entries' `finalMessages` capture for inline reseed; built-in + extension entries are rebuilt as muted assistant messages by `reconstructMessages` and ride `_meta.bodhi.messages`), seeds inline history, acquires MCP connections, refreshes commands, dispatches `extensions.dispatchSessionStart({ sessionId })` when configured, ensures models, resolves the seeded model id (`resolveSeededModelId`), and returns `{ models?, configOptions, _meta.bodhi: { title, mcpToggles, messages } }`. |
 | `listSessions` | `:103` | `handlers/session-crud.ts:handleListSessions` | Calls `store.listSummaries`; maps each row to `SessionInfo { sessionId, cwd: '/', title, updatedAt: ISO, _meta.bodhi: { turnCount, lastModelId, createdAt } }`. Unpaginated. |
 | `closeSession` | `:107` | `handlers/session-crud.ts:handleCloseSession` | Calls `runtime.tearDownSession(sessionId, { persistRow: true, abortPromptIfActive: id => driver.abortIfActive(id) })`. Keeps the row. |
 | `unstable_setSessionModel` | `:111` | `handlers/session-crud.ts:handleSetSessionModel` | Validates session + lazy-loads catalog + validates model id is in catalog; sets `SessionState.currentModelId`. Returns `{}`. |
@@ -242,11 +242,16 @@ concurrent `prompt` for the same session rejects with JSON-RPC
 `run(params)` (`:71`) wraps `#runTurn` in the inflight-mutex
 guard. `#runTurn` (`:93`) does:
 
-1. **Built-in early return** — if the prompt is a built-in
-   slash command (`tryHandleBuiltin`, see
-   [builtin-dispatch](#acpenginebuiltin-dispatchts)), the
-   driver emits the muted reply, persists a `'builtin'` entry,
-   and returns without touching the inline agent.
+1. **Extension command + built-in early return** — first
+   `tryHandleExtensionCommand` (added in Phase 7 of the M6
+   Extensions plan — see [`extensions.md`](./extensions.md))
+   checks for a `pi.registerCommand` match; then
+   `tryHandleBuiltin` (see
+   [builtin-dispatch](#acpenginebuiltin-dispatchts)) checks
+   for `/help` / `/version` / `/info` / `/copy` / `/mcp`.
+   Either path emits a muted reply, persists a `'builtin'`
+   entry tagged with the matched command, and returns without
+   touching the inline agent.
 2. **Model resolution** — `#resolveModel(sessionId)` (`:209`)
    reads `SessionState.currentModelId` and looks it up in
    `runtime.getModels()`. Throws `'No model selected: call
@@ -256,17 +261,35 @@ guard. `#runTurn` (`:93`) does:
    last text block through
    `agent/commands/expander.ts:expandCommand` against the
    cached command list; the block's text is replaced in-place
-   if matched.
+   if matched. The driver then re-extracts `text` and, when
+   `services.extensions` is present, awaits
+   `extensions.dispatchInput({ sessionId, text, source: 'user' })`.
+   `transform` rewrites `text`; `handled` short-circuits with
+   `stopReason: 'end_turn'` (no LLM call). Phase 4 of the M6
+   Extensions plan — see [`extensions.md`](./extensions.md).
 4. **History attach guard** — if
    `runtime.getActiveInlineSessionId() !== sessionId`, calls
    `runtime.rehydrateInlineFromStore(sessionId)`.
 5. **Per-turn tool list** — bash tool (gated on
    `featureSnapshot.bashEnabled && registry.list().length > 0
-   && services.registry`) plus enabled MCP tools. Each tool is
-   wrapped via the local `bindAbortSignal` helper (`:350`) so
+   && services.registry`) plus enabled MCP tools plus, when
+   `services.extensions` is present, every tool registered via
+   `pi.registerTool(...)` (Phase 5 of the M6 Extensions plan —
+   see [`extensions.md`](./extensions.md)). Each tool is wrapped
+   via the local `bindAbortSignal` helper (`:350`) so
    `session/cancel` short-circuits the running `execute` call.
+   Phase 6 ✓ also wires `inline.setModel`'s `beforeToolCall` and
+   `afterToolCall` hooks through to
+   `extensions.dispatchToolCall` / `dispatchToolResult` whenever
+   `services.extensions` is set.
 6. **System prompt** — `composeSystemPrompt(volumes)` —
    includes per-volume descriptors so the LLM knows each mount.
+   When `services.extensions` is present, the driver awaits
+   `extensions.dispatchBeforeAgentStart({ type, sessionId,
+   prompt, systemPrompt })` and replaces the value with the
+   chained `{ systemPrompt }` patch returned by extensions.
+   Phase 3 of the M6 Extensions plan — see
+   [`extensions.md`](./extensions.md).
 7. **Stream override push** — when `featureSnapshot.forceToolCall
    && isDev && tools.length > 0`, sets
    `streamOverrides.current = { toolChoice: 'required' }`.
@@ -375,36 +398,49 @@ do **not** double-persist as `'notification'` entries; the
 
 ### `acp/engine/ext-methods/`
 
-Five extension methods total. The registry at
-`ext-methods/index.ts:HANDLERS` (`:21`) maps method names to
-handlers and the public dispatcher
-`dispatchExtMethod(method, params, host)` (`:31`) resolves
-each call. Missing method → JSON-RPC `-32601`. Listed methods
-optionally pass through `EXT_METHOD_SCHEMAS` (Zod) at
-`ext-methods/schemas.ts` before reaching the handler; bad
-params throw `-32602`.
+Four extension methods total. The registry at
+`ext-methods/index.ts:HANDLERS` maps method names to handlers and
+the public dispatcher `dispatchExtMethod(method, params, host)`
+resolves each call. Missing method → JSON-RPC `-32601`. Listed
+methods optionally pass through `EXT_METHOD_SCHEMAS` (Zod) at
+`ext-methods/schemas.ts` before reaching the handler; bad params
+throw `-32602`.
 
 | Handler | Method constant | Wire method | Behaviour |
 | --- | --- | --- | --- |
-| `volumes-list.ts:volumesList` | `BODHI_VOLUMES_LIST_METHOD` | `_bodhi/volumes/list` | Returns `{ volumes: host.registry?.list() }` mapped to `BodhiVolumeDescriptor`. |
-| `get-session.ts:getSession` | `BODHI_GET_SESSION_METHOD` (also legacy alias `BODHI_GET_SESSION_METHOD_LEGACY = bodhi/getSession`, warned-once on first use) | `_bodhi/session/get` (+ legacy `bodhi/getSession`) | Validates the row exists; returns the rebuilt snapshot (`messages`, `lastModelId`, `title`, `mcpToggles`) by walking entries via `walkEntries(turn + builtin)`. Built-in entries are stamped as a tagged user/assistant pair via `makeBuiltinUserMessage` / `makeBuiltinAssistantMessage` so the host renders the muted-builtin badge in the right chronological slot. |
+| `volumes-list.ts:volumesList` | `BODHI_VOLUMES_LIST_METHOD` | `_bodhi/volumes/list` | Returns `{ volumes: host.registry?.list() }` mapped to `BodhiVolumeDescriptor`. Includes `tags?` when the volume has any (Phase 1). |
+| `extensions-list.ts:extensionsList` | `BODHI_EXTENSIONS_LIST_METHOD` | `_bodhi/extensions/list` | Returns `{ extensions: host.extensions?.list() }` mapped to `BodhiExtensionDescriptor`. Phase 2 surfaces capability sub-arrays (`events`, `tools`, `commands`, `providers`); only `events` is non-empty until later phases wire registration. |
 | `mcp-toggles-set.ts:mcpTogglesSet` | `BODHI_MCP_TOGGLES_SET_METHOD` | `_bodhi/mcp/toggles/set` | Validates the params shape; dispatches to `mcpToggles.setServer` or `mcpToggles.setTool` based on whether `toolName` is present. **Server-off forces pool eviction across refcounts** via `mcpPool.evictBySlug(serverSlug, deriveSlugFromUrl)` — forgotten sessions can hold stale refs that keep the connection alive globally. Per-tool toggles only filter the tool list and never touch the pool. Returns the wire snapshot via `wire-utils.ts:toWireMcpToggles`. |
 | `sessions-delete.ts:sessionsDelete` | `BODHI_SESSIONS_DELETE_METHOD` | `_bodhi/sessions/delete` | Idempotent: returns `{ deleted: false }` when the row is unknown. Delegates to `host.tearDownSession(sessionId, { persistRow: false, abortPromptIfActive: host.abortPromptIfActive })` — the runtime enforces teardown order (abort matching prompt → release MCP refs → drop in-memory state → delete persisted row). |
 
 The `_bodhi/features/list`, `_bodhi/features/set`,
+`_bodhi/session/get` (formerly `bodhi/getSession`),
 `bodhi/listModels`, and `bodhi/listSessions` extension methods
-have been **removed**. Per-session feature toggles ride
-`Agent.setSessionConfigOption` (see
-[`features.md`](./features.md)); session listing rides
-`Agent.listSessions`; model selection rides
+have all been **removed** in the post-M4 ACP 0.21 compliance
+sweep. Per-session feature toggles ride
+`Agent.setSessionConfigOption` (see [`features.md`](./features.md));
+session listing rides `Agent.listSessions`; model selection rides
 `Agent.unstable_setSessionModel`; the model catalog is
 lazy-loaded on the agent side via `ensureModelsLoaded` and
 shipped to the host on `NewSessionResponse.models` /
-`LoadSessionResponse.models`.
+`LoadSessionResponse.models`; the per-session transcript +
+toggles ride `LoadSessionResponse._meta.bodhi`
+(`BodhiLoadSessionMeta`). See
+[`../../milestones/deferred.md`](../../milestones/deferred.md)
+§ "`bodhi/*` → `_bodhi/*` extension-method rename" for the full
+audit trail.
 
-When upstream ACP adds a stable verb for `_bodhi/session/get`
-or `_bodhi/sessions/delete`, the migration is the two-step
-capability-gated swap documented in
+**M6 forward-reference.** The vault-sourced extension runtime
+(see [`extensions.md`](./extensions.md)) adds three new
+ext-methods per-phase: `_bodhi/extensions/list` (Phase 2 ✓
+shipped), `_bodhi/extensions/reload` (Phase 12 — planned),
+`_bodhi/extensions/add` (Phase 13 — planned). Constants live
+in `packages/web-acp-agent/src/wire/index.ts`; handlers under
+`acp/engine/ext-methods/extensions-{list,reload,add}.ts`.
+
+When upstream ACP adds a stable verb for `_bodhi/sessions/delete`
+or any of the `_bodhi/extensions/*` family, the migration is the
+two-step capability-gated swap documented in
 `steering/04-principles.md` § 15.
 
 ## Permissions — `acp/permissions.ts`

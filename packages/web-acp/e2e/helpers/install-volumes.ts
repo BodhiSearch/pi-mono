@@ -16,6 +16,7 @@ export interface VolumeSeedSpec {
    * will be anchored to the root.
    */
   files?: Record<string, string>;
+  tags?: readonly string[];
 }
 
 /**
@@ -34,6 +35,7 @@ export async function installVolumes(page: Page, seeds: VolumeSeedSpec[]): Promi
     name: string;
     description?: string;
     files: Record<string, string>;
+    tags?: readonly string[];
   }> = [];
   for (const seed of seeds) {
     const files = { ...(seed.files ?? {}) };
@@ -45,6 +47,7 @@ export async function installVolumes(page: Page, seeds: VolumeSeedSpec[]): Promi
       name: seed.name,
       ...(seed.description ? { description: seed.description } : {}),
       files,
+      ...(seed.tags && seed.tags.length > 0 ? { tags: seed.tags } : {}),
     });
   }
   await page.addInitScript(list => {

@@ -1,5 +1,6 @@
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
 import { copyCommand } from './copy';
+import { extensionCommand } from './extension';
 import { helpCommand } from './help';
 import { infoCommand } from './info';
 import { mcpCommand } from './mcp';
@@ -9,6 +10,7 @@ import { versionCommand } from './version';
 export type {
   BuiltinAction,
   BuiltinCommand,
+  BuiltinExtensionsHandle,
   BuiltinHandlerCtx,
   BuiltinMcpInstance,
   BuiltinResult,
@@ -26,6 +28,7 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
   infoCommand,
   copyCommand,
   mcpCommand,
+  extensionCommand,
 ];
 
 const BUILTIN_NAMES = new Set(BUILTIN_COMMANDS.map(c => c.name));

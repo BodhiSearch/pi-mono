@@ -54,6 +54,7 @@ test.describe('tools and volumes', () => {
           {
             name: 'wiki',
             description: 'knowledge base',
+            tags: ['cwd', 'agent-wd'],
             files: {
               '/marker.txt': 'be the change you want to see in the world',
               '/.pi/commands/greet.md': GREET_TEMPLATE,
@@ -71,6 +72,11 @@ test.describe('tools and volumes', () => {
       );
       await volumes.expectMounted('wiki');
       await volumes.expectMounted('code');
+    });
+
+    await test.step('volume tags — wiki carries [cwd, agent-wd] chips, code stays untagged', async () => {
+      await volumes.expectTags('wiki', ['cwd', 'agent-wd']);
+      await volumes.expectTags('code', []);
     });
 
     await test.step('remove the "code" volume — count drops to 1', async () => {

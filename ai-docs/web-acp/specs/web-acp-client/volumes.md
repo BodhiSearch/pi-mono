@@ -34,38 +34,48 @@ interface HostVolumeInit {
     description?: string;
     handle?: FileSystemDirectoryHandle;
     seed?: VolumeSeed;
+    tags?: readonly string[];
 }
 
 interface VolumeSeed {
     name: string;
     description?: string;
     files: Record<string, string>;     // path → utf-8 content
+    tags?: readonly string[];
 }
 ```
 
 Exactly one of `handle` / `seed` must be set. The handle path
 is the production case (real FSA mount); the seed path is
 dev/test injection via `window.__zenfsSeed` (Playwright +
-DevTools tinkering).
+DevTools tinkering). `tags` propagates through
+`toAgentVolumeInit` to the agent's `VolumeInit.tags`; either
+the top-level `HostVolumeInit.tags` or the inner
+`VolumeSeed.tags` is honoured (top-level wins when both are
+set).
 
 ## Backend conversion — `runtime/volumes-fsa/backends.ts`
 
-`toAgentVolumeInit(host)` (`:16`) converts a `HostVolumeInit`
-into the agent's `VolumeInit`. Branches on which of
-`handle` / `seed` is present:
+`toAgentVolumeInit(host)` converts a `HostVolumeInit` into the
+agent's `VolumeInit`. Branches on which of `handle` / `seed`
+is present:
 
 - **Handle**: `await WebAccess.create({ handle: host.handle })`
-  → `{ mountName, description?, fs: <WebAccess FileSystem> }`.
+  → `{ mountName, description?, tags?, fs: <WebAccess FileSystem> }`.
   The agent mounts the FS directly; reads / writes hit the
   user's actual disk through the FSA backend.
 - **Seed**: `InMemory.create({ label: seed.name })` →
-  `{ mountName, description?, fs: <InMemory FileSystem>,
+  `{ mountName, description?, tags?, fs: <InMemory FileSystem>,
   initialize: () => seedInMemoryBackend('/mnt/<mountName>',
   seed) }`. The post-mount `initialize` hook writes the
   seed files via `@zenfs/core`'s global `fs.promises.*` so
   the agent's `mount(mountPath, fs)` finishes synchronously
   and the seeding happens after the path is registered.
 - Neither: throws `'Volume <mountName> needs either a handle or a seed'`.
+
+Tag resolution prefers `host.tags` over `host.seed?.tags`;
+both are emitted on the agent's `VolumeInit.tags` only when
+non-empty.
 
 `seedInMemoryBackend` (`:38`) walks the sorted seed keys,
 ensures parent directories exist (via recursive `mkdir`), and
@@ -182,6 +192,7 @@ interface VolumeEntry {
     state: VolumeState;
     errorMessage?: string;
     needsPermission: boolean;
+    tags: readonly string[];
 }
 ```
 
@@ -237,6 +248,30 @@ setDescription, restoreAccess }`.
 returns either `[]` (when absent) or the array form (single
 seed → `[seed]`, array → as-is). The hook merges seeds with
 persisted handles into `initialMounts`.
+
+## Tags
+
+Volume tags propagate from `VolumeSeed.tags` (or
+`HostVolumeInit.tags`) → `useVolumes` initial-load merge →
+`VolumeEntry.tags` (UI state) and `HostVolumeInit.tags` (worker
+mount payload) → `toAgentVolumeInit` → agent's
+`VolumeRegistry`. `VolumeRow.tsx` renders each non-empty tag
+list as a row of read-only chips; the test seam is a
+`data-testid="volume-row-<name>-tags"` `<ul>` carrying
+`data-test-state="<count>"`, with one
+`data-testid="volume-row-<name>-tag-<tag>"` chip per entry.
+
+Persisted FSA records carry `tags?` on `VolumeHandleRecord`
+in `vault/fsa-handle-store.ts`; legacy records without the
+field still load. There is no UI for editing tags in M6 phase
+1 — tags are read-only from the user's perspective. Phase 12
+introduces a `/extension`-driven path for changing tag policy
+(via the `extensions:disabled` toggle, not tag mutation).
+
+The agent's well-known tag vocabulary lives at
+`@bodhiapp/web-acp-agent` `WELL_KNOWN_VOLUME_TAGS` (see
+[`../web-acp-agent/volumes.md`](../web-acp-agent/volumes.md) §
+"Tag taxonomy").
 
 ## Cross-references
 

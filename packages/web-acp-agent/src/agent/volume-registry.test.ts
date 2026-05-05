@@ -96,6 +96,48 @@ describe('ZenfsVolumeRegistry', () => {
     expect(events).toEqual([1, 2, 1]);
   });
 
+  it('records tags on mount, exposes them via list(), and resolves them via findByTag', async () => {
+    await registry.mount(
+      buildSeedInit({
+        mountName: 'wiki',
+        files: { '/marker.txt': 'hi' },
+        tags: ['cwd', 'agent-wd'],
+      })
+    );
+    await registry.mount(
+      buildSeedInit({
+        mountName: 'data',
+        files: { '/skill.md': 'skill body' },
+        tags: ['data'],
+      })
+    );
+    await registry.mount(
+      buildSeedInit({
+        mountName: 'untagged',
+        files: { '/x.txt': 'x' },
+      })
+    );
+    const list = registry.list();
+    expect(list.find(v => v.mountName === 'wiki')?.tags).toEqual(['cwd', 'agent-wd']);
+    expect(list.find(v => v.mountName === 'data')?.tags).toEqual(['data']);
+    expect(list.find(v => v.mountName === 'untagged')?.tags).toEqual([]);
+    expect(registry.findByTag('agent-wd')?.mountName).toBe('wiki');
+    expect(registry.findByTag('cwd')?.mountName).toBe('wiki');
+    expect(registry.findByTag('data')?.mountName).toBe('data');
+    expect(registry.findByTag('does-not-exist')).toBeUndefined();
+  });
+
+  it('deduplicates duplicate tag entries and ignores non-string values', async () => {
+    await registry.mount(
+      buildSeedInit({
+        mountName: 'wiki',
+        files: { '/marker.txt': 'hi' },
+        tags: ['cwd', 'cwd', 'agent-wd', 'cwd'] as readonly string[],
+      })
+    );
+    expect(registry.list()[0]?.tags).toEqual(['cwd', 'agent-wd']);
+  });
+
   it('does not clobber a sibling registry that already mounted into the global VFS', async () => {
     // ZenFS keeps a process-global mounts map. A second
     // `ZenfsVolumeRegistry` must NOT call `configure({ mounts: {} })`

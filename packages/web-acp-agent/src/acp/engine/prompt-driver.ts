@@ -7,6 +7,7 @@ import type {
   ToolCallStatus,
 } from '@agentclientprotocol/sdk';
 import type {
+  AfterToolCallResult,
   AgentEvent,
   AgentTool,
   AgentToolResult,
@@ -15,6 +16,7 @@ import type {
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { TSchema } from '@sinclair/typebox';
 import { expandCommand } from '../../agent/commands';
+import type { InlineAgentSetModelOptions } from '../../agent/inline-agent';
 import { composeSystemPrompt } from '../../agent/system-prompt';
 import { createBashTool } from '../../agent/tools/bash-tool';
 import {
@@ -23,7 +25,7 @@ import {
   toolTitle,
   toToolCallContent,
 } from '../wire-utils';
-import { tryHandleBuiltin } from './builtin-dispatch';
+import { tryHandleBuiltin, tryHandleExtensionCommand } from './builtin-dispatch';
 import type { AcpAdapterServices } from './services';
 import type { AcpSessionRuntime } from './session-runtime';
 
@@ -92,10 +94,14 @@ export class PromptTurnDriver {
     session: NonNullable<ReturnType<AcpSessionRuntime['getSession']>>
   ): Promise<PromptResponse> {
     // Built-ins run before model resolution so `/help` etc. work with
-    // no model selected and never enter the LLM history.
+    // no model selected and never enter the LLM history. Extension
+    // commands sit on the same path: registered through
+    // `pi.registerCommand`, dispatched ahead of built-ins so a vault
+    // command and an extension command sharing a name resolve to the
+    // extension (extensions are user-installed first-class).
     const rawText = this.#extractPromptText(params);
     if (rawText) {
-      const handled = await tryHandleBuiltin({
+      const dispatchArgs = {
         conn: this.#conn,
         services: this.#services,
         runtime: this.#runtime,
@@ -103,7 +109,10 @@ export class PromptTurnDriver {
         acpSdkVersion: this.#acpSdkVersion,
         params,
         rawText,
-      });
+      };
+      const handledByExt = await tryHandleExtensionCommand(dispatchArgs);
+      if (handledByExt) return handledByExt;
+      const handled = await tryHandleBuiltin(dispatchArgs);
       if (handled) return handled;
     }
 
@@ -113,9 +122,24 @@ export class PromptTurnDriver {
     }
 
     this.#applySlashCommandExpansion(params);
-    const text = this.#extractPromptText(params);
+    let text = this.#extractPromptText(params);
     if (!text) {
       throw new Error('session/prompt payload must contain at least one text block');
+    }
+
+    if (this.#services.extensions) {
+      const inputResult = await this.#services.extensions.dispatchInput({
+        type: 'input',
+        sessionId: params.sessionId,
+        text,
+        source: 'user',
+      });
+      if (inputResult?.action === 'handled') {
+        return { stopReason: 'end_turn' };
+      }
+      if (inputResult?.action === 'transform') {
+        text = inputResult.text;
+      }
     }
 
     // The shared inline runtime holds one history; rehydrate from
@@ -140,8 +164,70 @@ export class PromptTurnDriver {
     for (const mcpTool of this.#runtime.mcpToolsForSession(session, mcpToggleSnapshot)) {
       tools.push(bindAbortSignal(mcpTool, this.#turnAbort.signal) as AgentTool<TSchema>);
     }
-    const systemPrompt = composeSystemPrompt(volumes);
-    this.#services.inline.setModel(model, { tools, systemPrompt });
+    if (this.#services.extensions) {
+      for (const extTool of this.#services.extensions.listTools()) {
+        tools.push(
+          bindAbortSignal(extTool, this.#turnAbort.signal) as unknown as AgentTool<TSchema>
+        );
+      }
+    }
+    const baseSystemPrompt = composeSystemPrompt(volumes);
+    let systemPrompt = baseSystemPrompt;
+    if (this.#services.extensions) {
+      const patch = await this.#services.extensions.dispatchBeforeAgentStart({
+        type: 'before_agent_start',
+        sessionId: params.sessionId,
+        prompt: text,
+        systemPrompt: baseSystemPrompt,
+      });
+      if (patch && typeof patch.systemPrompt === 'string') {
+        systemPrompt = patch.systemPrompt;
+      }
+    }
+    const setModelOpts: InlineAgentSetModelOptions = { tools, systemPrompt };
+    const extensions = this.#services.extensions;
+    if (extensions) {
+      const sessionId = params.sessionId;
+      setModelOpts.beforeToolCall = async toolCtx => {
+        const argsRecord =
+          toolCtx.args && typeof toolCtx.args === 'object'
+            ? (toolCtx.args as Record<string, unknown>)
+            : {};
+        const result = await extensions.dispatchToolCall({
+          type: 'tool_call',
+          sessionId,
+          toolName: toolCtx.toolCall.name,
+          input: argsRecord,
+        });
+        if (!result) return undefined;
+        return result;
+      };
+      setModelOpts.afterToolCall = async toolCtx => {
+        const argsRecord =
+          toolCtx.args && typeof toolCtx.args === 'object'
+            ? (toolCtx.args as Record<string, unknown>)
+            : {};
+        const baseResult = toolCtx.result as { content?: unknown[]; details?: unknown };
+        const result = await extensions.dispatchToolResult({
+          type: 'tool_result',
+          sessionId,
+          toolName: toolCtx.toolCall.name,
+          input: argsRecord,
+          content: Array.isArray(baseResult.content) ? baseResult.content : [],
+          details: baseResult.details,
+          isError: toolCtx.isError,
+        });
+        if (!result) return undefined;
+        const out: AfterToolCallResult = {};
+        if (result.content !== undefined) {
+          out.content = result.content as AfterToolCallResult['content'];
+        }
+        if (result.details !== undefined) out.details = result.details;
+        if (result.isError !== undefined) out.isError = result.isError;
+        return out;
+      };
+    }
+    this.#services.inline.setModel(model, setModelOpts);
 
     // `forceToolCall` is meaningless without a tool registered.
     if (this.#services.streamOverrides) {
@@ -164,6 +250,10 @@ export class PromptTurnDriver {
       });
     });
 
+    if (this.#services.activeSession) {
+      this.#services.activeSession.current = params.sessionId;
+    }
+
     try {
       await this.#services.inline.prompt(text);
       if (this.#cancelled) {
@@ -185,6 +275,7 @@ export class PromptTurnDriver {
     } finally {
       unsubscribe();
       if (this.#services.streamOverrides) this.#services.streamOverrides.current = {};
+      if (this.#services.activeSession) this.#services.activeSession.current = null;
       this.#turnAbort = undefined;
       this.#promptSessionId = null;
     }

@@ -14,11 +14,14 @@ import type { HostVolumeInit, VolumeSeed } from './types';
  * runtime that swaps in a different backend factory.
  */
 export async function toAgentVolumeInit(host: HostVolumeInit): Promise<VolumeInit> {
+  const tags = host.tags ?? host.seed?.tags;
+  const tagPatch = tags && tags.length > 0 ? { tags } : {};
   if (host.handle) {
     const filesystem = await WebAccess.create({ handle: host.handle });
     return {
       mountName: host.mountName,
       ...(host.description ? { description: host.description } : {}),
+      ...tagPatch,
       fs: filesystem,
     };
   }
@@ -28,6 +31,7 @@ export async function toAgentVolumeInit(host: HostVolumeInit): Promise<VolumeIni
     return {
       mountName: host.mountName,
       ...(host.description ? { description: host.description } : {}),
+      ...tagPatch,
       fs: filesystem,
       initialize: () => seedInMemoryBackend(`/mnt/${host.mountName}`, seed),
     };

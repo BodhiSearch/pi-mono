@@ -1,6 +1,7 @@
 import type { McpServerHttp } from '@agentclientprotocol/sdk';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { LlmProvider } from '../../agent/bodhi-provider';
+import type { ExtensionRegistry, ExtensionsWriteFs } from '../../agent/extensions';
 import type { InlineAgent } from '../../agent/inline-agent';
 import type { McpConnectionPool } from '../../agent/mcp';
 import type { VolumeRegistry } from '../../agent/volume-registry';
@@ -8,7 +9,7 @@ import type { FeatureSnapshot } from '../../storage/feature-defaults';
 import type { McpToggleSnapshot } from '../../storage/mcp-toggle-shape';
 import type { PreferenceStore } from '../../storage/preference-store';
 import type { SessionStore } from '../../storage/session-store';
-import type { BodhiMcpInstanceDescriptor } from '../../wire';
+import type { BodhiExtensionDescriptor, BodhiMcpInstanceDescriptor } from '../../wire';
 
 export interface SessionState {
   id: string;
@@ -25,6 +26,8 @@ export interface ExtMethodHost {
   readonly bodhi: LlmProvider;
   readonly store: SessionStore | undefined;
   readonly registry: VolumeRegistry | undefined;
+  readonly extensions: ExtensionRegistry | undefined;
+  readonly extensionsWriteFs: ExtensionsWriteFs | undefined;
   readonly preferences: PreferenceStore | undefined;
   readonly mcpPool: McpConnectionPool;
   readonly inline: InlineAgent;
@@ -45,4 +48,11 @@ export interface ExtMethodHost {
   ): Promise<void>;
   // Driver is single-instance; guard against aborting other sessions.
   abortPromptIfActive(sessionId: string): void;
+  // Notifies hosts that the extension registry has changed. Hosts use
+  // this to refresh `_bodhi/extensions/list` without polling.
+  broadcastExtensionsState(snapshot: {
+    extensions: BodhiExtensionDescriptor[];
+    disabled: string[];
+    knownNames: string[];
+  }): Promise<void>;
 }

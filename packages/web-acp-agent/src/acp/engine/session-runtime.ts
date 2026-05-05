@@ -20,7 +20,10 @@ import { readMcpToggles } from '../../agent/internal/mcp-toggle-prefs';
 import { FEATURE_DEFAULTS, type FeatureSnapshot } from '../../storage/feature-defaults';
 import { isToolEnabled, type McpToggleSnapshot } from '../../storage/mcp-toggle-shape';
 import {
+  BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD,
   BODHI_MCP_STATE_NOTIFICATION_METHOD,
+  type BodhiExtensionDescriptor,
+  type BodhiExtensionsStateNotificationParams,
   type BodhiMcpStateNotificationParams,
 } from '../../wire';
 import { toAvailableCommand } from '../wire-utils';
@@ -78,7 +81,7 @@ export class AcpSessionRuntime {
   }
 
   getModels(): Model<Api>[] {
-    return this.#models;
+    return this.#mergeExtensionModels(this.#models);
   }
 
   setModels(models: Model<Api>[]): void {
@@ -88,10 +91,20 @@ export class AcpSessionRuntime {
   // Lazy + cached. Cleared by `authenticate` so a fresh token
   // re-fetches under the new credential.
   async ensureModelsLoaded(): Promise<Model<Api>[]> {
-    if (this.#models.length > 0) return this.#models;
-    const fetched = await this.#services.bodhi.getAvailableModels();
-    this.#models = fetched;
-    return this.#models;
+    if (this.#models.length === 0) {
+      this.#models = await this.#services.bodhi.getAvailableModels();
+    }
+    return this.#mergeExtensionModels(this.#models);
+  }
+
+  // Extension-contributed models are queried on every read so newly
+  // registered providers show up without a re-auth. Extension
+  // entries override host entries on id collision (last-write-wins).
+  #mergeExtensionModels(host: Model<Api>[]): Model<Api>[] {
+    const ext = this.#services.extensions?.listProviderModels() ?? [];
+    if (ext.length === 0) return host;
+    const merged = host.filter(m => !ext.some(e => e.id === m.id));
+    return [...merged, ...ext];
   }
 
   setSessionModel(sessionId: string, modelId: string | null): void {
@@ -189,6 +202,26 @@ export class AcpSessionRuntime {
     return out;
   }
 
+  // Notifies hosts that the agent's extension registry shape has
+  // changed (boot, `/extension on|off`, `_bodhi/extensions/reload`).
+  // Transient — never persisted; hosts subscribe and refresh from
+  // `_bodhi/extensions/list`.
+  async broadcastExtensionsState(params: {
+    extensions: BodhiExtensionDescriptor[];
+    disabled: string[];
+    knownNames: string[];
+  }): Promise<void> {
+    const payload: BodhiExtensionsStateNotificationParams = {
+      extensions: params.extensions,
+      disabled: params.disabled,
+      knownNames: params.knownNames,
+    };
+    await this.#conn.extNotification(
+      BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD,
+      payload as unknown as Record<string, unknown>
+    );
+  }
+
   // Transient — never persisted; replay rebuilds from the live pool.
   async broadcastMcpPoolEvent(event: McpPoolEvent): Promise<void> {
     const affected = new Set<string>();
@@ -284,9 +317,22 @@ export class AcpSessionRuntime {
       seenNames.add(def.name);
     }
     this.#availableCommands = merged;
+    const extensionCommands: AvailableCommand[] = [];
+    const extensions = this.#services.extensions;
+    if (extensions) {
+      for (const ext of extensions.listCommands()) {
+        const cmd: AvailableCommand = {
+          name: ext.name,
+          description: ext.description ?? '',
+        };
+        if (ext.inputHint) cmd.input = { hint: ext.inputHint };
+        extensionCommands.push(cmd);
+      }
+    }
     const availableCommands: AvailableCommand[] = [
       ...builtinAvailableCommands(),
       ...merged.map(toAvailableCommand),
+      ...extensionCommands,
     ];
     await this.emit({
       sessionId,

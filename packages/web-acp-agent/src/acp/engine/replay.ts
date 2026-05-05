@@ -1,6 +1,11 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { BuiltinPayload, SessionEntry, TurnPayload } from '../../storage/session-store';
+import type {
+  BuiltinPayload,
+  ExtensionPayload,
+  SessionEntry,
+  TurnPayload,
+} from '../../storage/session-store';
 import { makeBuiltinAssistantMessage, makeBuiltinUserMessage } from '../wire-utils';
 
 // Absent callback skips that kind silently.
@@ -8,6 +13,7 @@ export interface EntryWalkers {
   notification?: (payload: SessionNotification) => void | Promise<void>;
   turn?: (payload: TurnPayload) => void | Promise<void>;
   builtin?: (payload: BuiltinPayload) => void | Promise<void>;
+  extension?: (payload: ExtensionPayload, seq: number) => void | Promise<void>;
 }
 
 // Callbacks run sequentially so notification re-emit order matches
@@ -20,6 +26,8 @@ export async function walkEntries(entries: SessionEntry[], walkers: EntryWalkers
       await walkers.turn(entry.payload as TurnPayload);
     } else if (entry.kind === 'builtin' && walkers.builtin) {
       await walkers.builtin(entry.payload as BuiltinPayload);
+    } else if (entry.kind === 'extension' && walkers.extension) {
+      await walkers.extension(entry.payload as ExtensionPayload, entry.seq);
     }
   }
 }
@@ -56,7 +64,29 @@ export function reconstructMessages(entries: SessionEntry[]): unknown[] {
       };
       messages.push(makeBuiltinUserMessage(payload.userText, tag));
       messages.push(makeBuiltinAssistantMessage(payload.replyText, tag));
+    } else if (entry.kind === 'extension') {
+      const payload = entry.payload as ExtensionPayload;
+      const text = renderExtensionEntry(payload);
+      const tag = {
+        command: `extension:${payload.extensionName}:${payload.customType}`,
+      };
+      messages.push(makeBuiltinAssistantMessage(text, tag));
     }
   }
   return messages;
+}
+
+function renderExtensionEntry(payload: ExtensionPayload): string {
+  const head = `[${payload.extensionName}/${payload.customType}]`;
+  const body = typeof payload.data === 'string' ? payload.data : safeStringify(payload.data);
+  const labelSuffix = payload.label ? ` (label: ${payload.label})` : '';
+  return `${head} ${body}${labelSuffix}`;
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

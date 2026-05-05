@@ -1,9 +1,15 @@
 import {
+  BODHI_EXTENSIONS_ADD_METHOD,
+  BODHI_EXTENSIONS_LIST_METHOD,
+  BODHI_EXTENSIONS_RELOAD_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   BODHI_VOLUMES_LIST_METHOD,
 } from '../../../wire';
 import type { ExtMethodHost } from '../types';
+import { extensionsAdd } from './extensions-add';
+import { extensionsList } from './extensions-list';
+import { extensionsReload } from './extensions-reload';
 import { mcpTogglesSet } from './mcp-toggles-set';
 import { EXT_METHOD_SCHEMAS } from './schemas';
 import { sessionsDelete } from './sessions-delete';
@@ -16,6 +22,9 @@ export type ExtMethodHandler = (
 
 const HANDLERS: Record<string, ExtMethodHandler> = {
   [BODHI_VOLUMES_LIST_METHOD]: volumesList,
+  [BODHI_EXTENSIONS_LIST_METHOD]: extensionsList,
+  [BODHI_EXTENSIONS_RELOAD_METHOD]: extensionsReload,
+  [BODHI_EXTENSIONS_ADD_METHOD]: extensionsAdd,
   [BODHI_MCP_TOGGLES_SET_METHOD]: mcpTogglesSet,
   [BODHI_SESSIONS_DELETE_METHOD]: sessionsDelete,
 };

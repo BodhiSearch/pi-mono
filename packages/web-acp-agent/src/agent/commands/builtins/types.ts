@@ -58,6 +58,45 @@ export interface BuiltinHandlerCtx {
   buildVersion: string;
   /** Bundled `@agentclientprotocol/sdk` version string (reported by `/version`). */
   acpSdkVersion: string;
+  /**
+   * Phase 12 hook used by `/extension on|off|list`. Absent when no
+   * extension registry is wired (the command rejects with an
+   * explanatory message in that case).
+   */
+  extensions?: BuiltinExtensionsHandle;
+}
+
+export interface BuiltinExtensionsHandle {
+  /** Names currently active in the runner (post-disable filter). */
+  active(): readonly { name: string; mountName: string }[];
+  /** Names persisted in `extensions:disabled`. */
+  disabled(): readonly string[];
+  /** Names of every extension the loader has discovered, active or not. */
+  known(): readonly string[];
+  /**
+   * Persist a new disabled set and re-discover. Returns the
+   * post-reload `active` / `disabled` snapshot so the handler can
+   * confirm the toggle landed.
+   */
+  setDisabled(
+    names: readonly string[]
+  ): Promise<{ active: readonly { name: string }[]; disabled: readonly string[] }>;
+  /**
+   * Phase 13 install hook. Resolves an npm package spec, fetches the
+   * tarball, writes it under the volume tagged `agent-wd`, and reloads
+   * the registry. Throws when no `agent-wd` volume is mounted, no
+   * `ExtensionsWriteFs` is wired, or the registry rejects the manifest.
+   */
+  add(
+    spec: string,
+    options?: { registryUrl?: string }
+  ): Promise<{
+    name: string;
+    version: string;
+    extensionName: string;
+    installPath: string;
+    active: readonly { name: string }[];
+  }>;
 }
 
 export interface BuiltinResult {

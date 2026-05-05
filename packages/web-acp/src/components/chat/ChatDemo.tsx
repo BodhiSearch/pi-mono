@@ -5,6 +5,7 @@ import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import SessionPicker from './SessionPicker';
 import VolumesPanel from '@/components/volumes/VolumesPanel';
+import ExtensionsPanel from '@/components/extensions/ExtensionsPanel';
 import FeaturePanel from '@/components/features/FeaturePanel';
 import McpPanel from '@/mcp/McpPanel';
 
@@ -28,6 +29,7 @@ export default function ChatDemo() {
     deleteSession,
     currentSessionId,
     volumes,
+    extensions,
     features,
     setFeature,
     toolCalls,
@@ -57,6 +59,7 @@ export default function ChatDemo() {
     <div className="flex flex-1 min-h-0">
       <div className="flex flex-col w-64 shrink-0 border-r overflow-y-auto bg-gray-50">
         <VolumesPanel volumes={volumes} />
+        <ExtensionsPanel entries={extensions.entries} />
         <FeaturePanel features={features} onChange={setFeature} disabled={isStreaming} />
         <McpPanel
           instances={mcp.instances}

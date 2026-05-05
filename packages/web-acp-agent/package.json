@@ -16,7 +16,9 @@
       "import": "./src/test-utils/index.ts"
     }
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -34,6 +36,7 @@
     "@sinclair/typebox": "0.34.49",
     "@zenfs/core": "~2.5.6",
     "just-bash": "2.14.2",
+    "nanotar": "^0.3.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

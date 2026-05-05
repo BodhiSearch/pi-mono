@@ -32,10 +32,12 @@ reseed the inline agent's history from the last `'turn'`
 entry.
 
 > **`session/load` carries the full transcript natively.**
-> `handleLoadSession` walks all three entry kinds (`'notification'`
+> `handleLoadSession` walks all four entry kinds (`'notification'`
 > for streamed `session/update` replay, `'turn'` for the
 > inline-agent's LLM history reseed, `'builtin'` for muted
-> slash-command exchanges) and stamps the rebuilt `messages`
+> slash-command exchanges, `'extension'` for typed
+> `pi.session.appendEntry` writes — Phase 8 of the M6 Extensions
+> plan) and stamps the rebuilt `messages`
 > array on `LoadSessionResponse._meta.bodhi.messages`
 > alongside `mcpToggles` and `title`. The reconstruction logic
 > lives in `acp/engine/replay.ts:reconstructMessages`. The
@@ -66,6 +68,16 @@ interface SessionStore {
         payload: BuiltinPayload,
         at?: number,
     ): Promise<void>;
+    recordExtension(
+        id: string,
+        payload: ExtensionPayload,
+        at?: number,
+    ): Promise<number>;
+    setExtensionLabel(
+        id: string,
+        seq: number,
+        label: string | undefined,
+    ): Promise<void>;
     listSummaries(): Promise<SessionSummary[]>;
     listSummariesPage(opts: { page: number; perPage: number }): Promise<{
         rows: SessionSummary[];
@@ -84,6 +96,8 @@ interface SessionStore {
 | `recordNotification(id, notif)` | `acp/engine/session-runtime.ts:emit` (`:326`) | Appends a `'notification'` entry. Persists the wire bytes verbatim so `loadSession` replay re-emits them through `runtime.sendRawNotification` without translation. |
 | `recordTurn(id, userText, finalMessages, modelId)` | `acp/engine/prompt-driver.ts:#runTurn` | Appends a `'turn'` entry, bumps `turnCount`, sets `title` from `deriveTitle(userText)` if not set, sets `lastModelId`. The single source of inline-agent history for `loadSession`. |
 | `recordBuiltin(id, payload)` | `acp/engine/builtin-dispatch.ts:tryHandleBuiltin` | Appends a `'builtin'` entry. `loadSession` interleaves these alongside `'turn'` entries via `reconstructMessages` and ships the rebuilt array on `_meta.bodhi.messages`. |
+| `recordExtension(id, payload)` | `acp/engine/extensions-host-bridge.ts` (called from `pi.session.appendEntry` / `pi.session.sendMessage`) | Appends an `'extension'` entry. Returns the assigned `seq` so the host can mint a stable `entryId` for `setExtensionLabel`. `loadSession` rebuilds these as muted assistant bubbles via `reconstructMessages`, tagged `_meta.bodhi.builtin.command = 'extension:<name>:<customType>'`. |
+| `setExtensionLabel(id, seq, label)` | `acp/engine/extensions-host-bridge.ts` (called from `pi.session.setLabel`) | Best-effort label update; no-op when the row is missing or not an `'extension'` kind. Wired in Phase 8; the label-driven UI affordance lands in M7. |
 | `listSummaries()` | (legacy callers; tests) | Returns every session row sorted `updatedAt desc`. Kept for tests + simple call sites; the production `handleListSessions` uses the paginated `listSummariesPage` below. |
 | `listSummariesPage({page, perPage})` | `acp/handlers/session-crud.ts:handleListSessions` | Page-offset read; returns `{rows, total}`. Page is 1-indexed. The handler decodes the request `cursor` (base64 `page=N&per_page=M&sort_by=updated_at&sort_seq=desc`; defaults to page 1, per_page 10) and emits a `nextCursor` while `page * perPage < total`. |
 | `readEntries(id)` | `acp/handlers/session-crud.ts:handleLoadSession`, `acp/engine/session-runtime.ts:rehydrateInlineFromStore` | Returns entries in insertion order (`seq`-ordered). |
@@ -95,10 +109,11 @@ interface SessionStore {
 
 ### `SessionEntryKind` — `:18`
 
-`'notification' | 'turn' | 'builtin'`. Adding a new kind is
-on-disk-compatible: the entries table stores `payload` as a
-polymorphic blob keyed only by `[sessionId+seq]`, so the
-`'builtin'` addition didn't require a Dexie version bump.
+`'notification' | 'turn' | 'builtin' | 'extension'`. Adding a
+new kind is on-disk-compatible: the entries table stores
+`payload` as a polymorphic blob keyed only by `[sessionId+seq]`,
+so neither the `'builtin'` nor the `'extension'` addition
+required a Dexie version bump.
 
 ### `SessionEntry` — `:44`
 
@@ -108,7 +123,7 @@ interface SessionEntry {
     seq: number;          // monotonic per session
     at: number;           // epoch ms
     kind: SessionEntryKind;
-    payload: SessionNotification | TurnPayload | BuiltinPayload;
+    payload: SessionNotification | TurnPayload | BuiltinPayload | ExtensionPayload;
 }
 ```
 
@@ -140,12 +155,30 @@ interface BuiltinPayload {
 
 Built-ins are intentionally invisible to the LLM: because
 they're not `'turn'` entries, they don't show up in
-`finalMessages`, so `restoreMessages` can't see them. The
-host's `_bodhi/session/get` rebuild (handled by the agent in
-`acp/engine/ext-methods/get-session.ts`) interleaves them by
-seq order using the shared `walkEntries(turn + builtin)`
-walker so the picker displays the muted-builtin badge alongside
-live turns.
+`finalMessages`, so `restoreMessages` can't see them.
+`reconstructMessages` interleaves them by seq order alongside
+turn entries so `_meta.bodhi.messages` carries muted-builtin
+bubbles for the host UI.
+
+### `ExtensionPayload` — `:53`
+
+```ts
+interface ExtensionPayload {
+    extensionName: string;       // e.g. 'session-counter'
+    customType: string;          // extension-defined kind tag
+    data: unknown;               // opaque to the agent runtime
+    label?: string;              // optional, set via setExtensionLabel
+}
+```
+
+Written by `pi.session.appendEntry(customType, data)` and
+`pi.session.sendMessage(text)` (Phase 8). `data` is persisted
+verbatim — extensions own the schema. `reconstructMessages`
+renders each entry as a muted assistant message tagged
+`_meta.bodhi.builtin.command = 'extension:<name>:<customType>'`,
+so the host UI gets the same muted-bubble treatment as built-in
+command replies. `label` is best-effort and reserved for the
+M7 label-driven UI affordance.
 
 ### `SessionRow` — `:52`
 
@@ -204,19 +237,27 @@ of session summaries (e.g.
 ## Replay walker — `acp/engine/replay.ts`
 
 `acp/engine/replay.ts:walkEntries(entries, walkers)` (`:13`)
-is the shared session-entry walker — three optional callbacks
-(`notification`, `turn`, `builtin`); absent callbacks skip
-that kind silently. Sequential dispatch preserves persisted
-`seq` order, which `loadSession` relies on for replay
-determinism. Three call sites:
+is the shared session-entry walker — four optional callbacks
+(`notification`, `turn`, `builtin`, `extension`); absent
+callbacks skip that kind silently. Sequential dispatch
+preserves persisted `seq` order, which `loadSession` relies on
+for replay determinism. Two call sites:
 
 - `acp/handlers/session-crud.ts:handleLoadSession` —
   notifications + turns (re-emit + capture last-turn
-  messages).
+  messages). Built-in and extension entries are not walked
+  here; they ride `_meta.bodhi.messages` via the parallel
+  `reconstructMessages` pass below.
 - `acp/engine/session-runtime.ts:rehydrateInlineFromStore` —
   turns only.
-- `acp/engine/ext-methods/get-session.ts:getSession` — turns
-  + built-ins (interleave by seq order).
+
+`acp/engine/replay.ts:reconstructMessages` is the parallel
+walker that builds the rebuilt-transcript array shipped on
+`LoadSessionResponse._meta.bodhi.messages`. It interleaves
+turns + built-ins + extensions by seq order; built-ins and
+extensions become muted assistant bubbles tagged
+`_meta.bodhi.builtin.command` (`'<name>'` for built-ins,
+`'extension:<name>:<customType>'` for extensions).
 
 ## Replay contract
 
@@ -235,12 +276,12 @@ the canonical consumer. It:
 5. Iterates via `walkEntries`: `'notification'` →
    `runtime.sendRawNotification` (no double-persist);
    `'turn'` → captures the latest `finalMessages`. `'builtin'`
-   entries are intentionally *not* re-emitted here — the host
-   rebuilds the built-in bubbles via a follow-up
-   `_bodhi/session/get` round trip after `loadSession`
-   resolves (this keeps replay bytes-faithful for the live
-   `session/update` stream while letting the host stamp the
-   muted-builtin metadata).
+   + `'extension'` entries are intentionally *not* re-emitted
+   here — they ride
+   `LoadSessionResponse._meta.bodhi.messages` (built by
+   `reconstructMessages`) so replay stays bytes-faithful for
+   the live `session/update` stream while the host stamps the
+   muted-bubble metadata in a single round trip.
 6. Calls `services.inline.restoreMessages(lastTurnMessages)`
    if found, else `services.inline.clearMessages()`.
 7. Marks the inline session active, acquires MCP connections

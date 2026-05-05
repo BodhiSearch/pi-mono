@@ -308,6 +308,75 @@ legacy aliases remain on-wire.
 
 ---
 
+## Extension UI carve-outs — carved out of M6
+
+**What was deferred.** Three UI-bound surfaces around the
+extension runtime that the M6 milestone explicitly excluded so
+the agent-side runtime could land first:
+
+1. **Settings panel for extensions.** Today the user lists,
+   enables, disables, and installs extensions through the
+   `/extension` built-in command (text-only output). A real
+   settings panel would surface the same `extensions:disabled`
+   PreferenceStore entry with toggle controls, badge the active
+   set with their mount + tags, and offer an install affordance
+   that mirrors `/extension add <pkg>[@<version>] [--registry <url>]`.
+2. **OAuth flow for `pi.registerProvider`.** Phase 11 shipped
+   the `apiKey` path through the existing `_bodhi/features/*` +
+   token-credential plumbing. The OAuth surface is scaffolded
+   on the agent side (`pi.registerProvider({ auth: 'oauth', … })`
+   accepts the config) but the host-side OAuth dance — opening
+   the auth window, capturing the redirect, persisting tokens,
+   refresh — is not wired. No e2e exercises it.
+3. **Notification surface for extension `appendEntry`.** Phase 8
+   shipped persistence for `appendEntry('notification', …)` and
+   the entry round-trips through the `SessionStore`. The host
+   currently renders these as plain transcript chips. A
+   dedicated notification tray (toast-style, dismissible,
+   per-extension iconography) is the UI layer that
+   `appendEntry('notification', …)` was designed to feed.
+
+**Why deferred.** M6 traded UI breadth for runtime breadth: the
+callback contract (Groups A–H), persistence kinds, providers,
+toggles, and npm install all needed to land coherently before
+adding new UI panels would have a stable surface to bind
+against. Each carve-out is additive — none reshape the agent
+or the ACP wire. They re-enter naturally on a UI-focused
+milestone or whenever the relevant consumer (a power user
+asking for a settings panel, a published extension that
+requires OAuth, a notification-heavy extension class) shows up.
+
+**When they re-enter.**
+
+- Settings panel: folds into the M11 publish surface (or an
+  earlier UX-polish milestone) — the data model is already on
+  `PreferenceStore`, so the work is purely React.
+- OAuth flow: re-enters on first concrete consumer (an
+  extension whose provider only supports OAuth, e.g. Google
+  Vertex via Workspace SSO). The agent-side `auth: 'oauth'`
+  scaffold is unchanged; the host adds the auth window +
+  callback handler.
+- Notification tray: re-enters on UX-polish milestone or when
+  an extension class with high notification volume (e.g. a
+  long-running watcher) ships and the chip-style rendering
+  feels noisy.
+
+**What has to exist before re-entry** (all satisfied by M6):
+
+- `extensions:disabled` lives on the unified `PreferenceStore`
+  with a stable global scope (M6 phase 12).
+- `pi.registerProvider({ auth: 'oauth', … })` accepts and
+  validates OAuth config without crashing the loader (M6
+  phase 11 scaffold).
+- `appendEntry('notification', …)` round-trips through
+  `SessionStore` and surfaces on `loadSession` (M6 phase 8 +
+  M5 `LoadSessionResponse._meta.bodhi`).
+
+**ACP-compliance note.** No compliance row affected — these
+are host-side UX layers on top of an already-compliant wire.
+
+---
+
 ## How to add a deferred entry
 
 When carving something out of an in-flight milestone:

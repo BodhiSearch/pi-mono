@@ -29,6 +29,7 @@ export interface VolumeEntry {
   state: VolumeState;
   errorMessage?: string;
   needsPermission: boolean;
+  tags: readonly string[];
 }
 
 export interface UseVolumesResult {
@@ -85,16 +86,19 @@ export function useVolumes({ volumeControl, onInitialVolumes }: UseVolumesArgs):
       const initialEntries: VolumeEntry[] = [];
       const initialMounts: HostVolumeInit[] = [];
       for (const r of grantedRecords) {
+        const tags = r.tags ?? [];
         initialEntries.push({
           mountName: r.mountName,
           description: r.description,
           state: 'mounting',
           needsPermission: false,
+          tags,
         });
         initialMounts.push({
           handle: r.handle,
           mountName: r.mountName,
           ...(r.description ? { description: r.description } : {}),
+          ...(tags.length > 0 ? { tags } : {}),
         });
       }
       for (const r of needsPrompt) {
@@ -103,20 +107,24 @@ export function useVolumes({ volumeControl, onInitialVolumes }: UseVolumesArgs):
           description: r.description,
           state: 'prompt',
           needsPermission: true,
+          tags: r.tags ?? [],
         });
       }
       for (const seed of seeds) {
         const safeName = seed.name;
+        const tags = seed.tags ?? [];
         initialEntries.push({
           mountName: safeName,
           description: seed.description,
           state: 'mounting',
           needsPermission: false,
+          tags,
         });
         initialMounts.push({
           seed,
           mountName: safeName,
           ...(seed.description ? { description: seed.description } : {}),
+          ...(tags.length > 0 ? { tags } : {}),
         });
       }
       setEntries(initialEntries);
@@ -150,6 +158,7 @@ export function useVolumes({ volumeControl, onInitialVolumes }: UseVolumesArgs):
         description,
         state: 'mounting',
         needsPermission: false,
+        tags: [],
       };
       setEntries(prev => [...prev, optimistic]);
       try {

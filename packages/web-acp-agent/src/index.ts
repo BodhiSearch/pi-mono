@@ -27,6 +27,38 @@ export {
   type VolumeSnapshot,
   ZenfsVolumeRegistry,
 } from './agent/volume-registry';
+export { WELL_KNOWN_VOLUME_TAGS, type WellKnownVolumeTag } from './agent/well-known-volume-tags';
+
+export {
+  createZenfsExtensionsFs,
+  createZenfsExtensionsWriteFs,
+  DEFAULT_NPM_REGISTRY,
+  type Disposable as ExtensionDisposable,
+  EXTENSIONS_DIR_RELPATH,
+  type ExtensionAPI,
+  type ExtensionCapabilities,
+  type ExtensionEvent,
+  type ExtensionEventHandler,
+  type ExtensionFactory,
+  type ExtensionInfo,
+  ExtensionRegistry,
+  type ExtensionsFs,
+  type ExtensionsFsEntry,
+  type ExtensionsWriteFs,
+  installExtensionFromNpm,
+  type InstallExtensionInput,
+  type InstalledExtension,
+  localExtensionDirName,
+  type NpmPackageSpec,
+  parseNpmPackageSpec,
+} from './agent/extensions';
+
+export {
+  EXTENSIONS_DISABLED_KEY,
+  EXTENSIONS_DISABLED_SCOPE,
+  readDisabledExtensions,
+  writeDisabledExtensions,
+} from './agent/internal/extensions-prefs';
 
 export {
   COMMANDS_DIR_RELPATH,
@@ -58,6 +90,7 @@ export {
 export {
   type BuiltinPayload,
   deriveTitle,
+  type ExtensionPayload,
   type SessionEntry,
   type SessionEntryKind,
   type SessionRow,
@@ -72,6 +105,10 @@ export { canonicalizeMcpUrl, deriveSlugFromUrl } from './mcp/url-canonical';
 export {
   BODHI_AUTH_METHOD_ID,
   BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD,
+  BODHI_EXTENSIONS_ADD_METHOD,
+  BODHI_EXTENSIONS_LIST_METHOD,
+  BODHI_EXTENSIONS_RELOAD_METHOD,
+  BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD,
   BODHI_FEATURE_BASH_ENABLED_CONFIG_ID,
   BODHI_FEATURE_CONFIG_CATEGORY,
   BODHI_FEATURE_FORCE_TOOL_CALL_CONFIG_ID,
@@ -90,6 +127,14 @@ export type {
   BodhiBuiltinMcpAddAction,
   BodhiBuiltinMcpRemoveAction,
   BodhiBuiltinTag,
+  BodhiExtensionCapabilities,
+  BodhiExtensionDescriptor,
+  BodhiExtensionsAddRequest,
+  BodhiExtensionsAddResponse,
+  BodhiExtensionsListResponse,
+  BodhiExtensionsReloadRequest,
+  BodhiExtensionsReloadResponse,
+  BodhiExtensionsStateNotificationParams,
   BodhiLoadSessionMeta,
   BodhiMcpInstanceDescriptor,
   BodhiMcpStateNotificationParams,

@@ -30,6 +30,7 @@ import { useAcpModels } from '@/hooks/useAcpModels';
 import { useAcpRuntime } from '@/hooks/useAcpRuntime';
 import { useAcpSession } from '@/hooks/useAcpSession';
 import { useAcpStreaming } from '@/hooks/useAcpStreaming';
+import { EMPTY_EXTENSIONS, useExtensions, type UseExtensionsResult } from '@/hooks/useExtensions';
 import { type UseVolumesResult } from '@/hooks/useVolumes';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
@@ -40,7 +41,7 @@ const EMPTY_TOOL_CALLS: ToolCallView[] = [];
 const EMPTY_MCP_INSTANCES: McpInstanceView[] = [];
 
 export type { ToolCallView } from '@/acp/streaming-reducer';
-export type { UseVolumesResult };
+export type { UseExtensionsResult, UseVolumesResult };
 
 /**
  * Top-level facade for the host-side ACP wire. Composes the per-
@@ -58,6 +59,7 @@ export function useAcp() {
     useAcpModels(setError);
 
   const { volumes } = useAcpRuntime();
+  const extensions = useExtensions(isAuthenticated);
 
   const {
     mcpToggles,
@@ -181,6 +183,7 @@ export function useAcp() {
     currentSessionId: isAuthenticated ? currentSessionId : null,
     isLoadingSession: isAuthenticated ? isLoadingSession : false,
     volumes,
+    extensions: isAuthenticated ? extensions : EMPTY_EXTENSIONS,
     features: isAuthenticated ? features : EMPTY_FEATURES,
     setFeature,
     toolCalls: isAuthenticated ? toolCalls : EMPTY_TOOL_CALLS,

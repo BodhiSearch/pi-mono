@@ -7,21 +7,23 @@ describe('composeSystemPrompt', () => {
   });
 
   it('lists a single volume without description', () => {
-    const prompt = composeSystemPrompt([{ mountName: 'wiki' }]);
+    const prompt = composeSystemPrompt([{ mountName: 'wiki', tags: [] }]);
     expect(prompt).toContain('/mnt/wiki');
     expect(prompt).not.toContain(' — ');
     expect(prompt).toContain('Use the bash tool to explore them.');
   });
 
   it('lists a single volume with description', () => {
-    const prompt = composeSystemPrompt([{ mountName: 'wiki', description: 'knowledge base' }]);
+    const prompt = composeSystemPrompt([
+      { mountName: 'wiki', description: 'knowledge base', tags: [] },
+    ]);
     expect(prompt).toContain('- /mnt/wiki — knowledge base');
   });
 
   it('lists multiple volumes, mixing descriptions', () => {
     const prompt = composeSystemPrompt([
-      { mountName: 'wiki', description: 'knowledge base' },
-      { mountName: 'code' },
+      { mountName: 'wiki', description: 'knowledge base', tags: [] },
+      { mountName: 'code', tags: [] },
     ]);
     expect(prompt).toContain('- /mnt/wiki — knowledge base');
     expect(prompt).toContain('- /mnt/code');

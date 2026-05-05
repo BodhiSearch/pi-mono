@@ -51,6 +51,13 @@ export async function handleNewSession(
   await ctx.runtime.acquireMcpConnections(sessionId, mcpServers);
   await ctx.runtime.refreshAvailableCommands(sessionId);
 
+  if (ctx.services.extensions) {
+    await ctx.services.extensions.dispatchSessionStart({
+      type: 'session_start',
+      sessionId,
+    });
+  }
+
   const models = await tryEnsureModels(ctx);
   const defaultModelId = models[0]?.id ?? null;
   ctx.runtime.setSessionModel(sessionId, defaultModelId);
@@ -120,6 +127,13 @@ export async function handleLoadSession(
   ctx.runtime.setActiveInlineSessionId(params.sessionId);
   await ctx.runtime.acquireMcpConnections(params.sessionId, mcpServers);
   await ctx.runtime.refreshAvailableCommands(params.sessionId);
+
+  if (ctx.services.extensions) {
+    await ctx.services.extensions.dispatchSessionStart({
+      type: 'session_start',
+      sessionId: params.sessionId,
+    });
+  }
 
   const models = await tryEnsureModels(ctx);
   const seededModelId = resolveSeededModelId(models, row.lastModelId);

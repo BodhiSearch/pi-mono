@@ -1,6 +1,10 @@
 /// <reference lib="webworker" />
 import {
   BodhiProvider,
+  createZenfsExtensionsFs,
+  createZenfsExtensionsWriteFs,
+  ExtensionRegistry,
+  readDisabledExtensions,
   startAgent,
   type VolumeInit,
   ZenfsVolumeRegistry,
@@ -39,12 +43,24 @@ async function boot(port: MessagePort, hostVolumes: HostVolumeInit[]): Promise<v
   const registry = new ZenfsVolumeRegistry();
   await registry.mountAll(initialVolumes);
 
+  const preferences = createPreferenceStore(db);
+  const disabledExtensions = await readDisabledExtensions(preferences);
+
+  const extensions = new ExtensionRegistry();
+  extensions.setDisabled(disabledExtensions);
+  await extensions.loadAll({
+    mounts: registry.list(),
+    fs: createZenfsExtensionsFs(),
+  });
+
   startAgent({
     transport: createMessagePortStream(port),
     provider: new BodhiProvider(),
     registry,
+    extensions,
+    extensionsWriteFs: createZenfsExtensionsWriteFs(),
     sessions: createStoreFromDb(db),
-    preferences: createPreferenceStore(db),
+    preferences,
     buildVersion: BUILD_VERSION,
   });
 

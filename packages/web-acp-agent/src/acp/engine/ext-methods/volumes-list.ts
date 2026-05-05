@@ -10,6 +10,7 @@ export async function volumesList(
     volumes: volumes.map(v => ({
       mountName: v.mountName,
       ...(v.description ? { description: v.description } : {}),
+      ...(v.tags.length > 0 ? { tags: [...v.tags] } : {}),
     })),
   };
 }

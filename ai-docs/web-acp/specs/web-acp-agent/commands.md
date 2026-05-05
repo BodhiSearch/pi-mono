@@ -170,7 +170,7 @@ types `/hello` for casual chat).
 
 ## Built-ins — `agent/commands/builtins/`
 
-Five commands ship today:
+Six commands ship today:
 
 | Command | File | Description |
 | --- | --- | --- |
@@ -179,6 +179,7 @@ Five commands ship today:
 | `info` | `info.ts` | Reports current session: `Id`, `Turns`, `Messages (LLM-visible)`, `Model`, `MCP servers`. Renamed from `/session` so it doesn't collide with the CLI host's session-management command. |
 | `copy` | `copy.ts` | Returns `{ replyText: '…copied…', action: { kind: 'copy' } }`. The host dispatcher (`web-acp-client`'s `acp/builtin-dispatch.ts:dispatchCopyAction`) builds the markdown locally from `messages` state — the agent doesn't ship the payload across the wire. |
 | `mcp` | `mcp.ts` | `/mcp` (no args) lists Connected + Pending; `/mcp add <url>` / `/mcp remove <url>` emit `{ action: { kind: 'mcp-add' \| 'mcp-remove', params: { url } } }`. List emits no action. URLs are canonicalised via `mcp/url-canonical.ts:canonicalizeMcpUrl` before comparison; idempotent. |
+| `extension` | `extension.ts` | `/extension list` renders Active + Disabled + Discovered; `/extension on <name>` / `/extension off <name>` mutates the persisted `extensions:disabled` set, calls `ExtensionRegistry.reload()`, and broadcasts `_bodhi/extensions/state` so hosts refresh. `/extension add <pkg>[@<version>] [--registry <url>]` (Phase 13) delegates to `BuiltinExtensionsHandle.add(spec, options?)` which fetches the npm tarball, writes under `<agent-wd>/.pi/extensions/<safe>@<version>/`, and reloads. Reaches the registry via `ctx.extensions: BuiltinExtensionsHandle` (wired in `builtin-dispatch.ts:buildExtensionsHandle`). Phase 12 ✓ (toggles), Phase 13 ✓ (add). |
 
 ### `BuiltinCommand` shape — `builtins/types.ts:68`
 
@@ -211,7 +212,16 @@ Fields: `sessionId`, `modelId`, `serverUrl`,
 `requestedMcpUrls: string[]`,
 `advertisedCommands: AvailableCommand[]`,
 `inlineMessages: AgentMessage[]`, `buildVersion`,
-`acpSdkVersion`. Treat as immutable.
+`acpSdkVersion`,
+`extensions?: BuiltinExtensionsHandle` (Phase 12 ✓ for
+`active` / `disabled` / `known` / `setDisabled`; Phase 13 ✓
+added `add(spec, options?)` for `/extension add`, which writes
+into the `agent-wd`-tagged volume via the host-supplied
+`ExtensionsWriteFs` and reloads the registry).
+Treat as immutable; the `extensions` handle is the only field
+that mutates agent state and is intentionally optional so
+handlers can fail gracefully if the host did not wire an
+`ExtensionRegistry`.
 
 `BuiltinMcpInstance` (`:21`): `{ slug, name, path }` — the
 projection of a Bodhi-side MCP entry the worker received via

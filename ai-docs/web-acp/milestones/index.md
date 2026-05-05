@@ -78,12 +78,12 @@ genuinely divergent work that warrants its own document.
 | M3.5 | DeepWiki MCP login + `_bodhi/sessions/delete`                          | [m3.5-followups.md](m3.5-followups.md) |
 | M4   | Commands + skills (phase A vault commands + phase B built-ins + M4.2 first slice) | [m4-commands-and-skills.md](m4-commands-and-skills.md) |
 | M5   | **Digest:** agent-package extraction, ACP 0.21 compliance sweep, engine split (agent + host), "adaptive plum" + "provider-agnostic embed" simplifications | [m5-extraction-and-compliance.md](m5-extraction-and-compliance.md) |
+| M6   | **Extensions** — vault-sourced runtime (system-prompt mutators, input transform, tools, tool gates, slash commands, session metadata, provider observability, inter-extension events, custom providers, toggle + reload + persisted disabled list, `/extension add` npm install) | [m6-extensions.md](m6-extensions.md) |
 
 ### Planned (resequenced)
 
 | #    | Milestone                                                              | Host scope          | File |
 | ---- | ---------------------------------------------------------------------- | ------------------- | ---- |
-| M6   | **Extensions** — vault-sourced runtime re-entry (tools, commands, skills, providers, lifecycle hooks); `_bodhi/extensions/{list,reload}` | agent + web-acp addendum | [m6-extensions.md](m6-extensions.md) |
 | M7   | **Prompt template parameter form + skills** — finishes the M4 commands pipeline (`arguments:` front-matter, `{{name}}` substitution, skills at `<mount>/.pi/skills/<name>/SKILL.md`, `_bodhi/skills/activate`) | agent + web-acp addendum | [m7-templates-and-skills.md](m7-templates-and-skills.md) |
 | M8   | **Session tree** — `session/fork` (unstable, flag-gated) + parent/child rows + branch navigation UI | agent + web-acp addendum | [m8-session-tree.md](m8-session-tree.md) |
 | M9   | **Compaction** — auto + manual (`/compact` built-in) + summary persistence + extension `before_compact`/`after_compact` hooks | agent + web-acp addendum | [m9-compaction.md](m9-compaction.md) |
@@ -100,7 +100,7 @@ genuinely divergent work that warrants its own document.
 | Filesystem           | Client-delegated via `fs/read_text_file` / `fs/write_text_file` | **Agent-owned** (worker-mounted ZenFS, multi-mount at `/mnt/<name>`); `clientCapabilities.fs` not advertised post-"adaptive plum" — see M5 digest § 5 | **divergent (documented)** |
 | MCP                  | Agent is MCP client; servers configured by client             | Agent is MCP client; Streamable HTTP only; JWT in `McpServerHttp.headers` (M3 shipped) | compliant |
 | Provider-native tools | Reported as standard `tool_call` notifications                | **Deferred** — `_bodhi/providers/nativeTools` + per-model toggle UI parked; see [deferred.md](deferred.md) | **deferred** |
-| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands + prompt templates + built-ins all ride the same advertisement; commands win on canonical-name collisions with prompts; built-ins intercepted agent-side (phase B shipped). Parameter form + skills land at **M7**; extension commands at **M6** | compliant |
+| Slash commands       | Advertised via `available_commands_update`; expanded client-side | Vault commands + prompt templates + built-ins + extension commands all ride the same advertisement; commands win on canonical-name collisions with prompts; built-ins intercepted agent-side (phase B shipped). Extension commands shipped at **M6**; parameter form + skills land at **M7** | compliant |
 | Extension methods    | `_`-prefixed, namespaced                                      | All `_bodhi/*`; see [steering/04-principles.md](../steering/04-principles.md) § 15. Legacy `bodhi/*` names cleaned up in the M5 compliance sweep | compliant |
 | Model selection      | `unstable_setSessionModel` + `SessionModelState` on session-create/load responses | Adopted in the M5 compliance sweep | compliant (unstable surface) |
 | Session listing      | `Agent.listSessions` (stable since 0.20); cursor-paginated    | Adopted in the M5 compliance sweep. Cursor is base64(`page=N&per_page=10&sort_by=updated_at&sort_seq=desc`) | compliant |
@@ -126,7 +126,7 @@ For readers who remember the original M5–M8 roadmap:
 
 | Original slot                              | New slot                                                    |
 | ------------------------------------------ | ----------------------------------------------------------- |
-| M5 — Extensions                            | **M6** (promoted, scope unchanged)                           |
+| M5 — Extensions                            | **M6** (promoted, shipped — see m6-extensions.md)           |
 | M4.2-form (prompt template parameter form) | **M7.1** (now a dedicated milestone with skills)            |
 | M4.3 — Skills                              | **M7.2**                                                    |
 | M6 — Session tree                          | **M8** (scope unchanged, dependencies updated for M6/M7)    |
@@ -163,14 +163,18 @@ to do. Previews are deliberately non-committal — they capture
   off — extraction + ACP 0.21 compliance + engine split +
   simplifications together moved the whole foundation; the
   digest is the single entry point to "what changed".
+- **[m6-extensions.md](m6-extensions.md)** — shipped. Read
+  when touching the extension runtime, the `_bodhi/extensions/*`
+  surface, the `/extension` built-in, the `pi.dev` install
+  flow, or `<mount>/.pi/extensions/<name>/` discovery. Read
+  alongside [`../specs/web-acp-agent/extensions.md`](../specs/web-acp-agent/extensions.md)
+  for the callback-by-callback contract.
 
 ### Planned (load when picking up the matching milestone)
 
-- **[m6-extensions.md](m6-extensions.md)** — **next up.**
-  Vault-sourced extension runtime. Start here after reading M5
-  digest.
 - **[m7-templates-and-skills.md](m7-templates-and-skills.md)** —
-  load when picking up the prompt parameter form or skills.
+  **next up.** Load when picking up the prompt parameter form
+  or skills.
 - **[m8-session-tree.md](m8-session-tree.md)** — load when
   picking up fork / branch.
 - **[m9-compaction.md](m9-compaction.md)** — load when picking

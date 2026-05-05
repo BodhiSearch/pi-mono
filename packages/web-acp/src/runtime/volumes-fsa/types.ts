@@ -2,6 +2,7 @@ export interface VolumeSeed {
   name: string;
   description?: string;
   files: Record<string, string>;
+  tags?: readonly string[];
 }
 
 /**
@@ -20,4 +21,5 @@ export interface HostVolumeInit {
   description?: string;
   handle?: FileSystemDirectoryHandle;
   seed?: VolumeSeed;
+  tags?: readonly string[];
 }

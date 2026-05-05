@@ -20,6 +20,8 @@ export interface VolumeHandleRecord {
   handle: FileSystemDirectoryHandle;
   mountName: string;
   description?: string;
+  /** Absent on legacy records; the IDB read tolerates missing field. */
+  tags?: readonly string[];
 }
 
 export async function loadHandles(): Promise<VolumeHandleRecord[]> {

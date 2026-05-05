@@ -3,6 +3,7 @@ import type { Dispatch } from 'react';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import {
   BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD,
+  BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD,
   BODHI_MCP_STATE_NOTIFICATION_METHOD,
   type AnyBodhiBuiltinAction,
 } from '@/acp/index';
@@ -78,6 +79,8 @@ export function useAcpStreaming({
         if (action) void dispatchActionRef.current(action, messagesRef.current);
         return;
       }
+      // Extensions panel listens via `useExtensions` directly; no-op here.
+      if (method === BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD) return;
       console.warn('[acp/streaming] unhandled extNotification:', method);
     });
     return () => {

@@ -87,10 +87,46 @@ import path production hosts should reach for. Notable groupings
   `apiFormatOfModel`, `LlmAuthCredential`, `LlmProvider`.
 - **Volumes.** `VolumeInit`, `VolumeRegistry`,
   `ZenfsVolumeRegistry`, `VolumeRegistryListener`,
-  `VolumeSnapshot`. Hosts construct the registry, pre-mount,
+  `VolumeSnapshot`, `WELL_KNOWN_VOLUME_TAGS`,
+  `WellKnownVolumeTag`. Hosts construct the registry, pre-mount,
   and pass it to `startAgent({ registry })` so multi-connection
   hosts can share one registry across calls (see
-  [volumes.md](volumes.md) for rationale).
+  [volumes.md](volumes.md) for rationale and tag taxonomy).
+- **Extensions.** `ExtensionRegistry`, `ExtensionAPI`,
+  `ExtensionFactory`, `ExtensionInfo`, `ExtensionCapabilities`,
+  `ExtensionEvent`, `ExtensionEventHandler`,
+  `ExtensionDisposable`, `ExtensionCommandDefinition`,
+  `ExtensionCommandInfo`, `ExtensionTool`, `ExtensionTypeBuilder`,
+  `ExtensionSessionView`, `ExtensionVolumesView`,
+  `SessionStartEvent`, `SessionStartHandler`,
+  `BeforeAgentStartEvent`, `BeforeAgentStartEventResult`,
+  `BeforeAgentStartHandler`, `InputEvent`, `InputEventResult`,
+  `InputEventSource`, `InputHandler`, `InputResultContinue`,
+  `InputResultHandled`, `InputResultTransform`,
+  `ToolCallEvent`, `ToolCallEventResult`, `ToolCallHandler`,
+  `ToolResultEvent`, `ToolResultEventResult`, `ToolResultHandler`,
+  `BeforeProviderRequestEvent`, `BeforeProviderRequestHandler`,
+  `AfterProviderResponseEvent`, `AfterProviderResponseHandler`,
+  `ExtensionEventsView`, `ExtensionEventsHandler`,
+  `ProviderConfig`, `ProviderModelConfig`,
+  `ProviderOAuthConfig`, `ProviderOAuthCredentials`,
+  `ProviderOAuthLoginCallbacks`, `ProviderStreamSimple`,
+  `ExtensionsFs`, `ExtensionsFsEntry`, `ExtensionsWriteFs`,
+  `EXTENSIONS_DIR_RELPATH`, `createZenfsExtensionsFs`,
+  `createZenfsExtensionsWriteFs`. Phase 13 install primitives:
+  `installExtensionFromNpm(...)`, `parseNpmPackageSpec(...)`,
+  `localExtensionDirName(...)`, `DEFAULT_NPM_REGISTRY`,
+  `InstallExtensionInput`, `InstalledExtension`, `NpmPackageSpec`.
+  Hosts construct `new ExtensionRegistry()`, call `loadAll(...)`
+  against the mounted volumes' `<mount>/.pi/extensions/` tree,
+  and pass the result to `startAgent({ extensions })`. Hosts
+  that want to support `_bodhi/extensions/add` additionally pass
+  `extensionsWriteFs: createZenfsExtensionsWriteFs()`. The
+  `SessionBridge` interface is wired internally by
+  `AcpAgentAdapter` against `extensions-host-bridge.ts` (Phase 8)
+  — hosts do not implement it. See
+  [extensions.md](extensions.md) for the factory contract,
+  loader, and per-phase callback inventory.
 - **Commands surface for host UIs.** `canonicalCommandName`,
   `COMMANDS_DIR_RELPATH`, `PROMPTS_DIR_RELPATH`, `CommandDef`,
   `CommandSource`, `FrontMatter`, `builtinAvailableCommands`,
@@ -98,14 +134,18 @@ import path production hosts should reach for. Notable groupings
 - **Storage interfaces (host implements).** `SessionStore`,
   `SessionEntry`, `SessionEntryKind`, `SessionRow`,
   `SessionSummary`, `TurnPayload`, `BuiltinPayload`,
-  `deriveTitle`; `PreferenceStore` (unifies legacy
-  `FeatureStore` + `McpToggleStore`); `FeatureDefaults`,
+  `ExtensionPayload`, `deriveTitle`; `PreferenceStore` (unifies
+  legacy `FeatureStore` + `McpToggleStore`); `FeatureDefaults`,
   `FeatureKey`, `FeatureSnapshot`, `FEATURE_DEFAULTS`,
   `isFeatureKey`; `McpToggleSnapshot`, `EMPTY_MCP_TOGGLES`,
   `isServerEnabled`, `isToolEnabled`.
 - **Wire constants.** Re-exported from `wire/index.ts`:
   `BODHI_AUTH_METHOD_ID`,
   `BODHI_VOLUMES_LIST_METHOD`,
+  `BODHI_EXTENSIONS_LIST_METHOD`,
+  `BODHI_EXTENSIONS_RELOAD_METHOD`,
+  `BODHI_EXTENSIONS_ADD_METHOD`,
+  `BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD`,
   `BODHI_MCP_TOGGLES_SET_METHOD`,
   `BODHI_SESSIONS_DELETE_METHOD`,
   `BODHI_MCP_STATE_NOTIFICATION_METHOD`,
@@ -116,6 +156,11 @@ import path production hosts should reach for. Notable groupings
 - **Wire types.** `BodhiAuthenticateMeta`,
   `BodhiAuthenticateResponseMeta`,
   `BodhiVolumeDescriptor`, `BodhiVolumesListResponse`,
+  `BodhiExtensionCapabilities`, `BodhiExtensionDescriptor`,
+  `BodhiExtensionsListResponse`,
+  `BodhiExtensionsReloadRequest/Response`,
+  `BodhiExtensionsAddRequest/Response`,
+  `BodhiExtensionsStateNotificationParams`,
   `BodhiMcpToggleSnapshot`,
   `BodhiMcpTogglesSetRequest/Response`,
   `BodhiSessionsDeleteRequest/Response`,
@@ -129,6 +174,11 @@ import path production hosts should reach for. Notable groupings
   `BodhiBuiltinTag`, `BodhiMcpUrlParams`),
   `BodhiMcpInstanceDescriptor`, `BodhiSessionMeta`,
   `BodhiSessionInfoMeta`, `BodhiLoadSessionMeta`.
+- **Extension preferences (host-shared).** Re-exported from
+  `agent/internal/extensions-prefs.ts`: `EXTENSIONS_DISABLED_KEY`,
+  `EXTENSIONS_DISABLED_SCOPE`, `readDisabledExtensions`,
+  `writeDisabledExtensions`. Hosts read these on boot to apply
+  the persisted toggle list before `ExtensionRegistry.loadAll`.
 - **Misc.** `canonicalizeMcpUrl`, `deriveSlugFromUrl`.
 
 > SDK types (e.g. `Agent`, `Client`, `LoadSessionRequest`) are

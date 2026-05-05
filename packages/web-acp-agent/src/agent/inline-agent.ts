@@ -1,13 +1,34 @@
-import type { AgentEvent, AgentMessage, AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
+import type {
+  AfterToolCallContext,
+  AfterToolCallResult,
+  AgentEvent,
+  AgentMessage,
+  AgentTool,
+  BeforeToolCallContext,
+  BeforeToolCallResult,
+  StreamFn,
+} from '@mariozechner/pi-agent-core';
 import { Agent } from '@mariozechner/pi-agent-core';
 import type { Api, Model } from '@mariozechner/pi-ai';
 import type { TSchema } from '@sinclair/typebox';
 
 const SENTINEL_API_KEY = 'bodhiapp_sentinel_api_key_ignored';
 
+export type InlineBeforeToolCall = (
+  context: BeforeToolCallContext,
+  signal?: AbortSignal
+) => Promise<BeforeToolCallResult | undefined>;
+
+export type InlineAfterToolCall = (
+  context: AfterToolCallContext,
+  signal?: AbortSignal
+) => Promise<AfterToolCallResult | undefined>;
+
 export interface InlineAgentSetModelOptions {
   tools?: AgentTool<TSchema>[];
   systemPrompt?: string;
+  beforeToolCall?: InlineBeforeToolCall;
+  afterToolCall?: InlineAfterToolCall;
 }
 
 export interface InlineAgent {
@@ -37,6 +58,8 @@ export function createInlineAgent(streamFn: StreamFn): InlineAgent {
       agent.state.model = model;
       agent.state.tools = opts?.tools ?? [];
       agent.state.systemPrompt = opts?.systemPrompt ?? '';
+      agent.beforeToolCall = opts?.beforeToolCall;
+      agent.afterToolCall = opts?.afterToolCall;
     },
     subscribe(cb) {
       return agent.subscribe(cb);

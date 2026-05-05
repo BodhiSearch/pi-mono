@@ -24,6 +24,23 @@ export default function VolumeRow({
     >
       <div className="flex-1 min-w-0">
         <div className="font-mono text-xs text-gray-600 truncate">/mnt/{entry.mountName}</div>
+        {entry.tags.length > 0 ? (
+          <ul
+            data-testid={`volume-row-${entry.mountName}-tags`}
+            data-test-state={String(entry.tags.length)}
+            className="mt-1 flex flex-wrap gap-1"
+          >
+            {entry.tags.map(tag => (
+              <li
+                key={tag}
+                data-testid={`volume-row-${entry.mountName}-tag-${tag}`}
+                className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-mono text-gray-700"
+              >
+                {tag}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <Input
           data-testid={`input-volume-description-${entry.mountName}`}
           placeholder="Description (optional)"

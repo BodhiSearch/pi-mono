@@ -12,9 +12,12 @@ import type {
 } from '@agentclientprotocol/sdk';
 import {
   BODHI_AUTH_METHOD_ID,
+  BODHI_EXTENSIONS_LIST_METHOD,
   BODHI_MCP_TOGGLES_SET_METHOD,
   BODHI_SESSIONS_DELETE_METHOD,
   type BodhiAuthenticateMeta,
+  type BodhiExtensionDescriptor,
+  type BodhiExtensionsListResponse,
   type BodhiMcpTogglesSetResponse,
   type BodhiSessionInfoMeta,
   type BodhiSessionMeta,
@@ -152,6 +155,12 @@ export class AcpClient {
    * returns the full toggle snapshot so callers can update local UI
    * without a follow-up `getSession` round-trip.
    */
+  async listExtensions(): Promise<BodhiExtensionDescriptor[]> {
+    const raw = await this.#conn.extMethod(BODHI_EXTENSIONS_LIST_METHOD, {});
+    const payload = raw as BodhiExtensionsListResponse;
+    return payload.extensions ?? [];
+  }
+
   async setMcpToggle(
     sessionId: string,
     serverSlug: string,

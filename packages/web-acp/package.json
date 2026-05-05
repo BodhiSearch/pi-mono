@@ -17,7 +17,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:all": "npm test && npm run test:e2e",
-    "test:e2e": "playwright test --reporter=list",
+    "test:e2e": "cross-env HEADLESS=true playwright test --reporter=list",
     "test:e2e:report": "playwright test --reporter=html",
     "test:e2e:ui": "playwright test --ui",
     "ci:test:e2e": "cross-env CI=true playwright test"
@@ -69,6 +69,7 @@
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.0.0",
     "jsdom": "^29.0.2",
+    "nanotar": "^0.3.0",
     "playwright": "^1.57.0",
     "prettier": "^3.7.4",
     "shadcn": "^4.2.0",

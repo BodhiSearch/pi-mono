@@ -21,6 +21,7 @@ import type {
   SetSessionModelRequest,
   SetSessionModelResponse,
 } from '@agentclientprotocol/sdk';
+import { createExtensionsHostBridge } from './engine/extensions-host-bridge';
 import { dispatchExtMethod } from './engine/ext-methods';
 import { PromptTurnDriver } from './engine/prompt-driver';
 import type { AcpAdapterServices } from './engine/services';
@@ -65,6 +66,9 @@ export class AcpAgentAdapter implements Agent {
   ) {
     this.#services = services;
     this.#runtime = new AcpSessionRuntime(conn, services);
+    if (services.extensions) {
+      services.extensions.setSessionBridge(createExtensionsHostBridge({ services }));
+    }
     this.#driver = new PromptTurnDriver({
       conn,
       services,
@@ -134,6 +138,8 @@ export class AcpAgentAdapter implements Agent {
       bodhi: this.#services.bodhi,
       store: this.#services.store,
       registry: this.#services.registry,
+      extensions: this.#services.extensions,
+      extensionsWriteFs: this.#services.extensionsWriteFs,
       preferences: this.#services.preferences,
       mcpPool: this.#services.mcpPool,
       inline: this.#services.inline,
@@ -146,6 +152,7 @@ export class AcpAgentAdapter implements Agent {
       readMcpToggles: sessionId => runtime.readMcpToggles(sessionId),
       tearDownSession: (sessionId, opts) => runtime.tearDownSession(sessionId, opts),
       abortPromptIfActive: sessionId => this.#driver.abortIfActive(sessionId),
+      broadcastExtensionsState: snapshot => runtime.broadcastExtensionsState(snapshot),
     };
   }
 

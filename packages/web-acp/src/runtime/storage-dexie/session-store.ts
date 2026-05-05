@@ -1,4 +1,9 @@
-import { deriveTitle, type SessionStore, type TurnPayload } from '@bodhiapp/web-acp-agent';
+import {
+  deriveTitle,
+  type ExtensionPayload,
+  type SessionStore,
+  type TurnPayload,
+} from '@bodhiapp/web-acp-agent';
 import type { SessionStoreDb } from './db';
 import { openSessionDb, type OpenSessionDbOptions } from './db';
 
@@ -75,6 +80,32 @@ export function createStoreFromDb(db: SessionStoreDb): SessionStore {
       });
     },
 
+    async recordExtension(id, payload, at = Date.now()) {
+      return db.transaction('rw', db.sessions, db.entries, async () => {
+        const session = await db.sessions.get(id);
+        if (!session) {
+          throw new Error(`SessionStore.recordExtension: unknown session '${id}'`);
+        }
+        const seq = await nextSeq(db, id);
+        await db.entries.put({ sessionId: id, seq, at, kind: 'extension', payload });
+        await db.sessions.update(id, { updatedAt: at });
+        return seq;
+      });
+    },
+
+    async setExtensionLabel(id, seq, label) {
+      await db.transaction('rw', db.entries, async () => {
+        const entry = await db.entries.where({ sessionId: id, seq }).first();
+        if (!entry || entry.kind !== 'extension') return;
+        const prevPayload = entry.payload as ExtensionPayload;
+        const nextPayload: ExtensionPayload = {
+          ...prevPayload,
+          ...(label === undefined ? { label: undefined } : { label }),
+        };
+        await db.entries.where({ sessionId: id, seq }).modify({ payload: nextPayload });
+      });
+    },
+
     async listSummaries() {
       const rows = await db.sessions.orderBy('updatedAt').reverse().toArray();
       return rows.map(row => ({
@@ -117,7 +148,7 @@ export function createStoreFromDb(db: SessionStoreDb): SessionStore {
     },
 
     async setTitle(id, title) {
-      await db.sessions.update(id, { title, updatedAt: Date.now() });
+      await db.sessions.update(id, { title: title ?? null, updatedAt: Date.now() });
     },
 
     async deleteSession(id) {

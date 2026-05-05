@@ -47,7 +47,7 @@ agent code run with FSA-backed mounts (browser),
 `PassthroughFS` over `node:fs` (CLI), and future cloud-backed
 mounts (HTTP host).
 
-## `VolumeInit` — `volume-registry.ts:21`
+## `VolumeInit` — `volume-registry.ts`
 
 ```ts
 interface VolumeInit {
@@ -55,6 +55,7 @@ interface VolumeInit {
     description?: string;    // shown in system prompt + UI
     fs: FileSystem;          // pre-constructed ZenFS FS
     initialize?: () => Promise<void>;  // optional post-mount hook
+    tags?: readonly string[];          // free-form labels (see below)
 }
 ```
 
@@ -69,8 +70,14 @@ interface VolumeInit {
   use this to seed `InMemory` backends with dev/test data
   via `@zenfs/core`'s global `fs.promises.*`. Keeps seeding
   logic out of the agent.
+- `tags` is a free-form `string[]`. The registry deduplicates
+  duplicate values on mount and freezes the resulting array.
+  The agent itself never interprets tag values; consumers
+  (extension installer, future skill loader) call
+  `VolumeRegistry.findByTag(tag)` to locate the volume they
+  want. See [tag taxonomy](#tag-taxonomy) below.
 
-## `VolumeRegistry` interface — `volume-registry.ts:46`
+## `VolumeRegistry` interface — `volume-registry.ts`
 
 ```ts
 interface VolumeRegistry {
@@ -79,13 +86,21 @@ interface VolumeRegistry {
     unmount(mountName: string): Promise<void>;
     list(): VolumeSnapshot[];
     firstMountName(): string | undefined;
+    findByTag(tag: string): VolumeSnapshot | undefined;
     onChange(listener: VolumeRegistryListener): () => void;
 }
 ```
 
-`VolumeSnapshot` (`:39`): `{ mountName, description? }`. The
-listener fires after every state transition with a fresh array
-snapshot.
+`VolumeSnapshot`: `{ mountName, description?, tags: readonly
+string[] }`. `tags` is **always** present (empty array when no
+tags were declared); the wire mapping in
+`acp/engine/ext-methods/volumes-list.ts:volumesList` omits the
+field from JSON payloads when empty.
+
+`findByTag(tag)` returns the first snapshot whose `tags`
+includes `tag`, or `undefined`. Iteration order matches
+`list()` (insertion order). The listener fires after every
+state transition with a fresh array snapshot.
 
 Consumers in the engine layer:
 
@@ -119,18 +134,42 @@ The default implementation. Owns:
 
 Method behaviour:
 
-| Method | `volume-registry.ts` line | Behaviour |
-| --- | --- | --- |
-| `mountAll(initial)` | `:60` | Sequential `mount(init)` per entry. Errors are caught and logged (`console.error`); the next mount still runs. The agent stays available even when one volume backend fails. |
-| `mount(init)` | `:70` | Throws on duplicate `mountName`. Otherwise `await #ensureZenfs()`, `mount('/mnt/' + mountName, init.fs)`, `await init.initialize?.()`, populate `#volumes`, fire listeners. |
-| `unmount(mountName)` | `:87` | No-op when unknown. Otherwise `umount('/mnt/' + mountName)` (catching failures and logging via `console.warn` — note `mountAll` uses `console.error` for the parallel boot path; `unmount` warns because a failed unmount during teardown is recoverable), drop from `#volumes`, fire listeners. |
-| `list()` | `:98` | Snapshot copy via `[...#volumes.values()]`. |
-| `firstMountName()` | `:102` | Returns the first key in insertion order, or `undefined`. |
-| `onChange(listener)` | `:107` | Registers + returns an unregister function. |
+| Method | Behaviour |
+| --- | --- |
+| `mountAll(initial)` | Sequential `mount(init)` per entry. Errors are caught and logged (`console.error`); the next mount still runs. The agent stays available even when one volume backend fails. |
+| `mount(init)` | Throws on duplicate `mountName`. Otherwise `await #ensureZenfs()`, `mount('/mnt/' + mountName, init.fs)`, `await init.initialize?.()`, populate `#volumes` with deduplicated `init.tags`, fire listeners. |
+| `unmount(mountName)` | No-op when unknown. Otherwise `umount('/mnt/' + mountName)` (catching failures and logging via `console.warn`), drop from `#volumes`, fire listeners. |
+| `list()` | Snapshot copy via `[...#volumes.values()]`. |
+| `firstMountName()` | Returns the first key in insertion order, or `undefined`. |
+| `findByTag(tag)` | First match in insertion order, or `undefined`. |
+| `onChange(listener)` | Registers + returns an unregister function. |
 
-Listener invocation (`#notify`, `:121`) catches each
-listener's exception so a buggy listener can't break the
-registry.
+Listener invocation (`#notify`) catches each listener's
+exception so a buggy listener can't break the registry.
+
+## Tag taxonomy
+
+`agent/well-known-volume-tags.ts` exports the agent's own
+vocabulary as `WELL_KNOWN_VOLUME_TAGS` (re-exported from the
+public barrel):
+
+| Constant | Wire value | Consumer |
+| --- | --- | --- |
+| `AGENT_WD` | `"agent-wd"` | `/extension add` unpack target (M6 phase 13). At most one volume should carry this tag. |
+| `CWD` | `"cwd"` | Default cwd for the bash tool. |
+| `DATA` | `"data"` | Read-only user data (skill manifests, prompt-template libraries — M7). |
+
+Hosts and extensions SHOULD reach for these constants instead
+of literal strings; private tags are still fine.
+
+The host owns tag assignment policy. The browser host
+(`packages/web-acp/`) plumbs tags through the
+`HostVolumeInit.tags` and `VolumeSeed.tags` fields; persisted
+FSA records carry `tags?` on `VolumeHandleRecord` and the
+`useVolumes` hook merges them into the worker's
+`VolumeInit.tags` on every boot. See
+[`../web-acp-client/volumes.md`](../web-acp-client/volumes.md)
+§ "Tags".
 
 ## Why `@zenfs/core`, not `@zenfs/dom`
 

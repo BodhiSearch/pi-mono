@@ -2,7 +2,7 @@ import type { AvailableCommand } from '@agentclientprotocol/sdk';
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_COMMANDS, builtinAvailableCommands, findBuiltin, isBuiltinName } from './index';
-import type { BuiltinHandlerCtx } from './types';
+import type { BuiltinExtensionsHandle, BuiltinHandlerCtx } from './types';
 
 function ctx(overrides: Partial<BuiltinHandlerCtx> = {}): BuiltinHandlerCtx {
   return {
@@ -56,7 +56,7 @@ describe('findBuiltin', () => {
 });
 
 describe('isBuiltinName', () => {
-  it.each(['help', 'version', 'info', 'copy', 'mcp'])('recognises %s', name => {
+  it.each(['help', 'version', 'info', 'copy', 'mcp', 'extension'])('recognises %s', name => {
     expect(isBuiltinName(name)).toBe(true);
   });
   it.each(['HELP', 'wiki:greet', 'random', ''])('rejects %s', name => {
@@ -67,7 +67,14 @@ describe('isBuiltinName', () => {
 describe('builtinAvailableCommands', () => {
   it('returns one AvailableCommand per registered built-in', () => {
     const list = builtinAvailableCommands();
-    expect(list.map(c => c.name).sort()).toEqual(['copy', 'help', 'info', 'mcp', 'version']);
+    expect(list.map(c => c.name).sort()).toEqual([
+      'copy',
+      'extension',
+      'help',
+      'info',
+      'mcp',
+      'version',
+    ]);
     for (const c of list) {
       expect(typeof c.description).toBe('string');
       expect(c.description.length).toBeGreaterThan(0);
@@ -283,5 +290,173 @@ describe('/mcp handler', () => {
     const result = await mcp().handler('toggle some-slug', ctx());
     expect(result.action).toBeUndefined();
     expect(result.replyText).toMatch(/unknown subcommand/i);
+  });
+});
+
+describe('/extension handler', () => {
+  const ext = () => BUILTIN_COMMANDS.find(c => c.name === 'extension')!;
+
+  function fakeExtensionsHandle(initial: {
+    active: string[];
+    disabled: string[];
+    known: string[];
+  }): BuiltinExtensionsHandle & {
+    calls: { setDisabled: string[][]; add: { spec: string; registryUrl?: string }[] };
+  } {
+    const state = {
+      active: [...initial.active],
+      disabled: [...initial.disabled],
+      known: [...initial.known],
+    };
+    const calls = {
+      setDisabled: [] as string[][],
+      add: [] as { spec: string; registryUrl?: string }[],
+    };
+    return {
+      calls,
+      active: () => state.active.map(name => ({ name, mountName: 'wiki' })),
+      disabled: () => state.disabled,
+      known: () => state.known,
+      async setDisabled(names) {
+        const dedup = Array.from(new Set(names));
+        calls.setDisabled.push(dedup);
+        state.disabled = dedup;
+        state.active = state.known.filter(n => !dedup.includes(n));
+        return {
+          active: state.active.map(name => ({ name })),
+          disabled: state.disabled,
+        };
+      },
+      async add(spec, options) {
+        calls.add.push({
+          spec,
+          ...(options?.registryUrl ? { registryUrl: options.registryUrl } : {}),
+        });
+        const installed = `${spec.replace('@', '__')}@1.0.0`;
+        if (!state.known.includes(installed)) state.known.push(installed);
+        if (!state.active.includes(installed)) state.active.push(installed);
+        return {
+          name: spec,
+          version: '1.0.0',
+          extensionName: installed,
+          installPath: `/mnt/wiki/.pi/extensions/${installed}`,
+          active: state.active.map(name => ({ name })),
+        };
+      },
+    };
+  }
+
+  it('renders active and disabled extensions on `/extension list`', async () => {
+    const handle = fakeExtensionsHandle({
+      active: ['pirate', 'hello-tool'],
+      disabled: ['session-counter'],
+      known: ['pirate', 'hello-tool', 'session-counter'],
+    });
+    const result = await ext().handler('list', ctx({ extensions: handle }));
+    expect(result.replyText).toContain('Active:');
+    expect(result.replyText).toContain('`pirate`');
+    expect(result.replyText).toContain('`hello-tool`');
+    expect(result.replyText).toContain('Disabled:');
+    expect(result.replyText).toContain('`session-counter`');
+  });
+
+  it('disables an active extension and confirms the new state', async () => {
+    const handle = fakeExtensionsHandle({
+      active: ['pirate', 'hello-tool'],
+      disabled: [],
+      known: ['pirate', 'hello-tool'],
+    });
+    const result = await ext().handler('off pirate', ctx({ extensions: handle }));
+    expect(handle.calls.setDisabled).toEqual([['pirate']]);
+    expect(result.replyText).toContain('`pirate` is now disabled');
+    expect(result.replyText).toContain('Disabled:');
+    expect(result.replyText).toContain('`pirate`');
+  });
+
+  it('re-enables a disabled extension', async () => {
+    const handle = fakeExtensionsHandle({
+      active: ['hello-tool'],
+      disabled: ['pirate'],
+      known: ['pirate', 'hello-tool'],
+    });
+    const result = await ext().handler('on pirate', ctx({ extensions: handle }));
+    expect(handle.calls.setDisabled).toEqual([[]]);
+    expect(result.replyText).toContain('`pirate` is now enabled');
+  });
+
+  it('rejects unknown extension names without mutating state', async () => {
+    const handle = fakeExtensionsHandle({
+      active: ['pirate'],
+      disabled: [],
+      known: ['pirate'],
+    });
+    const result = await ext().handler('off ghost', ctx({ extensions: handle }));
+    expect(handle.calls.setDisabled).toEqual([]);
+    expect(result.replyText).toMatch(/Unknown extension `ghost`/);
+  });
+
+  it('rejects an unknown subcommand with usage hint', async () => {
+    const handle = fakeExtensionsHandle({ active: [], disabled: [], known: [] });
+    const result = await ext().handler('toggle pirate', ctx({ extensions: handle }));
+    expect(handle.calls.setDisabled).toEqual([]);
+    expect(result.replyText).toMatch(/Unknown subcommand `toggle`/);
+    expect(result.replyText).toMatch(/Usage/);
+  });
+
+  it('installs a package via `/extension add` and confirms the new state', async () => {
+    const handle = fakeExtensionsHandle({
+      active: ['pirate'],
+      disabled: [],
+      known: ['pirate'],
+    });
+    const result = await ext().handler('add pi-hello-world', ctx({ extensions: handle }));
+    expect(handle.calls.add).toEqual([{ spec: 'pi-hello-world' }]);
+    expect(result.replyText).toMatch(/Installed `pi-hello-world@1\.0\.0`/);
+    expect(result.replyText).toContain('Wrote to `/mnt/wiki/.pi/extensions/pi-hello-world@1.0.0`');
+  });
+
+  it('parses `--registry <url>` and passes it through', async () => {
+    const handle = fakeExtensionsHandle({ active: [], disabled: [], known: [] });
+    await ext().handler(
+      'add pi-hello-world --registry https://registry.example.test',
+      ctx({ extensions: handle })
+    );
+    expect(handle.calls.add).toEqual([
+      { spec: 'pi-hello-world', registryUrl: 'https://registry.example.test' },
+    ]);
+  });
+
+  it('parses `--registry=<url>` (equals form)', async () => {
+    const handle = fakeExtensionsHandle({ active: [], disabled: [], known: [] });
+    await ext().handler(
+      'add --registry=https://r.example pi-hello-world',
+      ctx({ extensions: handle })
+    );
+    expect(handle.calls.add).toEqual([
+      { spec: 'pi-hello-world', registryUrl: 'https://r.example' },
+    ]);
+  });
+
+  it('rejects `/extension add` without a spec', async () => {
+    const handle = fakeExtensionsHandle({ active: [], disabled: [], known: [] });
+    const result = await ext().handler('add', ctx({ extensions: handle }));
+    expect(handle.calls.add).toEqual([]);
+    expect(result.replyText).toMatch(/requires a package spec/i);
+  });
+
+  it('reports install failures from the handle', async () => {
+    const handle: BuiltinExtensionsHandle = {
+      ...fakeExtensionsHandle({ active: [], disabled: [], known: [] }),
+      add: async () => {
+        throw new Error('extensions:no-agent-wd-volume — boom');
+      },
+    };
+    const result = await ext().handler('add pi-hello-world', ctx({ extensions: handle }));
+    expect(result.replyText).toMatch(/Install failed: extensions:no-agent-wd-volume/);
+  });
+
+  it('explains when the extensions registry is not configured', async () => {
+    const result = await ext().handler('list', ctx());
+    expect(result.replyText).toMatch(/registry not configured/i);
   });
 });

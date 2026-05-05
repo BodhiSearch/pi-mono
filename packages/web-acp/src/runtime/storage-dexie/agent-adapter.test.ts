@@ -304,7 +304,14 @@ describe('AcpAgentAdapter slash commands', () => {
     const ac = updates.find(u => u.update.sessionUpdate === 'available_commands_update');
     expect(ac).toBeDefined();
     const cmds = (ac!.update as { availableCommands: Array<{ name: string }> }).availableCommands;
-    expect(cmds.map(c => c.name).sort()).toEqual(['copy', 'help', 'info', 'mcp', 'version']);
+    expect(cmds.map(c => c.name).sort()).toEqual([
+      'copy',
+      'extension',
+      'help',
+      'info',
+      'mcp',
+      'version',
+    ]);
   });
 
   it('emits a populated available_commands_update on newSession when commands exist', async () => {
@@ -326,7 +333,7 @@ describe('AcpAgentAdapter slash commands', () => {
       { name: 'wiki:greet', description: 'Greet someone', input: { hint: '<name>' } },
     ]);
     const builtinNames = cmds.filter(c => !c.name.includes(':')).map(c => c.name);
-    expect(builtinNames.sort()).toEqual(['copy', 'help', 'info', 'mcp', 'version']);
+    expect(builtinNames.sort()).toEqual(['copy', 'extension', 'help', 'info', 'mcp', 'version']);
   });
 
   it('re-emits available_commands_update on loadSession', async () => {

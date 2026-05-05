@@ -25,6 +25,12 @@ export const BODHI_AUTH_METHOD_ID = 'bodhi-token';
 
 export const BODHI_VOLUMES_LIST_METHOD = '_bodhi/volumes/list';
 
+export const BODHI_EXTENSIONS_LIST_METHOD = '_bodhi/extensions/list';
+
+export const BODHI_EXTENSIONS_RELOAD_METHOD = '_bodhi/extensions/reload';
+
+export const BODHI_EXTENSIONS_ADD_METHOD = '_bodhi/extensions/add';
+
 export const BODHI_MCP_TOGGLES_SET_METHOD = '_bodhi/mcp/toggles/set';
 
 // `Agent.closeSession` frees in-memory resources only; this extension
@@ -54,10 +60,78 @@ export interface BodhiAuthenticateResponseMeta {
 export interface BodhiVolumeDescriptor {
   mountName: string;
   description?: string;
+  /** Omitted when empty. See `WELL_KNOWN_VOLUME_TAGS` for the agent's vocabulary. */
+  tags?: string[];
 }
 
 export interface BodhiVolumesListResponse extends Record<string, unknown> {
   volumes: BodhiVolumeDescriptor[];
+}
+
+export interface BodhiExtensionCapabilities {
+  events: string[];
+  tools: string[];
+  commands: string[];
+  providers: string[];
+}
+
+export interface BodhiExtensionDescriptor {
+  name: string;
+  mountName: string;
+  sourcePath: string;
+  capabilities: BodhiExtensionCapabilities;
+}
+
+export interface BodhiExtensionsListResponse extends Record<string, unknown> {
+  extensions: BodhiExtensionDescriptor[];
+  /** Names persisted in `extensions:disabled`. Empty array when none. */
+  disabled: string[];
+  /** Names of every extension the loader discovered (active + disabled). */
+  knownNames: string[];
+}
+
+/**
+ * Optional payload for `_bodhi/extensions/reload`. Pass `disabled`
+ * to push a new disabled set in the same call (the agent persists
+ * it via `extensions:disabled` and applies it during the reload).
+ */
+export interface BodhiExtensionsReloadRequest extends Record<string, unknown> {
+  disabled?: string[];
+}
+
+export interface BodhiExtensionsReloadResponse extends Record<string, unknown> {
+  extensions: BodhiExtensionDescriptor[];
+  disabled: string[];
+  knownNames: string[];
+}
+
+/**
+ * Request payload for `_bodhi/extensions/add`. `spec` is an npm
+ * package spec (`<name>` or `<name>@<version>`, optional `npm:`
+ * prefix). When supplied, `registryUrl` overrides the default
+ * `https://registry.npmjs.org` for tests / mirrors.
+ */
+export interface BodhiExtensionsAddRequest extends Record<string, unknown> {
+  spec: string;
+  registryUrl?: string;
+}
+
+/**
+ * Response payload for `_bodhi/extensions/add`. The agent ran a
+ * full reload after writing the install, so `extensions`, `disabled`,
+ * and `knownNames` mirror the post-install state — the same shape
+ * `_bodhi/extensions/list` would return.
+ */
+export interface BodhiExtensionsAddResponse extends Record<string, unknown> {
+  installed: {
+    name: string;
+    version: string;
+    extensionName: string;
+    installPath: string;
+  };
+  extensions: BodhiExtensionDescriptor[];
+  disabled: string[];
+  knownNames: string[];
 }
 
 export interface BodhiAuthenticateMeta {
@@ -196,6 +270,7 @@ export interface BodhiLoadSessionMeta {
 
 export const BODHI_MCP_STATE_NOTIFICATION_METHOD = '_bodhi/mcp/state';
 export const BODHI_BUILTIN_ACTION_NOTIFICATION_METHOD = '_bodhi/builtin/action';
+export const BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD = '_bodhi/extensions/state';
 
 export interface BodhiMcpStateNotificationParams extends Record<string, unknown> {
   sessionId: string;
@@ -209,6 +284,17 @@ export interface BodhiBuiltinActionNotificationParams extends Record<string, unk
   sessionId: string;
   command: string;
   action: AnyBodhiBuiltinAction;
+}
+
+/**
+ * Broadcast whenever the agent's extension registry changes (boot, `/extension on|off`,
+ * or `_bodhi/extensions/reload`). Hosts use this to refetch `_bodhi/extensions/list`
+ * without polling. Mirrors {@link BodhiExtensionsListResponse}.
+ */
+export interface BodhiExtensionsStateNotificationParams extends Record<string, unknown> {
+  extensions: BodhiExtensionDescriptor[];
+  disabled: string[];
+  knownNames: string[];
 }
 
 /** Per-session feature toggle config-option ids surfaced via `Agent.setSessionConfigOption`. */

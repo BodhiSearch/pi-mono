@@ -13,9 +13,9 @@ import type { AnyBodhiBuiltinAction } from '../wire';
  */
 
 // Adding a new SessionEntryKind stays on-disk compatible: `entries.payload`
-// is an opaque blob keyed by [sessionId+seq], so new kinds (e.g. `builtin`)
-// do not require a Dexie schema bump.
-export type SessionEntryKind = 'notification' | 'turn' | 'builtin';
+// is an opaque blob keyed by [sessionId+seq], so new kinds (e.g. `builtin`,
+// `extension`) do not require a Dexie schema bump.
+export type SessionEntryKind = 'notification' | 'turn' | 'builtin' | 'extension';
 
 export interface TurnPayload {
   userText: string;
@@ -41,12 +41,34 @@ export interface BuiltinPayload {
   action?: AnyBodhiBuiltinAction;
 }
 
+/**
+ * Custom session entry written by a `pi.session.appendEntry`
+ * call. The payload is opaque to the agent runtime — it is
+ * persisted verbatim and replayed on `session/load` so the host
+ * UI can re-render the entry in chronological order. `data` is
+ * whatever the extension passed; the host decides how to render
+ * it (and may ignore unknown `customType`s without breaking
+ * replay).
+ */
+export interface ExtensionPayload {
+  extensionName: string;
+  customType: string;
+  data: unknown;
+  /**
+   * Optional free-form label attached via `pi.session.setLabel`.
+   * Mutates in place when the host's bridge asks the store to
+   * update an existing entry; treated as a hint, not load-bearing
+   * state for the agent runtime.
+   */
+  label?: string;
+}
+
 export interface SessionEntry {
   sessionId: string;
   seq: number;
   at: number;
   kind: SessionEntryKind;
-  payload: SessionNotification | TurnPayload | BuiltinPayload;
+  payload: SessionNotification | TurnPayload | BuiltinPayload | ExtensionPayload;
 }
 
 export interface SessionRow {
@@ -100,12 +122,23 @@ export interface SessionStore {
     at?: number
   ): Promise<void>;
   recordBuiltin(id: string, payload: BuiltinPayload, at?: number): Promise<void>;
+  /**
+   * Append a custom extension entry. Returns the assigned `seq`
+   * so the host can mint a stable `entryId` for `setLabel`.
+   */
+  recordExtension(id: string, payload: ExtensionPayload, at?: number): Promise<number>;
+  /**
+   * Best-effort label update for an extension entry identified by
+   * `seq`. No-op when the entry is missing or is not an extension
+   * kind (e.g. a `'turn'` row).
+   */
+  setExtensionLabel(id: string, seq: number, label: string | undefined): Promise<void>;
   /** Full unpaginated list, sorted by `updatedAt` desc. */
   listSummaries(): Promise<SessionSummary[]>;
   /** Paginated read, sorted by `updatedAt` desc. Page is 1-indexed. */
   listSummariesPage(opts: { page: number; perPage: number }): Promise<SessionSummaryPage>;
   readEntries(id: string): Promise<SessionEntry[]>;
   getSession(id: string): Promise<SessionRow | undefined>;
-  setTitle(id: string, title: string): Promise<void>;
+  setTitle(id: string, title: string | null): Promise<void>;
   deleteSession(id: string): Promise<void>;
 }

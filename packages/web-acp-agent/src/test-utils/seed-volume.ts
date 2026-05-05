@@ -5,6 +5,7 @@ export interface SeedSpec {
   mountName: string;
   description?: string;
   files: Record<string, string>;
+  tags?: readonly string[];
 }
 
 /**
@@ -18,6 +19,7 @@ export function buildSeedInit(spec: SeedSpec): VolumeInit {
   return {
     mountName: spec.mountName,
     ...(spec.description ? { description: spec.description } : {}),
+    ...(spec.tags && spec.tags.length > 0 ? { tags: spec.tags } : {}),
     fs: filesystem,
     initialize: async () => {
       const mountPath = `/mnt/${spec.mountName}`;

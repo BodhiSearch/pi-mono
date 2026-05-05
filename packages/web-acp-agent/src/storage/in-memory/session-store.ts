@@ -1,4 +1,10 @@
-import type { SessionEntry, SessionRow, SessionStore, SessionSummary } from '../session-store';
+import type {
+  ExtensionPayload,
+  SessionEntry,
+  SessionRow,
+  SessionStore,
+  SessionSummary,
+} from '../session-store';
 import { deriveTitle } from '../session-store';
 
 export function createInMemorySessionStore(): SessionStore {
@@ -71,6 +77,30 @@ export function createInMemorySessionStore(): SessionStore {
       rows.set(id, { ...row, updatedAt: at });
     },
 
+    async recordExtension(id, payload, at = Date.now()) {
+      const row = ensure(id, 'recordExtension');
+      const list = entries.get(id) ?? [];
+      const seq = nextSeq(id);
+      list.push({ sessionId: id, seq, at, kind: 'extension', payload });
+      entries.set(id, list);
+      rows.set(id, { ...row, updatedAt: at });
+      return seq;
+    },
+
+    async setExtensionLabel(id, seq, label) {
+      const list = entries.get(id) ?? [];
+      const idx = list.findIndex(e => e.seq === seq && e.kind === 'extension');
+      if (idx === -1) return;
+      const prev = list[idx];
+      const prevPayload = prev.payload as ExtensionPayload;
+      const nextPayload: ExtensionPayload = {
+        ...prevPayload,
+        ...(label === undefined ? { label: undefined } : { label }),
+      };
+      list[idx] = { ...prev, payload: nextPayload };
+      entries.set(id, list);
+    },
+
     async listSummaries(): Promise<SessionSummary[]> {
       return [...rows.values()]
         .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -110,7 +140,7 @@ export function createInMemorySessionStore(): SessionStore {
 
     async setTitle(id, title) {
       const row = ensure(id, 'setTitle');
-      rows.set(id, { ...row, title, updatedAt: Date.now() });
+      rows.set(id, { ...row, title: title ?? null, updatedAt: Date.now() });
     },
 
     async deleteSession(id) {
