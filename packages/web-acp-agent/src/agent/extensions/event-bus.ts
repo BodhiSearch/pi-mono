@@ -33,15 +33,43 @@ export interface ExtensionEventBusController extends ExtensionEventBus {
 
 export function createExtensionEventBus(): ExtensionEventBusController {
   const channels = new Map<string, Set<ExtensionEventBusHandler>>();
+  // Tracks channels whose handlers are currently executing synchronously.
+  // Set around `handler(data)` invocation only — cleared before the `await`
+  // so that concurrent external calls (which arrive after the yield) are not
+  // blocked. Only synchronous re-entrant calls (from within the handler body)
+  // are caught, which is the only case that can cause a stack-overflow loop.
+  const inflight = new Set<string>();
   return {
     async emit(channel, data) {
+      if (inflight.has(channel)) {
+        console.warn(
+          `[extensions] pi.events.emit('${channel}') called re-entrantly — skipping to prevent infinite loop`
+        );
+        return;
+      }
       const handlers = channels.get(channel);
       if (!handlers || handlers.size === 0) return;
       for (const handler of [...handlers]) {
+        // Set inflight around the synchronous invocation only so that a
+        // handler calling emit('same-channel') synchronously is detected.
+        // The flag is cleared before the await so concurrent external calls
+        // that arrive after the yield point are not affected.
+        inflight.add(channel);
+        let handlerPromise: void | Promise<void>;
         try {
-          await handler(data);
-        } catch (err) {
-          console.error(`[extensions] pi.events handler '${channel}' threw:`, err);
+          handlerPromise = handler(data) as void | Promise<void>;
+        } catch (syncErr) {
+          // Handler threw synchronously; log, clear inflight, move on.
+          console.error(`[extensions] pi.events handler '${channel}' threw:`, syncErr);
+          continue;
+        } finally {
+          // Runs in both success and catch paths — clears inflight before any await.
+          inflight.delete(channel);
+        }
+        try {
+          await handlerPromise;
+        } catch (asyncErr) {
+          console.error(`[extensions] pi.events handler '${channel}' threw:`, asyncErr);
         }
       }
     },

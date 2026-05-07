@@ -28,7 +28,11 @@ const extensionsReloadParams = z
 const extensionsAddParams = z
   .object({
     spec: z.string().min(1),
-    registryUrl: z.string().url().optional(),
+    registryUrl: z
+      .string()
+      .url()
+      .refine(u => u.startsWith('https://'), { message: 'registryUrl must use https://' })
+      .optional(),
   })
   .passthrough();
 

@@ -159,6 +159,83 @@ describe('installExtensionFromNpm', () => {
     expect(writeFs.files.get(`${result.installPath}/index.js`)).toContain('custom');
   });
 
+  it('rejects a version string containing path traversal sequences', async () => {
+    const writeFs = memWriteFs();
+    const { url: tarballUrl, bytes } = await buildTarball({
+      'package.json': JSON.stringify({
+        name: 'pi-evil',
+        version: '../../etc/evil',
+        main: 'index.js',
+      }),
+      'index.js': '// evil',
+    });
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('pi-evil')) {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-evil',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow(/unsafe version string/);
+    // No files must have been written
+    expect(writeFs.files.size).toBe(0);
+  });
+
+  it('rejects a non-https tarball URL returned by the registry', async () => {
+    const writeFs = memWriteFs();
+    const httpTarballUrl = 'http://evil.example.com/pi-hello-world-1.0.0.tgz';
+    const { bytes } = await buildTarball({
+      'package.json': JSON.stringify({
+        name: 'pi-hello-world',
+        version: '1.0.0',
+        main: 'index.js',
+      }),
+      'index.js': '// ok',
+    });
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('pi-hello-world')) {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: httpTarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      // The http tarball URL must never be reached
+      if (url === httpTarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-hello-world',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow(/tarball URL.*must use https/);
+    expect(writeFs.files.size).toBe(0);
+  });
+
   it('rejects packages with no entry hint', async () => {
     const writeFs = memWriteFs();
     const { url: tarballUrl, bytes } = await buildTarball({

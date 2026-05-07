@@ -141,7 +141,17 @@ export async function installExtensionFromNpm(
     );
   }
 
+  if (/[/\\]|\.\./.test(resolvedVersion)) {
+    throw new Error(
+      `[extensions] install aborted: unsafe version string in registry metadata: ${JSON.stringify(resolvedVersion)}`
+    );
+  }
   const extensionName = localExtensionDirName(resolvedName, resolvedVersion);
+  if (extensionName.includes('..') || extensionName.includes('/')) {
+    throw new Error(
+      `[extensions] install aborted: unsafe extension dir name derived from registry metadata: ${JSON.stringify(extensionName)}`
+    );
+  }
   const installRoot = `/mnt/${input.agentWdMount}/.pi/extensions/${extensionName}`;
   await input.writeFs.rm(installRoot);
   await input.writeFs.mkdir(installRoot);
@@ -184,6 +194,11 @@ async function resolveTarballUrl(args: {
 }
 
 async function fetchTarball(url: string, fetchImpl: typeof fetch): Promise<Uint8Array> {
+  if (!url.startsWith('https://')) {
+    throw new Error(
+      `[extensions] install aborted: tarball URL from registry must use https://, got: ${JSON.stringify(url)}`
+    );
+  }
   const response = await fetchImpl(url, {
     headers: { accept: 'application/octet-stream' },
   });
