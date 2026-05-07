@@ -16,3 +16,4 @@ export { McpConnectionPool } from '../agent/mcp';
 export { type CommandsFs, type CommandsFsEntry, createZenfsCommandsFs } from '../agent/commands';
 export { mcpToggleStoreOverPreferences } from '../storage/in-memory/preference-adapters';
 export { createInMemoryPreferenceStore } from '../storage/in-memory/preference-store';
+export { createInMemorySessionStore } from '../storage/in-memory/session-store';

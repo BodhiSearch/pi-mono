@@ -71,12 +71,42 @@ Run from `packages/web-acp-agent/`:
 
 ```bash
 npm run check     # ESLint + tsc -b (authoritative typecheck)
-npm test          # vitest run (unit tests)
+npm test          # vitest run (unit tests, src/**/*.test.ts)
+npm run test:e2e  # vitest with vitest.config.e2e.ts (headless ACP-protocol e2e)
 ```
 
-No e2e at this layer — the agent is exercised via host e2e suites in
-`packages/web-acp/`, `packages/ws-acp-client/`,
-`packages/tutorial-cli-client/`.
+## Headless ACP-protocol e2e
+
+`e2e/` contains a vitest suite that **embeds the agent in-process**
+(via the public `createInMemoryDuplex`) and drives it with
+`ClientSideConnection` from `@agentclientprotocol/sdk`. There is no
+UI, no subprocess, no Playwright in the specs — Playwright is used
+only inside `tests/global-setup.ts` to walk the BodhiApp + Keycloak
+OAuth flow once and capture a JWT.
+
+`npm run test:e2e` is **self-contained**: `globalSetup` boots a
+local BodhiApp via `@bodhiapp/app-bindings`, drives the OAuth admin
+flow + access-request flow, registers an OpenAI model, and persists
+`{ baseUrl, accessToken, refreshToken, expiresAt, modelId }` to
+`e2e/.test-state.json`. Each spec creates a fresh embedded agent +
+duplex + ACP client and authenticates with the captured JWT.
+
+Run `npm run test:e2e` after any change to the wire surface (handler,
+engine, ext-method, capability advertisement). It exercises a real
+LLM round-trip against BodhiApp, so it surfaces protocol regressions
+the unit suite can't catch.
+
+**Hard rule: e2e infra never imports from sibling packages.** The
+agent is the most upstream package in this monorepo. OAuth machinery,
+admin page objects, and BodhiServerManager are **copied** (not
+imported) from `cli-acp-client`/`web-acp`/`ws-acp-client`. CI grep
+guard:
+
+```
+grep -r '@bodhiapp/web-acp\|@bodhiapp/cli-acp-client\|@bodhiapp/tutorial-cli-client\|@bodhiapp/ws-acp-client\|@bodhiapp/acp-ui' packages/web-acp-agent/
+```
+
+must return zero hits.
 
 ## Footguns
 
