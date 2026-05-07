@@ -6,9 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Active initiative: **web-acp** at `packages/web-acp/` — a browser-native agent that speaks the **Agent Client Protocol (ACP)** as its internal wire protocol. Main thread hosts the ACP client (React UI, `/vault` mount, fs/* delegation, permission prompts). Web Worker hosts the ACP agent (turn loop, LLM calls via `@mariozechner/pi-ai`, tool invocations). The transport between them frames ACP JSON-RPC 2.0 over `MessageChannel` today, and is explicitly designed to be swappable (future HTTP/SSE for remote-agent deployments).
 
-Post-M4 phase B the agent runtime was extracted into `packages/web-acp-agent/` (`@bodhiapp/web-acp-agent`) — a transport-agnostic ACP agent with zero browser-only deps. It exposes `startAcpAgent(transport, services)` taking a byte-stream pair plus pluggable interfaces (`SessionStore`, `FeatureStore`, `McpToggleStore`, `VolumeRegistry`, `LlmProvider`). `packages/web-acp/` is the browser host; a second host shipped as `packages/cli-acp-client/` — a Claude-Code-style Node TTY CLI that embeds the same agent in-process over an in-memory `TransformStream` duplex, with a Node-native OAuth 2.1 + PKCE client and `PassthroughFS`-backed `$cwd` volume. The CLI exists primarily to validate transport-neutrality and as a second e2e seam.
+Post-M4 phase B the agent runtime was extracted into `packages/web-acp-agent/` (`@bodhiapp/web-acp-agent`) — a transport-agnostic ACP agent with zero browser-only deps. It exposes `startAcpAgent(transport, services)` taking a byte-stream pair plus pluggable interfaces (`SessionStore`, `FeatureStore`, `McpToggleStore`, `VolumeRegistry`, `LlmProvider`). Active host runtimes:
 
-`packages/web-agent/` shipped M0–M8 and is now a **frozen reference spike** — no new features land, consulted for session/tool/extension-hook patterns only. See `ai-docs/web-agent/README.md` for the archive marker and the list of specific architectural drifts that motivated the pivot.
+- **`packages/web-acp/`** — browser host (Vite + React + Web Worker + Dexie/IndexedDB).
+- **`packages/ws-acp-client/`** — WebSocket backend host (Node.js + SQLite/Drizzle); paired with the `acp-ui/` Vue frontend.
+- **`packages/tutorial-cli-client/`** — tutorial CLI host (Node.js TTY, in-process, minimal wiring); the hands-on reference for "how do I host the agent in Node".
+
+**Frozen hosts (reference only, do not extend):**
+
+- **`packages/cli-acp-client/`** — the original Node TTY CLI (Claude-Code-style, pi-tui, Node-native OAuth 2.1 + PKCE). Superseded by `packages/tutorial-cli-client/` as the active CLI host. Kept as reference for the auth flow and the first transport-neutrality proof. No new features land here.
+- **`packages/web-agent/`** — shipped M0–M8 and is now a frozen reference spike. See `ai-docs/web-agent/README.md` for the archive marker and the list of specific architectural drifts that motivated the pivot.
 
 Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `pods`) are upstream libraries we consume and occasionally patch. Do not extend them unless explicitly asked.
 
@@ -28,7 +35,7 @@ Other `pi-*` packages (`ai`, `agent`, `coding-agent`, `mom`, `tui`, `web-ui`, `p
 - @ai-docs/web-acp/milestones/index.md — status board with load-when hooks
 - @ai-docs/web-acp/specs/web-acp-agent/index.md — transport-agnostic agent runtime spec
 - @ai-docs/web-acp/specs/web-acp-client/index.md — browser host runtime spec
-- @ai-docs/web-acp/specs/cli-acp-client/index.md — Node CLI host living spec
+- @ai-docs/web-acp/specs/cli-acp-client/index.md — Node CLI host spec (frozen — matches the frozen `packages/cli-acp-client/`)
 
 ### Reference (web-agent archive)
 
@@ -79,21 +86,27 @@ For multi-step refactors, run e2e at the end of the work, not after
 every intermediate edit. Re-run it after any fix that follows from
 e2e feedback.
 
-`packages/cli-acp-client/` (active — second host runtime for `@bodhiapp/web-acp-agent`):
+`packages/ws-acp-client/` (active — WebSocket backend host):
 
 ```bash
-npm run dev                 # tsx src/cli.ts (interactive pi-tui REPL)
-npm test                    # vitest (unit)
+npm run dev                 # tsx src/cli.ts
+npm run check               # tsc --noEmit
 npm run test:e2e            # Playwright + real BodhiApp NAPI + real LLM
-npm run check               # lint + typecheck
 ```
 
-The CLI's e2e setup mirrors `packages/web-acp/e2e/` exactly — same
-`@bodhiapp/app-bindings` BodhiApp boot + Playwright OAuth flow + `.env.test`
-contract. Run `npm run test:e2e` from `packages/cli-acp-client/` yourself
-once changes under that folder OR under `packages/web-acp-agent/` are
-complete (same per-task discipline as web-acp; pick whichever host's
-e2e is relevant — agent-package changes should pass both).
+`packages/tutorial-cli-client/` (active — tutorial CLI host):
+
+```bash
+npm run dev                 # tsx src/cli.ts (interactive)
+npm run check               # ESLint + tsc -b
+npm run test:e2e            # Playwright + real BodhiApp NAPI + real LLM
+```
+
+`packages/cli-acp-client/` (frozen — reference only, do not extend):
+
+No new work here. Consult for the OAuth 2.1 + PKCE flow, pi-tui REPL
+wiring, and the first transport-neutrality proof. See entry in "Frozen hosts"
+above.
 
 `packages/web-agent/` (frozen — reference only, do not extend):
 
@@ -116,6 +129,23 @@ npm run check               # lint + typecheck (uses tsc -b)
 - **`svkozak/pi-acp`** at `/Users/amir36/Documents/workspace/src/github.com/svkozak/pi-acp/` — the closest existing "ACP agent in TypeScript" (Node/stdio, fronts `coding-agent`). Prior art, not a dependency. `src/acp/agent.ts`, `session.ts`, `session-store.ts`, `slash-commands.ts` are the most instructive files; the stdio plumbing does not port.
 - **`bodhiapps/zenfs-browser`** — ZenFS mount lifecycle, FSA handle persistence, dev-seed testing pattern. Used by web-agent; pattern carries to web-acp.
 - **`packages/coding-agent`** — architectural reference for session shape, RPC schema, extension hooks, tool "operations" pattern. Copy patterns, **do not import** (it pulls node-only deps that break browser bundling).
+
+## Code review
+
+Use the `/review` slash command to run a structured review of a squashed
+feature commit before treating it as done:
+
+```bash
+/review             # Review HEAD (default — squash first, then review)
+/review HEAD~3..HEAD  # Review a range
+/review <sha>       # Review a specific commit
+```
+
+Reports land in `ai-docs/web-acp/reviews/<ref>/`. The command classifies
+files by layer, loads the relevant CLAUDE.md + spec context per layer,
+launches parallel Explore agents, and produces a per-layer findings report
++ a consolidated index with a suggested fix order. See
+`.claude/commands/review.md` for the full checklist.
 
 ## AGENTS.md
 
