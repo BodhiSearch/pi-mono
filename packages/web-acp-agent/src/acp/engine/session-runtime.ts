@@ -317,10 +317,23 @@ export class AcpSessionRuntime {
       seenNames.add(def.name);
     }
     this.#availableCommands = merged;
+    // Vault commands + prompts shadow extension commands on cross-source name
+    // collisions. Within extensions themselves, last-write-wins is enforced
+    // inside the registry (see extensions.md "Conflict resolution"); here we
+    // only keep the first-registered name from `seenNames` so a vault command
+    // wins over a same-name extension command.
     const extensionCommands: AvailableCommand[] = [];
     const extensions = this.#services.extensions;
     if (extensions) {
       for (const ext of extensions.listCommands()) {
+        if (seenNames.has(ext.name)) {
+          console.warn(
+            `[extensions] command '${ext.name}' from extension '${ext.ownerExtension}' ` +
+              `shadowed by a vault command/prompt with the same name`
+          );
+          continue;
+        }
+        seenNames.add(ext.name);
         const cmd: AvailableCommand = {
           name: ext.name,
           description: ext.description ?? '',

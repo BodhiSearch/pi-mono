@@ -155,8 +155,17 @@ export async function installExtensionFromNpm(
   const installRoot = `/mnt/${input.agentWdMount}/.pi/extensions/${extensionName}`;
   await input.writeFs.rm(installRoot);
   await input.writeFs.mkdir(installRoot);
-  await input.writeFs.writeFile(`${installRoot}/index.js`, entryEntry.text);
-  await input.writeFs.writeFile(`${installRoot}/package.json`, pkgJsonEntry.text);
+  try {
+    await input.writeFs.writeFile(`${installRoot}/index.js`, entryEntry.text);
+    await input.writeFs.writeFile(`${installRoot}/package.json`, pkgJsonEntry.text);
+  } catch (err) {
+    try {
+      await input.writeFs.rm(installRoot);
+    } catch {
+      // Cleanup failed; the next reload will skip the broken entry.
+    }
+    throw err;
+  }
 
   return {
     name: resolvedName,

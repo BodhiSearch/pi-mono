@@ -15,6 +15,18 @@ export interface ExtensionsFsEntry {
   isDirectory: boolean;
 }
 
+/**
+ * Extension code is **fully trusted** — see
+ * `ai-docs/web-acp/steering/04-principles.md` § 13. This interface
+ * accepts any absolute path the worker can resolve and applies no
+ * sandbox or path-prefix guard. The loader constructs paths under
+ * `/mnt/<mount>/.pi/extensions/<name>/` by convention, but a
+ * `pi.fs.readFile(...)` call from extension code can read any
+ * worker-visible path. Adding a sandbox would contradict the
+ * fully-trusted posture documented in the steering doc; if the
+ * trust model ever changes, this surface is the place to enforce
+ * the new boundary.
+ */
 export interface ExtensionsFs {
   /** Returns directory entries; resolves to `[]` when the path doesn't exist. */
   readdir(absolutePath: string): Promise<ExtensionsFsEntry[]>;

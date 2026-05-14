@@ -995,6 +995,27 @@ describe('ExtensionRegistry dispatch', () => {
     await expect(registry.reload()).rejects.toThrow(/loadAll/);
   });
 
+  it('concurrent reload calls share an in-flight promise (no torn state)', async () => {
+    const fs = fakeFs({
+      '/mnt/wiki/.pi/extensions/counter/index.js': `
+        export default function (pi) {
+          globalThis.__concurrentRuns = (globalThis.__concurrentRuns ?? 0) + 1;
+          pi.registerCommand('count', { description: 'x', handler: async () => 'x' });
+        }
+      `,
+    });
+    const g = globalThis as unknown as { __concurrentRuns?: number };
+    g.__concurrentRuns = 0;
+    const registry = new ExtensionRegistry();
+    await registry.loadAll({ mounts: [snap('wiki')], fs });
+    expect(g.__concurrentRuns).toBe(1);
+
+    // Two concurrent reloads — they should converge to one extra factory run.
+    await Promise.all([registry.reload(), registry.reload()]);
+    expect(g.__concurrentRuns).toBe(2);
+    expect(registry.listCommands()).toHaveLength(1);
+  });
+
   it('pi.registerProvider returns a Disposable that unregisters', async () => {
     const fs = fakeFs({
       '/mnt/wiki/.pi/extensions/custom/index.js': `

@@ -32,7 +32,6 @@ export interface ExtensionCommandDefinition {
 
 export type ExtensionEvent =
   | 'session_start'
-  | 'session_shutdown'
   | 'before_agent_start'
   | 'turn_start'
   | 'turn_end'

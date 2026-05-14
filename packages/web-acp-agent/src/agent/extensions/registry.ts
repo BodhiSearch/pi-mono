@@ -116,6 +116,7 @@ export class ExtensionRegistry {
   #knownNames = new Set<string>();
   #sessionBridge: SessionBridge | undefined;
   #activeSessionId: string | null = null;
+  #reloadInFlight: Promise<void> | undefined;
 
   /**
    * Install the host's session bridge. Calls without a bridge
@@ -572,18 +573,34 @@ export class ExtensionRegistry {
    * `dispose()` runs, owned tools/commands/providers/event handlers
    * are dropped); newly enabled or newly discovered extensions are
    * instantiated. Throws when called before the first `loadAll`.
+   *
+   * Concurrent calls share a single in-flight promise so two ACP
+   * `_bodhi/extensions/reload` requests (or a reload racing with a
+   * `_bodhi/extensions/add`-triggered reload) converge to one fresh
+   * state instead of tearing the registry by interleaving disposal
+   * + reload.
    */
   async reload(): Promise<void> {
+    if (this.#reloadInFlight) return this.#reloadInFlight;
     if (!this.#lastInput) {
       throw new Error('[extensions] reload() called before loadAll()');
     }
-    await this.#runner.disposeAll();
-    this.#tools.clear();
-    this.#commands.clear();
-    this.#providers.clear();
-    this.#toolCapabilities.clear();
-    this.#eventBus.clear();
-    await this.loadAll(this.#lastInput);
+    const input = this.#lastInput;
+    const run = (async () => {
+      try {
+        await this.#runner.disposeAll();
+        this.#tools.clear();
+        this.#commands.clear();
+        this.#providers.clear();
+        this.#toolCapabilities.clear();
+        this.#eventBus.clear();
+        await this.loadAll(input);
+      } finally {
+        this.#reloadInFlight = undefined;
+      }
+    })();
+    this.#reloadInFlight = run;
+    return run;
   }
 
   async dispose(): Promise<void> {

@@ -154,9 +154,20 @@ URLs work in every JavaScript runtime that supports dynamic
   registering the same `name` → the second wins; a structured
   warning logs against the first. Mirrors
   [`packages/coding-agent/src/core/extensions/runner.ts`](../../../packages/coding-agent/src/core/extensions/runner.ts).
-- **Commands** (`pi.registerCommand`): load-order suffix. Two
-  extensions registering `/foo` → first gets `/foo`, second gets
-  `/foo-2`, third gets `/foo-3`. Picker advertises both.
+- **Commands** (`pi.registerCommand`): last-write-wins among
+  extensions. Two extensions registering the same `name` → the
+  second wins and the first's entry is removed; a structured
+  warning logs against the displaced owner. Consistent with tools
+  and providers. (The original design called for a load-order
+  suffix scheme, but the implementation adopted last-write-wins
+  for consistency across all resource types; this spec entry
+  reflects the shipped behavior as of M6.)
+  - **Cross-source collision** (vault command/prompt vs. extension
+    command with the same canonical name): vault wins, the
+    extension command is dropped from `available_commands_update`
+    and a warning logs against the displaced extension. Picker
+    shows exactly one entry. The same precedence applies in
+    dispatch — vault commands intercept first.
 - **Providers** (`pi.registerProvider`): last-write-wins on
   provider name; same warning shape as tools.
 - **Cross-mount name collision (extension folder name)**: first
@@ -468,6 +479,13 @@ and throws `ENOENT` for missing files. Writes are out of scope —
 extensions that need to persist state use `pi.appendEntry` (Phase
 8) instead of touching the filesystem directly.
 
+**Trust model.** Extension code is fully trusted (see
+[`../../steering/04-principles.md`](../../steering/04-principles.md)
+§ 13). `pi.fs` accepts any absolute worker-visible path; there is
+no sandbox restricting reads to `/mnt/<mount>/.pi/extensions/...`.
+The convention is for extensions to read vault data under their
+own mount, but the API does not enforce it.
+
 ### `pi.volumes` (Phase 3)
 
 ```ts
@@ -493,7 +511,6 @@ record the subscription without firing.
 | Event | Phase | Semantics | Status |
 | --- | --- | --- | --- |
 | `session_start` | Phase 3 | Fires once per `session/new` and `session/load`, after MCP attach + commands refresh, before model resolution. Handler payload: `{ type, sessionId }`. Return value ignored. | Phase 3 ✓ |
-| `session_shutdown` | Phase 3 | Fires before `tearDownSession`. Handler can persist state, close handles. | (planned) |
 | `before_agent_start` | Phase 3 | Per-turn, immediately before `inline.setModel`. Handler payload: `{ type, sessionId, prompt, systemPrompt }`. Returning `{ systemPrompt }` replaces the value the next handler sees and ultimately reaches the LLM; `void`/`undefined` leaves it untouched. | Phase 3 ✓ |
 | `input` | Phase 4 | Per-turn, after `#extractPromptText` + slash expansion, before `inline.prompt`. Handler payload: `{ type, sessionId, text, source }` (`source` is `'user'` until Phase 8 introduces extension-injected input). Returning `{ action: 'transform', text }` replaces the text the next handler sees and the LLM ultimately gets; `{ action: 'handled' }` short-circuits the turn (no LLM call, returns `stopReason: 'end_turn'`); `{ action: 'continue' }`/`undefined` passes through. First `handled` wins and stops the chain. | Phase 4 ✓ |
 | `tool_call` | Phase 6 | Per tool invocation, after pi-agent-core validates arguments and before `tool.execute(...)`. Handler payload: `{ type, sessionId, toolName, input }`. Returning `{ block: true, reason }` synthesizes an error tool result with the reason text — the LLM sees the refusal and adapts. First `block` wins and stops the chain. Mutating `event.input` in place (e.g. rewriting a path argument) is allowed but Phase 6 has no e2e for the rewrite path. | Phase 6 ✓ |
@@ -503,6 +520,13 @@ record the subscription without firing.
 | `before_provider_request` | Phase 9 | Per LLM round-trip, after the provider serialises the wire payload but before the HTTP request fires. Bridged into `streamSimple`'s `onPayload` hook from `pi-ai`. Handler payload: `{ type, sessionId, payload }` where `payload` is the **provider-specific JSON** about to be sent (OpenAI completions / Anthropic messages / etc.) — the agent does **not** structurally validate it. Returning a value replaces the payload that the next handler (and ultimately the provider) sees; returning `undefined` / `void` leaves it untouched. Replacements chain across handlers in load order. Mirror of the coding-agent semantics so ports drop in cleanly. | Phase 9 ✓ |
 | `after_provider_response` | Phase 9 | Per LLM round-trip, after HTTP response headers arrive and before the body stream is consumed. Bridged into `streamSimple`'s `onResponse` hook. Handler payload: `{ type, sessionId, status, headers }`. Observation-only — return value is ignored, thrown errors are caught and logged so a buggy listener cannot poison the round-trip. | Phase 9 ✓ |
 | `resources_discover` | Phase 2 | Placeholder. Reserved in `ExtensionEvent`; subscriptions record but no consumer fires the event yet. M7 consumes. | Phase 2 ✓ reserved |
+
+Note: there is no per-session `session_shutdown` event. End-of-life
+cleanup happens via `ExtensionRunner.disposeAll()` on registry
+reload (drops every subscription); per-session cleanup is not a
+runtime concern because the registry is process-wide. If a future
+use case appears (per-session resources extensions need to release),
+re-add as a deliberate spec change.
 
 Out-of-scope events for M6 (UI-bound or session-fork / compaction
 hooks) are documented in

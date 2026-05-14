@@ -57,6 +57,16 @@ function parseSlash(text: string): ParsedSlash | null {
  * through the same muted-reply + persistence path as built-ins,
  * so the `_meta.bodhi.builtin.command` tag carries the extension
  * command name for replay.
+ *
+ * Extension commands run **outside** the `input` event chain.
+ * `dispatchInput` is not invoked here — `input` handlers cannot
+ * intercept or rewrite a `/<extension-cmd>` invocation. This
+ * matches the built-in command behaviour (`tryHandleBuiltin` is
+ * also pre-input). Vault commands and prompts go through
+ * `dispatchInput` because they substitute into the user-message
+ * text and the LLM ultimately sees the expanded form; extension
+ * commands return their own reply directly so there is no
+ * substituted text for `input` handlers to act on.
  */
 export async function tryHandleExtensionCommand(
   args: BuiltinDispatchArgs

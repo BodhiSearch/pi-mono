@@ -216,6 +216,12 @@ export class ExtensionRunner {
    * payload; returning `undefined` keeps the prior value. Returns
    * the final payload (which equals `event.payload` when no
    * handler modified it).
+   *
+   * Subscriptions whose owning extension has been disposed (e.g.
+   * mid-stream cancel + reload) are skipped silently — `sub.disposed`
+   * gates the loop. This is intentional: a cancelled or torn-down
+   * extension must not drive provider hooks. Do not "fix" this by
+   * re-running disposed subscriptions; cancellation is a hard barrier.
    */
   async dispatchBeforeProviderRequest(event: BeforeProviderRequestEvent): Promise<unknown> {
     let currentPayload: unknown = event.payload;
@@ -243,6 +249,9 @@ export class ExtensionRunner {
    * Walks every `after_provider_response` subscription. Observation-only;
    * thrown errors are caught and logged so a buggy listener cannot
    * poison the LLM round-trip.
+   *
+   * Disposed subscriptions are skipped silently — same rationale as
+   * `dispatchBeforeProviderRequest`.
    */
   async dispatchAfterProviderResponse(event: AfterProviderResponseEvent): Promise<void> {
     for (const ext of this.#active.values()) {

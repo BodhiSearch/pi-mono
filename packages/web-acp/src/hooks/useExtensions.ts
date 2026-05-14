@@ -33,15 +33,23 @@ export function useExtensions(isAuthenticated: boolean): UseExtensionsResult {
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
+    // Sequence guard: if a `_bodhi/extensions/state` notification arrives
+    // before the initial `listExtensions()` resolves (e.g. an
+    // `_bodhi/extensions/reload` racing with first-paint), the notification's
+    // newer state must not be overwritten by the stale list snapshot.
+    let seq = 0;
+    const initialSeq = ++seq;
     const runtime = ensureRuntime();
     runtime.client
       .listExtensions()
       .then(list => {
         if (cancelled) return;
+        if (seq !== initialSeq) return; // a notification raced in; drop the stale snapshot.
         setState({ entries: list, error: null });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        if (seq !== initialSeq) return;
         console.error('[useExtensions] listExtensions failed:', err);
         setState({
           entries: EMPTY_ENTRIES,
@@ -52,6 +60,7 @@ export function useExtensions(isAuthenticated: boolean): UseExtensionsResult {
       if (method !== BODHI_EXTENSIONS_STATE_NOTIFICATION_METHOD) return;
       const payload = params as BodhiExtensionsStateNotificationParams;
       const next = Array.isArray(payload.extensions) ? payload.extensions : EMPTY_ENTRIES;
+      seq += 1;
       setState({ entries: next, error: null });
     });
     return () => {

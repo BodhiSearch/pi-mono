@@ -267,4 +267,261 @@ describe('installExtensionFromNpm', () => {
       })
     ).rejects.toThrow(/declares no entry/);
   });
+
+  it('rejects when registry metadata fetch returns non-OK', async () => {
+    const writeFs = memWriteFs();
+    const fetchImpl: typeof fetch = async () =>
+      new Response('boom', { status: 500, statusText: 'Internal Server Error' });
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-hello-world',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow(/registry metadata fetch failed/);
+    expect(writeFs.files.size).toBe(0);
+  });
+
+  it('rejects when tarball fetch returns non-OK', async () => {
+    const writeFs = memWriteFs();
+    const tarballUrl = 'https://registry.example/test/-/pi-hello-world-1.0.0.tgz';
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://registry.example/pi-hello-world') {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response('nope', { status: 502 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-hello-world',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow(/tarball fetch failed/);
+    expect(writeFs.files.size).toBe(0);
+  });
+
+  it('reinstall over existing dir replaces stale content', async () => {
+    const writeFs = memWriteFs();
+    const installRoot = '/mnt/wiki/.pi/extensions/pi-hello-world@1.0.0';
+    // Pre-populate stale content
+    writeFs.files.set(`${installRoot}/index.js`, 'STALE_INDEX');
+    writeFs.files.set(`${installRoot}/package.json`, 'STALE_MANIFEST');
+    writeFs.files.set(`${installRoot}/leftover.txt`, 'should be wiped');
+
+    const { url: tarballUrl, bytes } = await buildTarball({
+      'package.json': JSON.stringify({
+        name: 'pi-hello-world',
+        version: '1.0.0',
+        main: 'index.js',
+      }),
+      'index.js': '// fresh content\n',
+    });
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://registry.example/pi-hello-world') {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await installExtensionFromNpm({
+      spec: 'pi-hello-world',
+      agentWdMount: 'wiki',
+      writeFs,
+      registryUrl: 'https://registry.example',
+      fetchImpl,
+    });
+
+    // Stale leftover gone; fresh entries written.
+    expect(writeFs.files.has(`${installRoot}/leftover.txt`)).toBe(false);
+    expect(writeFs.files.get(`${installRoot}/index.js`)).toBe('// fresh content\n');
+    expect(writeFs.files.get(`${installRoot}/package.json`)).toContain('"name":"pi-hello-world"');
+  });
+
+  it('round-trips a scoped package into a flat install dir', async () => {
+    const writeFs = memWriteFs();
+    const { url: tarballUrl, bytes } = await buildTarball({
+      'package.json': JSON.stringify({
+        name: '@scope/pi-foo',
+        version: '1.0.0',
+        main: 'index.js',
+      }),
+      'index.js': '// scoped\n',
+    });
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://registry.example/%40scope%2fpi-foo') {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    const result = await installExtensionFromNpm({
+      spec: '@scope/pi-foo@1.0.0',
+      agentWdMount: 'wiki',
+      writeFs,
+      registryUrl: 'https://registry.example',
+      fetchImpl,
+    });
+
+    expect(result.name).toBe('@scope/pi-foo');
+    expect(result.extensionName).toBe('scope__pi-foo@1.0.0');
+    expect(result.installPath).toBe('/mnt/wiki/.pi/extensions/scope__pi-foo@1.0.0');
+  });
+
+  it('rejects a tarball with malformed package.json', async () => {
+    const writeFs = memWriteFs();
+    const entries = [{ name: 'package/package.json', data: 'not json at all' }];
+    const bytes = await createTarGzip(entries);
+    const tarballUrl = 'https://registry.example/test/-/pi-bad-1.0.0.tgz';
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://registry.example/pi-bad') {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-bad',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow();
+    expect(writeFs.files.size).toBe(0);
+  });
+
+  it('rejects when entry file is declared but missing from tarball', async () => {
+    const writeFs = memWriteFs();
+    const { url: tarballUrl, bytes } = await buildTarball({
+      'package.json': JSON.stringify({
+        name: 'pi-missing-entry',
+        version: '1.0.0',
+        main: 'index.js',
+      }),
+      // Note: no `index.js` file in the tarball
+      'README.md': '# pi-missing-entry',
+    });
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://registry.example/pi-missing-entry') {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-missing-entry',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow(/was not present in the tarball/);
+    expect(writeFs.files.size).toBe(0);
+  });
+
+  it('cleans up the install dir if writeFile fails mid-install', async () => {
+    // memWriteFs whose second writeFile throws — index.js succeeds, package.json fails.
+    const files = new Map<string, string>();
+    let writeCount = 0;
+    const writeFs: ExtensionsWriteFs & { files: Map<string, string> } = {
+      files,
+      async mkdir(path) {
+        files.set(`${path}/.dir`, '');
+      },
+      async writeFile(path, contents) {
+        writeCount += 1;
+        if (writeCount === 2) throw new Error('disk full');
+        files.set(path, contents);
+      },
+      async rm(path) {
+        for (const key of [...files.keys()]) {
+          if (key === path || key.startsWith(`${path}/`)) files.delete(key);
+        }
+      },
+    };
+
+    const { url: tarballUrl, bytes } = await buildTarball({
+      'package.json': JSON.stringify({
+        name: 'pi-hello-world',
+        version: '1.0.0',
+        main: 'index.js',
+      }),
+      'index.js': '// content\n',
+    });
+    const fetchImpl: typeof fetch = async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://registry.example/pi-hello-world') {
+        return new Response(
+          JSON.stringify({
+            'dist-tags': { latest: '1.0.0' },
+            versions: { '1.0.0': { version: '1.0.0', dist: { tarball: tarballUrl } } },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url === tarballUrl) return new Response(toBody(bytes), { status: 200 });
+      return new Response('not found', { status: 404 });
+    };
+
+    await expect(
+      installExtensionFromNpm({
+        spec: 'pi-hello-world',
+        agentWdMount: 'wiki',
+        writeFs,
+        registryUrl: 'https://registry.example',
+        fetchImpl,
+      })
+    ).rejects.toThrow(/disk full/);
+    // After cleanup nothing should remain.
+    expect(writeFs.files.size).toBe(0);
+  });
 });
